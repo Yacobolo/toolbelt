@@ -11,7 +11,12 @@ import (
 func TestEmit_AliasesRequestRoots(t *testing.T) {
 	t.Helper()
 
-	doc := ir.Document{Endpoints: []ir.Endpoint{{OperationID: "createWidget", RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "CreateWidgetRequest"}}}}}
+	doc := ir.Document{
+		Schemas: map[string]ir.Schema{
+			"CreateWidgetRequest": {Type: "object"},
+		},
+		Endpoints: []ir.Endpoint{{OperationID: "createWidget", RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "CreateWidgetRequest"}}}},
+	}
 
 	b, err := Emit(doc, Options{})
 	require.NoError(t, err)
@@ -23,7 +28,12 @@ func TestEmit_AliasesRequestRoots(t *testing.T) {
 func TestEmit_AliasesNonStructRequestRoots(t *testing.T) {
 	t.Helper()
 
-	doc := ir.Document{Endpoints: []ir.Endpoint{{OperationID: "setDefaultCatalog", RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "SetDefaultCatalogRequest"}}}}}
+	doc := ir.Document{
+		Schemas: map[string]ir.Schema{
+			"SetDefaultCatalogRequest": {Type: "string"},
+		},
+		Endpoints: []ir.Endpoint{{OperationID: "setDefaultCatalog", RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "SetDefaultCatalogRequest"}}}},
+	}
 
 	b, err := Emit(doc, Options{})
 	require.NoError(t, err)
@@ -213,7 +223,8 @@ func TestEmitStandaloneCompatibilityTypes_EmitsConcreteCanonicalTypes(t *testing
 	require.Contains(t, content, "WidgetStatePublished WidgetState = \"published\"")
 	require.Contains(t, content, "type AuditWidget struct")
 	require.Contains(t, content, "type ListWidgetsParams = GenListWidgetsParams")
-	require.Contains(t, content, "type CreateWidgetJSONRequestBody = GenCreateWidgetJSONBody")
+	require.Contains(t, content, "type CreateWidgetJSONRequestBody = GenSchemaCreateWidgetRequest")
+	require.NotContains(t, content, "GenCreateWidgetJSONBody")
 }
 
 func TestEmitStandaloneCompatibilityTypes_EmitsLegacyBareEnumConstantsWhenUnique(t *testing.T) {
@@ -287,6 +298,55 @@ func TestEmitStandaloneCompatibilityTypes_EmitsManualRequestBodyAliasesWhenSchem
 	b, err := EmitStandaloneCompatibilityTypes(doc, Options{})
 	require.NoError(t, err)
 	require.Contains(t, string(b), "type LocalLoginJSONRequestBody = LocalLoginRequest")
+}
+
+func TestEmitStandaloneCompatibilityTypes_UsesContractFirstAliasForResolvedGenericRequest(t *testing.T) {
+	t.Helper()
+
+	doc := ir.Document{
+		Schemas: map[string]ir.Schema{
+			"CreatePipelineRequest": {
+				Type: "object",
+				Properties: map[string]ir.SchemaProperty{
+					"name": {Schema: ir.SchemaRef{Type: "string"}},
+				},
+			},
+		},
+		Endpoints: []ir.Endpoint{
+			{
+				OperationID: "createPipeline",
+				RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "GenericRequest"}},
+			},
+		},
+	}
+
+	b, err := EmitStandaloneCompatibilityTypes(doc, Options{})
+	require.NoError(t, err)
+	content := string(b)
+
+	require.Contains(t, content, "type CreatePipelineJSONRequestBody = GenSchemaCreatePipelineRequest")
+	require.NotContains(t, content, "GenCreatePipelineJSONBody")
+}
+
+func TestEmitStandaloneCompatibilityTypes_FailsForUnresolvedRequestBodyAlias(t *testing.T) {
+	t.Helper()
+
+	doc := ir.Document{
+		Schemas: map[string]ir.Schema{
+			"GenericRequest": {Type: "object"},
+		},
+		Endpoints: []ir.Endpoint{
+			{
+				OperationID: "createWidget",
+				RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "GenericRequest"}},
+			},
+		},
+	}
+
+	_, err := EmitStandaloneCompatibilityTypes(doc, Options{})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "compat request-body alias generation")
+	require.ErrorContains(t, err, "createWidget")
 }
 
 func TestEmitStandaloneCompatibilityTypes_EmitsLegacyGenericPlaceholders(t *testing.T) {

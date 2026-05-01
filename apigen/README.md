@@ -32,6 +32,8 @@ Commands:
 
 The CLI supports direct flags or a manifest selected with `-manifest <file>` and `-target <name>`.
 
+When `compat_types_out` is enabled, request-body compatibility aliases must resolve from named IR-owned schemas. Split-package compat generation does not depend on server-package-only `Gen<Operation>IDJSONBody` aliases.
+
 Manifest target fields:
 
 - `cue_dir`
@@ -89,5 +91,11 @@ go get github.com/Yacobolo/toolbelt/apigen
 ## Contract Notes
 
 JSON IR currently supports schema version `v1`. Required root fields are `schema_version`, `info.title`, `info.version`, and at least one endpoint. Supported endpoint extensions include `x-authz` and `x-apigen-manual`; supported response extensions include `x-apigen-response-shape`.
+
+For split-package generation, compat request-body aliases are contract-first:
+
+- compat output may reference `GenSchema...` symbols derived from IR
+- compat output must not reference server-only `Gen<Operation>IDJSONBody` symbols
+- if a request body cannot be resolved to a named IR schema, compat generation fails explicitly
 
 See [`ir/CONTRACT.md`](./ir/CONTRACT.md) for the full IR contract and run `go test ./...` for the module smoke and compatibility coverage.

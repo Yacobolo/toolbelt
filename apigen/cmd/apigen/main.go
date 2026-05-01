@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"go/format"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,12 +60,22 @@ type targetSpec struct {
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fatalf("usage: apigen <openapi|server|cli|all|cue-compile|cue-bootstrap> -ir <path>")
+	os.Exit(runCLI(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
+	if len(args) == 0 {
+		writeTopLevelUsage(stderr)
+		return 1
+	}
+	if isTopLevelHelp(args[0]) {
+		writeTopLevelUsage(stdout)
+		return 0
 	}
 
-	command := os.Args[1]
-	fs := flag.NewFlagSet(command, flag.ExitOnError)
+	command := args[0]
+	fs := flag.NewFlagSet(command, flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	manifestPath := fs.String("manifest", "", "optional APIGen target manifest path")
 	targetName := fs.String("target", "", "manifest target name")
 	irPath := fs.String("ir", "gen/json-ir.json", "input JSON IR path")
@@ -81,8 +92,11 @@ func main() {
 	compatTypesPackage := fs.String("compat-types-package", "api", "generated compatibility schema types Go package name")
 	cliOut := fs.String("cli-out", "pkg/cli/gen/apigen_registry.gen.go", "output CLI Go path")
 	cliPackage := fs.String("cli-package", "gen", "generated CLI Go package name")
-	if err := fs.Parse(os.Args[2:]); err != nil {
-		fatalf("parse flags: %v", err)
+	if err := fs.Parse(args[1:]); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return failf(stderr, "parse flags: %v", err)
 	}
 
 	config, err := resolveCommandConfig(command, *manifestPath, *targetName, commandConfig{
@@ -103,61 +117,63 @@ func main() {
 		GenerateCLI:          true,
 	})
 	if err != nil {
-		fatalf("resolve command config: %v", err)
+		return failf(stderr, "resolve command config: %v", err)
 	}
 
 	switch command {
 	case "openapi":
 		doc, err := loadDocument(config.IRPath)
 		if err != nil {
-			fatalf("load ir: %v", err)
+			return failf(stderr, "load ir: %v", err)
 		}
 		if err := generateOpenAPI(doc, config.OpenAPIOut); err != nil {
-			fatalf("generate openapi: %v", err)
+			return failf(stderr, "generate openapi: %v", err)
 		}
 	case "cue-compile":
 		if err := compileCUE(config.CueDir, config.IROut, config.OpenAPIOut); err != nil {
-			fatalf("compile cue: %v", err)
+			return failf(stderr, "compile cue: %v", err)
 		}
 	case "cue-bootstrap":
 		if err := bootstrapCUE(config.IRPath, config.CueOutDir); err != nil {
-			fatalf("bootstrap cue: %v", err)
+			return failf(stderr, "bootstrap cue: %v", err)
 		}
 	case "server":
 		doc, err := loadDocument(config.IRPath)
 		if err != nil {
-			fatalf("load ir: %v", err)
+			return failf(stderr, "load ir: %v", err)
 		}
 		if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CompatTypesOut, config.CompatTypesPackage, config.CanonicalOpenAPIPath); err != nil {
-			fatalf("generate server: %v", err)
+			return failf(stderr, "generate server: %v", err)
 		}
 	case "cli":
 		if !config.GenerateCLI {
-			fatalf("generate cli: target %q has generate_cli=false", *targetName)
+			return failf(stderr, "generate cli: target %q has generate_cli=false", *targetName)
 		}
 		doc, err := loadDocument(config.IRPath)
 		if err != nil {
-			fatalf("load ir: %v", err)
+			return failf(stderr, "load ir: %v", err)
 		}
 		if err := generateCLI(doc, config.CLIOut, config.CLIPackage); err != nil {
-			fatalf("generate cli: %v", err)
+			return failf(stderr, "generate cli: %v", err)
 		}
 	case "all":
 		doc, err := loadDocument(config.IRPath)
 		if err != nil {
-			fatalf("load ir: %v", err)
+			return failf(stderr, "load ir: %v", err)
 		}
 		if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CompatTypesOut, config.CompatTypesPackage, config.CanonicalOpenAPIPath); err != nil {
-			fatalf("generate server: %v", err)
+			return failf(stderr, "generate server: %v", err)
 		}
 		if config.GenerateCLI {
 			if err := generateCLI(doc, config.CLIOut, config.CLIPackage); err != nil {
-				fatalf("generate cli: %v", err)
+				return failf(stderr, "generate cli: %v", err)
 			}
 		}
 	default:
-		fatalf("unsupported command %q (supported: openapi, server, cli, all, cue-compile, cue-bootstrap)", command)
+		return failf(stderr, "unsupported command %q\n\n%s", command, topLevelUsage())
 	}
+
+	return 0
 }
 
 func resolveCommandConfig(command string, manifestPath string, targetName string, defaults commandConfig) (commandConfig, error) {
@@ -422,7 +438,40 @@ func loadOpenAPIAsJSON(path string) (string, error) {
 	return string(marshaled), nil
 }
 
-func fatalf(format string, args ...any) {
-	_, _ = fmt.Fprintf(os.Stderr, format+"\n", args...)
-	os.Exit(1)
+func topLevelUsage() string {
+	return `Usage:
+  apigen <command> [flags]
+
+Commands:
+  cue-compile    CUE -> JSON IR + OpenAPI
+  cue-bootstrap  JSON IR -> starter CUE files
+  openapi        JSON IR -> OpenAPI
+  server         JSON IR -> server + request models + optional compat types
+  cli            JSON IR -> Cobra registry
+  all            JSON IR -> all Go outputs
+
+Examples:
+  apigen cue-compile -cue-dir api/cue -ir-out gen/json-ir.json -openapi-out gen/openapi.yaml
+  apigen all -ir gen/json-ir.json -canonical-openapi gen/openapi.yaml -server-out internal/api/server.apigen.gen.go
+
+Use "apigen <command> -h" for command-specific flags.
+`
+}
+
+func writeTopLevelUsage(w io.Writer) {
+	_, _ = io.WriteString(w, topLevelUsage())
+}
+
+func isTopLevelHelp(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "-h", "--help", "help":
+		return true
+	default:
+		return false
+	}
+}
+
+func failf(w io.Writer, format string, args ...any) int {
+	_, _ = fmt.Fprintf(w, format+"\n", args...)
+	return 1
 }

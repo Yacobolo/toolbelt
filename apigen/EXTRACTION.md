@@ -17,5 +17,6 @@ Current module target:
 The intended boundary is:
 
 - keep JSON IR as the compatibility boundary between the CUE authoring compiler and Go emitters
+- keep split-package compat output bound to IR-owned `GenSchema...` symbols, not server-only `Gen<Operation>IDJSONBody` aliases
 - keep canonical OpenAPI as the published contract artifact, including repo-owned extensions such as `x-authz`
 - keep repo-local invocation concerns in thin CLI/task wiring around the nested module, not the library packages

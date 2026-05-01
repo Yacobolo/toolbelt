@@ -1,13 +1,44 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	openapiemit "github.com/Yacobolo/toolbelt/apigen/emit/openapi"
+	"github.com/Yacobolo/toolbelt/apigen/ir"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRunCLI_TopLevelHelp(t *testing.T) {
+	t.Helper()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := runCLI([]string{"--help"}, &stdout, &stderr)
+	require.Equal(t, 0, code)
+	require.Contains(t, stdout.String(), "Usage:")
+	require.Contains(t, stdout.String(), "apigen <command> [flags]")
+	require.Contains(t, stdout.String(), "cue-compile")
+	require.Contains(t, stdout.String(), `Use "apigen <command> -h" for command-specific flags.`)
+	require.Empty(t, stderr.String())
+}
+
+func TestRunCLI_NoArgsShowsUsage(t *testing.T) {
+	t.Helper()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := runCLI(nil, &stdout, &stderr)
+	require.Equal(t, 1, code)
+	require.Empty(t, stdout.String())
+	require.Contains(t, stderr.String(), "Usage:")
+	require.Contains(t, stderr.String(), "apigen <command> [flags]")
+}
 
 func TestGenerateArtifacts(t *testing.T) {
 	t.Helper()
@@ -187,6 +218,101 @@ func TestMultiTargetManifest_GeneratesVersionedArtifacts(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
+func TestGenerateServer_SupportsSplitPackageCompatTypesFromIROwnedSymbols(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	doc := ir.Document{
+		SchemaVersion: "v1",
+		API:           ir.API{BasePath: "/v1"},
+		Info:          ir.Info{Title: "Widget API", Version: "1.0.0"},
+		OpenAPI:       ir.OpenAPI{Version: "3.0.0"},
+		Schemas: map[string]ir.Schema{
+			"CreateWidgetRequest": {
+				Type: "object",
+				Properties: map[string]ir.SchemaProperty{
+					"name": {Schema: ir.SchemaRef{Type: "string"}},
+				},
+				Required: []string{"name"},
+			},
+			"Widget": {
+				Type: "object",
+				Properties: map[string]ir.SchemaProperty{
+					"id": {Schema: ir.SchemaRef{Type: "string"}},
+				},
+				Required: []string{"id"},
+			},
+		},
+		Endpoints: []ir.Endpoint{
+			{
+				Method:      "post",
+				Path:        "/widgets",
+				OperationID: "createWidget",
+				RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "CreateWidgetRequest"}},
+				Responses:   []ir.Response{{StatusCode: 201, Description: "created", Schema: &ir.SchemaRef{Ref: "Widget"}}},
+			},
+		},
+	}
+
+	canonicalOpenAPIPath := writeCanonicalOpenAPI(t, dir, doc)
+	serverPath := filepath.Join(dir, "server.apigen.gen.go")
+	requestModelsPath := filepath.Join(dir, "request_models.gen.go")
+	compatTypesPath := filepath.Join(dir, "types.gen.go")
+
+	err := generateServer(doc, serverPath, "api", requestModelsPath, "genreq", compatTypesPath, "gencompat", canonicalOpenAPIPath)
+	require.NoError(t, err)
+
+	serverContent := mustReadString(t, serverPath)
+	compatContent := mustReadString(t, compatTypesPath)
+
+	require.Contains(t, serverContent, "type GenCreateWidgetJSONBody = GenSchemaCreateWidgetRequest")
+	require.Contains(t, compatContent, "package gencompat")
+	require.Contains(t, compatContent, "type CreateWidgetJSONRequestBody = GenSchemaCreateWidgetRequest")
+	require.NotContains(t, compatContent, "GenCreateWidgetJSONBody")
+}
+
+func TestGenerateServer_FailsForSplitPackageCompatTypesWithoutIROwnedRequestBodySymbol(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	doc := ir.Document{
+		SchemaVersion: "v1",
+		API:           ir.API{BasePath: "/v1"},
+		Info:          ir.Info{Title: "Widget API", Version: "1.0.0"},
+		OpenAPI:       ir.OpenAPI{Version: "3.0.0"},
+		Schemas: map[string]ir.Schema{
+			"GenericRequest": {Type: "object"},
+			"Widget": {
+				Type: "object",
+				Properties: map[string]ir.SchemaProperty{
+					"id": {Schema: ir.SchemaRef{Type: "string"}},
+				},
+				Required: []string{"id"},
+			},
+		},
+		Endpoints: []ir.Endpoint{
+			{
+				Method:      "post",
+				Path:        "/widgets",
+				OperationID: "createWidget",
+				RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "GenericRequest"}},
+				Responses:   []ir.Response{{StatusCode: 201, Description: "created", Schema: &ir.SchemaRef{Ref: "Widget"}}},
+			},
+		},
+	}
+
+	canonicalOpenAPIPath := writeCanonicalOpenAPI(t, dir, doc)
+	serverPath := filepath.Join(dir, "server.apigen.gen.go")
+	requestModelsPath := filepath.Join(dir, "request_models.gen.go")
+	compatTypesPath := filepath.Join(dir, "types.gen.go")
+
+	err := generateServer(doc, serverPath, "api", requestModelsPath, "genreq", compatTypesPath, "gencompat", canonicalOpenAPIPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "emit compatibility types go")
+	require.ErrorContains(t, err, "compat request-body alias generation")
+	require.ErrorContains(t, err, "createWidget")
+}
+
 func writeMinimalContract(t *testing.T, cueDir string, basePath string, title string, version string) {
 	t.Helper()
 
@@ -272,4 +398,15 @@ func mustReadString(t *testing.T, path string) string {
 	content, err := os.ReadFile(path)
 	require.NoError(t, err)
 	return strings.TrimSpace(string(content))
+}
+
+func writeCanonicalOpenAPI(t *testing.T, dir string, doc ir.Document) string {
+	t.Helper()
+
+	content, err := openapiemit.EmitYAML(doc, openapiemit.Options{})
+	require.NoError(t, err)
+
+	path := filepath.Join(dir, "canonical-openapi.yaml")
+	require.NoError(t, os.WriteFile(path, content, 0o644))
+	return path
 }

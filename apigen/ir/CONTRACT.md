@@ -76,6 +76,8 @@ Response headers are unique case-insensitively per response.
 
 `SchemaRef.ref` values are normalized against component-style paths and resolved against this registry.
 
+Request bodies intended for cross-package compatibility output must resolve to named schema entries in this registry. Generators may reject compatibility output when a request body cannot be mapped to a named IR-owned schema.
+
 ## Contract Roles
 
 - JSON IR is the generator input contract
