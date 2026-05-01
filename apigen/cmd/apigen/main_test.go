@@ -125,6 +125,137 @@ func TestResolveCommandConfig_ManifestTarget(t *testing.T) {
 	require.True(t, config.GenerateCLI)
 }
 
+func TestResolveCommandConfig_GroupedManifestTarget(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
+	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
+  - name: example
+    cue_dir: api/cue
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      dir: internal/api/gen
+      compat_types: true
+    cli_out:
+      dir: cmd/cli/gen
+`), 0o644))
+
+	config, err := resolveCommandConfig("all", manifestPath, "example", commandConfig{})
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(dir, "api", "cue"), config.CueDir)
+	require.Equal(t, filepath.Join(dir, "api", "gen", "json-ir.json"), config.IRPath)
+	require.Equal(t, filepath.Join(dir, "api", "gen", "openapi.yaml"), config.CanonicalOpenAPIPath)
+	require.Equal(t, filepath.Join(dir, "internal", "api", "gen", "server.apigen.gen.go"), config.ServerOut)
+	require.Equal(t, "gen", config.ServerPackage)
+	require.Equal(t, filepath.Join(dir, "internal", "api", "gen", "request_models.gen.go"), config.RequestModelsOut)
+	require.Equal(t, "gen", config.RequestModelsPackage)
+	require.Equal(t, filepath.Join(dir, "internal", "api", "gen", "types.gen.go"), config.CompatTypesOut)
+	require.Equal(t, "gen", config.CompatTypesPackage)
+	require.Equal(t, filepath.Join(dir, "cmd", "cli", "gen", "apigen_registry.gen.go"), config.CLIOut)
+	require.Equal(t, "gen", config.CLIPackage)
+	require.True(t, config.GenerateCLI)
+}
+
+func TestResolveCommandConfig_GroupedManifestOverrides(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
+	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
+  - name: example
+    cue_dir: api/cue
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      dir: internal/generated/api
+      package: transport
+      server_file: service_server.gen.go
+      request_models_file: models.gen.go
+      compat_types: true
+      compat_types_file: compat.gen.go
+    cli_out:
+      dir: internal/generated/commands
+      package: cli
+      file: registry.gen.go
+`), 0o644))
+
+	config, err := resolveCommandConfig("all", manifestPath, "example", commandConfig{})
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(dir, "internal", "generated", "api", "service_server.gen.go"), config.ServerOut)
+	require.Equal(t, "transport", config.ServerPackage)
+	require.Equal(t, filepath.Join(dir, "internal", "generated", "api", "models.gen.go"), config.RequestModelsOut)
+	require.Equal(t, "transport", config.RequestModelsPackage)
+	require.Equal(t, filepath.Join(dir, "internal", "generated", "api", "compat.gen.go"), config.CompatTypesOut)
+	require.Equal(t, "transport", config.CompatTypesPackage)
+	require.Equal(t, filepath.Join(dir, "internal", "generated", "commands", "registry.gen.go"), config.CLIOut)
+	require.Equal(t, "cli", config.CLIPackage)
+}
+
+func TestResolveCommandConfig_GroupedManifestWithoutCLI(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
+	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
+  - name: example
+    cue_dir: api/cue
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      dir: internal/api/gen
+`), 0o644))
+
+	config, err := resolveCommandConfig("all", manifestPath, "example", commandConfig{})
+	require.NoError(t, err)
+	require.False(t, config.GenerateCLI)
+	require.Empty(t, config.CLIOut)
+
+	_, err = resolveCommandConfig("cli", manifestPath, "example", commandConfig{})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "cli_out")
+}
+
+func TestResolveCommandConfig_GroupedManifestRejectsMixedOutputConfig(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
+	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
+  - name: example
+    cue_dir: api/cue
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    server_out: internal/api/server.apigen.gen.go
+    go_out:
+      dir: internal/api/gen
+`), 0o644))
+
+	_, err := resolveCommandConfig("all", manifestPath, "example", commandConfig{})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "cannot mix go_out")
+}
+
+func TestResolveCommandConfig_GroupedManifestRejectsInvalidInferredPackage(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
+	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
+  - name: example
+    cue_dir: api/cue
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      dir: internal/api/123-generated
+`), 0o644))
+
+	_, err := resolveCommandConfig("all", manifestPath, "example", commandConfig{})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "invalid inferred go package")
+}
+
 func TestResolveCommandConfig_ManifestDisablesCLI(t *testing.T) {
 	t.Helper()
 

@@ -3,12 +3,8 @@ targets:
     cue_dir: api/cue
     ir_out: api/gen/json-ir.json
     openapi_out: api/gen/openapi.yaml
-    server_out: internal/api/gen/server.apigen.gen.go
-    server_package: gen
-    request_models_out: internal/api/gen/gen_request_models.gen.go
-    request_models_package: gen
-    compat_types_out: internal/api/gen/types.gen.go
-    compat_types_package: gen
-    cli_out: cmd/cli/gen/apigen_registry.gen.go
-    cli_package: gen
-    generate_cli: true
+    go_out:
+      dir: internal/api/gen
+      compat_types: true
+    cli_out:
+      dir: cmd/cli/gen

@@ -32,7 +32,7 @@ func TestExample_CUEToGeneratedBuildAndRun(t *testing.T) {
 	cleanupPaths := []string{
 		filepath.Join(exampleRoot, "api", "gen"),
 		filepath.Join(exampleRoot, "internal", "api", "gen", "server.apigen.gen.go"),
-		filepath.Join(exampleRoot, "internal", "api", "gen", "gen_request_models.gen.go"),
+		filepath.Join(exampleRoot, "internal", "api", "gen", "request_models.gen.go"),
 		filepath.Join(exampleRoot, "internal", "api", "gen", "types.gen.go"),
 		filepath.Join(exampleRoot, "cmd", "cli", "gen", "apigen_registry.gen.go"),
 		filepath.Join(exampleRoot, "server"),
@@ -90,7 +90,7 @@ func TestExample_CUEToGeneratedBuildAndRun(t *testing.T) {
 	require.NotContains(t, cliGenerated, "widgets")
 
 	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "gen", "server.apigen.gen.go"))
-	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "gen", "gen_request_models.gen.go"))
+	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "gen", "request_models.gen.go"))
 	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "gen", "types.gen.go"))
 	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "cmd", "cli", "gen", "apigen_registry.gen.go"))
 

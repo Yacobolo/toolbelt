@@ -16,7 +16,7 @@ This is the canonical APIGen showcase: a small in-memory todo app with authored 
 - `api/gen/json-ir.json`
 - `api/gen/openapi.yaml`
 - `internal/api/gen/server.apigen.gen.go`
-- `internal/api/gen/gen_request_models.gen.go`
+- `internal/api/gen/request_models.gen.go`
 - `internal/api/gen/types.gen.go`
 - `cmd/cli/gen/apigen_registry.gen.go`
 
@@ -28,6 +28,8 @@ From `apigen/`:
 go run ./cmd/apigen cue-compile -manifest ./example/apigen.targets.yaml -target example
 go run ./cmd/apigen all -manifest ./example/apigen.targets.yaml -target example
 ```
+
+The example manifest uses the grouped target syntax, so `go_out.dir` and `cli_out.dir` infer the standard generated filenames automatically.
 
 ## Run
 

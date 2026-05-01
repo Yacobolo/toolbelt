@@ -32,6 +32,21 @@ Commands:
 
 The CLI supports direct flags or a manifest selected with `-manifest <file>` and `-target <name>`.
 
+Recommended grouped manifest shape:
+
+```yaml
+targets:
+  - name: example
+    cue_dir: api/cue
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      dir: internal/api/gen
+      compat_types: true
+    cli_out:
+      dir: cmd/cli/gen
+```
+
 When `compat_types_out` is enabled, request-body compatibility aliases must resolve from named IR-owned schemas. Split-package compat generation does not depend on server-package-only `Gen<Operation>IDJSONBody` aliases.
 
 Manifest target fields:
@@ -39,6 +54,18 @@ Manifest target fields:
 - `cue_dir`
 - `ir_out`
 - `openapi_out`
+- `go_out.dir`
+- `go_out.package`
+- `go_out.server_file`
+- `go_out.request_models_file`
+- `go_out.compat_types`
+- `go_out.compat_types_file`
+- `cli_out.dir`
+- `cli_out.package`
+- `cli_out.file`
+
+Legacy flat manifest fields remain supported:
+
 - `server_out`
 - `server_package`
 - `request_models_out`
