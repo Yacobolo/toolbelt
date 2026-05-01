@@ -1,6 +1,7 @@
 package apigen
 
 import (
+	"encoding/json"
 	"io"
 	"io/fs"
 	"net"
@@ -15,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestExampleConsumer_CUEToGeneratedBuild(t *testing.T) {
+func TestExample_CUEToGeneratedBuildAndRun(t *testing.T) {
 	t.Helper()
 
 	cwd, err := os.Getwd()
@@ -23,124 +24,144 @@ func TestExampleConsumer_CUEToGeneratedBuild(t *testing.T) {
 
 	moduleRoot := moduleRootFromWorkingDir(t, cwd)
 	apigenRoot := moduleRoot
-	tests := []struct {
-		name         string
-		basePath     string
-		expectedPath string
-	}{
-		{name: "root base path", basePath: "/", expectedPath: "/widgets"},
-		{name: "versioned base path", basePath: "/v1", expectedPath: "/v1/widgets"},
+	exampleRoot := prepareExampleWorkspace(t, moduleRoot)
+	addr := allocateLoopbackAddr(t)
+	baseURL := "http://" + addr
+	manifestPath := filepath.Join(exampleRoot, "apigen.targets.yaml")
+
+	cleanupPaths := []string{
+		filepath.Join(exampleRoot, "api", "gen"),
+		filepath.Join(exampleRoot, "internal", "api", "gen", "server.apigen.gen.go"),
+		filepath.Join(exampleRoot, "internal", "api", "gen", "request_models.gen.go"),
+		filepath.Join(exampleRoot, "internal", "api", "gen", "types.gen.go"),
+		filepath.Join(exampleRoot, "cmd", "cli", "gen", "apigen_registry.gen.go"),
+		filepath.Join(exampleRoot, "server"),
+		filepath.Join(exampleRoot, "cli"),
+	}
+	t.Cleanup(func() {
+		for _, path := range cleanupPaths {
+			_ = os.RemoveAll(path)
+		}
+	})
+	for _, path := range cleanupPaths {
+		_ = os.RemoveAll(path)
 	}
 
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			exampleRoot := prepareExampleWorkspace(t, moduleRoot)
-			addr := allocateLoopbackAddr(t)
-			baseURL := "http://" + addr
-			cueDir := filepath.Join(exampleRoot, "api", "cue")
+	runCommand(
+		t,
+		apigenRoot,
+		"go",
+		"run",
+		"./cmd/apigen",
+		"cue-compile",
+		"-manifest", manifestPath,
+		"-target", "example",
+	)
 
-			configureExampleWorkspace(t, exampleRoot, baseURL, tt.basePath)
+	runCommand(
+		t,
+		apigenRoot,
+		"go",
+		"run",
+		"./cmd/apigen",
+		"all",
+		"-manifest", manifestPath,
+		"-target", "example",
+	)
 
-			cleanupPaths := []string{
-				filepath.Join(exampleRoot, "api", "gen"),
-				filepath.Join(exampleRoot, "internal", "api", "server.apigen.gen.go"),
-				filepath.Join(exampleRoot, "internal", "api", "gen_request_models.gen.go"),
-				filepath.Join(exampleRoot, "internal", "api", "types.gen.go"),
-				filepath.Join(exampleRoot, "cmd", "cli", "gen", "apigen_registry.gen.go"),
-				filepath.Join(exampleRoot, "server"),
-				filepath.Join(exampleRoot, "cli"),
-			}
-			t.Cleanup(func() {
-				for _, path := range cleanupPaths {
-					_ = os.RemoveAll(path)
-				}
-			})
-			for _, path := range cleanupPaths {
-				_ = os.RemoveAll(path)
-			}
+	serverBinary := filepath.Join(exampleRoot, "server")
+	cliBinary := filepath.Join(exampleRoot, "cli")
+	runCommand(t, exampleRoot, "go", "build", "-o", serverBinary, "./cmd/server")
+	runCommand(t, exampleRoot, "go", "build", "-o", cliBinary, "./cmd/cli")
 
-			runCommand(
-				t,
-				apigenRoot,
-				"go",
-				"run",
-				"./cmd/apigen",
-				"cue-compile",
-				"-cue-dir", cueDir,
-				"-ir-out", filepath.Join(exampleRoot, "api", "gen", "json-ir.json"),
-				"-openapi-out", filepath.Join(exampleRoot, "api", "gen", "openapi.yaml"),
-			)
+	serverGenerated := mustReadFile(t, filepath.Join(exampleRoot, "internal", "api", "gen", "server.apigen.gen.go"))
+	require.Contains(t, serverGenerated, "APIGen Todo Example")
+	require.Contains(t, serverGenerated, `func RegisterAPIGenStrictRoutes`)
+	require.Contains(t, serverGenerated, `type GenStrictServerInterface interface`)
+	require.Contains(t, serverGenerated, `"/todos"`)
+	require.Contains(t, serverGenerated, "package gen")
 
-			runCommand(
-				t,
-				apigenRoot,
-				"go",
-				"run",
-				"./cmd/apigen",
-				"all",
-				"-ir", filepath.Join(exampleRoot, "api", "gen", "json-ir.json"),
-				"-canonical-openapi", filepath.Join(exampleRoot, "api", "gen", "openapi.yaml"),
-				"-server-out", filepath.Join(exampleRoot, "internal", "api", "server.apigen.gen.go"),
-				"-server-package", "api",
-				"-request-models-out", filepath.Join(exampleRoot, "internal", "api", "gen_request_models.gen.go"),
-				"-request-models-package", "api",
-				"-compat-types-out", filepath.Join(exampleRoot, "internal", "api", "types.gen.go"),
-				"-compat-types-package", "api",
-				"-cli-out", filepath.Join(exampleRoot, "cmd", "cli", "gen", "apigen_registry.gen.go"),
-				"-cli-package", "gen",
-			)
+	cliGenerated := mustReadFile(t, filepath.Join(exampleRoot, "cmd", "cli", "gen", "apigen_registry.gen.go"))
+	require.Contains(t, cliGenerated, `Command: []string{"todos", "list"}`)
+	require.Contains(t, cliGenerated, `Command: []string{"todos", "create"}`)
+	require.Contains(t, cliGenerated, `Command: []string{"todos", "complete"}`)
+	require.Contains(t, cliGenerated, `Command: []string{"todos", "delete"}`)
+	require.Contains(t, cliGenerated, `Confirm: "always"`)
+	require.NotContains(t, cliGenerated, "widgets")
 
-			serverBinary := filepath.Join(exampleRoot, "server")
-			cliBinary := filepath.Join(exampleRoot, "cli")
-			runCommand(t, exampleRoot, "go", "build", "-o", serverBinary, "./cmd/server")
-			runCommand(t, exampleRoot, "go", "build", "-o", cliBinary, "./cmd/cli")
+	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "gen", "server.apigen.gen.go"))
+	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "gen", "request_models.gen.go"))
+	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "gen", "types.gen.go"))
+	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "cmd", "cli", "gen", "apigen_registry.gen.go"))
 
-			serverGenerated := mustReadFile(t, filepath.Join(exampleRoot, "internal", "api", "server.apigen.gen.go"))
-			require.Contains(t, serverGenerated, "APIGen Example API")
-			require.Contains(t, serverGenerated, tt.expectedPath)
+	routerSource := mustReadFile(t, filepath.Join(exampleRoot, "internal", "api", "router.go"))
+	require.Contains(t, routerSource, "gen.RegisterAPIGenStrictRoutes")
 
-			cliGenerated := mustReadFile(t, filepath.Join(exampleRoot, "cmd", "cli", "gen", "apigen_registry.gen.go"))
-			require.Contains(t, cliGenerated, `Command: []string{"widgets", "list"}`)
-			require.Contains(t, cliGenerated, `Command: []string{"widgets", "create"}`)
-			require.Contains(t, cliGenerated, `Path: "`+tt.expectedPath+`"`)
-			require.NotContains(t, cliGenerated, "deleteWidget")
+	serverSource := mustReadFile(t, filepath.Join(exampleRoot, "internal", "api", "server.go"))
+	require.Contains(t, serverSource, "var _ gen.GenStrictServerInterface = (*Server)(nil)")
 
-			assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "server.apigen.gen.go"))
-			assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "gen_request_models.gen.go"))
-			assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "types.gen.go"))
-			assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "cmd", "cli", "gen", "apigen_registry.gen.go"))
+	serverCmd := exec.Command(serverBinary)
+	serverCmd.Dir = exampleRoot
+	serverCmd.Env = append(os.Environ(), "TODO_EXAMPLE_ADDR="+addr)
+	serverOutput := &strings.Builder{}
+	serverCmd.Stdout = serverOutput
+	serverCmd.Stderr = serverOutput
+	require.NoError(t, serverCmd.Start())
+	t.Cleanup(func() {
+		_ = serverCmd.Process.Kill()
+		_ = serverCmd.Wait()
+	})
 
-			serverCmd := exec.Command(serverBinary)
-			serverCmd.Dir = exampleRoot
-			serverOutput := &strings.Builder{}
-			serverCmd.Stdout = serverOutput
-			serverCmd.Stderr = serverOutput
-			require.NoError(t, serverCmd.Start())
-			t.Cleanup(func() {
-				_ = serverCmd.Process.Kill()
-				_ = serverCmd.Wait()
-			})
+	waitForHTTP(t, baseURL+"/todos")
 
-			waitForHTTP(t, baseURL+tt.expectedPath)
+	spec := mustFetchJSON(t, baseURL+"/openapi.json")
+	require.Contains(t, spec, "APIGen Todo Example")
+	require.Contains(t, spec, "/todos")
 
-			listOutput := runCommandOutput(t, exampleRoot, cliBinary, "widgets", "list")
-			require.Contains(t, listOutput, "widget-1")
-			require.Contains(t, listOutput, "first")
+	cliEnv := []string{"TODO_EXAMPLE_BASE_URL=" + baseURL}
 
-			createOutput := runCommandOutput(t, exampleRoot, cliBinary, "widgets", "create", "demo-widget")
-			require.Contains(t, createOutput, "widget-2")
-			require.Contains(t, createOutput, "created")
-		})
-	}
+	listOutput := runCommandOutputEnv(t, exampleRoot, cliEnv, cliBinary, "todos", "list")
+	require.Contains(t, listOutput, "todo-1")
+	require.Contains(t, listOutput, "write docs")
+	require.Contains(t, listOutput, "todo-2")
+
+	createOutput := runCommandOutputEnv(t, exampleRoot, cliEnv, cliBinary, "todos", "create", "buy milk")
+	require.Contains(t, createOutput, "todo-3")
+	require.Contains(t, createOutput, "buy milk")
+	require.Contains(t, createOutput, "open")
+
+	getOutput := runCommandOutputEnv(t, exampleRoot, cliEnv, cliBinary, "todos", "get", "todo-3")
+	require.Contains(t, getOutput, "todo-3")
+	require.Contains(t, getOutput, "buy milk")
+	require.Contains(t, getOutput, "open")
+
+	completeOutput := runCommandOutputEnv(t, exampleRoot, cliEnv, cliBinary, "todos", "complete", "todo-3")
+	require.Contains(t, completeOutput, "todo-3")
+	require.Contains(t, completeOutput, "completed")
+
+	filteredList := runCommandOutputEnv(t, exampleRoot, cliEnv, cliBinary, "todos", "list", "--status", "completed")
+	require.Contains(t, filteredList, "todo-2")
+	require.Contains(t, filteredList, "todo-3")
+	require.NotContains(t, filteredList, "todo-1")
+
+	runCommandEnv(t, exampleRoot, cliEnv, cliBinary, "todos", "delete", "todo-3", "--yes")
+
+	finalList := runCommandOutputEnv(t, exampleRoot, cliEnv, cliBinary, "todos", "list")
+	require.NotContains(t, finalList, "todo-3")
 }
 
 func runCommand(t *testing.T, dir string, name string, args ...string) {
 	t.Helper()
 
+	runCommandEnv(t, dir, nil, name, args...)
+}
+
+func runCommandEnv(t *testing.T, dir string, extraEnv []string, name string, args ...string) {
+	t.Helper()
+
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), extraEnv...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s %s failed:\n%s", name, strings.Join(args, " "), string(output))
@@ -150,9 +171,15 @@ func runCommand(t *testing.T, dir string, name string, args ...string) {
 func runCommandOutput(t *testing.T, dir string, name string, args ...string) string {
 	t.Helper()
 
+	return runCommandOutputEnv(t, dir, nil, name, args...)
+}
+
+func runCommandOutputEnv(t *testing.T, dir string, extraEnv []string, name string, args ...string) string {
+	t.Helper()
+
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), extraEnv...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s %s failed:\n%s", name, strings.Join(args, " "), string(output))
@@ -169,33 +196,6 @@ func allocateLoopbackAddr(t *testing.T) string {
 		_ = listener.Close()
 	}()
 	return listener.Addr().String()
-}
-
-func configureExampleWorkspace(t *testing.T, workspaceRoot string, baseURL string, basePath string) {
-	t.Helper()
-
-	metadataPath := filepath.Join(workspaceRoot, "api", "cue", "metadata.cue")
-	updateFile(t, metadataPath, `base_path: "/"`, `base_path: "`+basePath+`"`)
-	updateFile(t, metadataPath, `url:         "http://127.0.0.1:8081"`, `url:         "`+baseURL+`"`)
-
-	serverMainPath := filepath.Join(workspaceRoot, "cmd", "server", "main.go")
-	updateFile(t, serverMainPath, `":8081"`, `"`+strings.TrimPrefix(baseURL, "http://")+`"`)
-
-	cliMainPath := filepath.Join(workspaceRoot, "cmd", "cli", "main.go")
-	updateFile(t, cliMainPath, `"http://127.0.0.1:8081"`, `"`+baseURL+`"`)
-}
-
-func updateFile(t *testing.T, path string, old string, new string) {
-	t.Helper()
-	if old == new {
-		return
-	}
-
-	content, err := os.ReadFile(path)
-	require.NoError(t, err)
-	updated := strings.Replace(string(content), old, new, 1)
-	require.NotEqual(t, string(content), updated, "expected to update %s", path)
-	require.NoError(t, os.WriteFile(path, []byte(updated), 0o644))
 }
 
 func waitForHTTP(t *testing.T, endpoint string) {
@@ -221,6 +221,24 @@ func mustReadFile(t *testing.T, path string) string {
 	content, err := os.ReadFile(path)
 	require.NoError(t, err)
 	return string(content)
+}
+
+func mustFetchJSON(t *testing.T, endpoint string) string {
+	t.Helper()
+
+	resp, err := http.Get(endpoint) //nolint:noctx
+	require.NoError(t, err)
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var payload any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+
+	encoded, err := json.Marshal(payload)
+	require.NoError(t, err)
+	return string(encoded)
 }
 
 func assertGeneratedImportsUsePublicSurfaces(t *testing.T, path string) {
@@ -257,7 +275,7 @@ func moduleRootFromWorkingDir(t *testing.T, cwd string) string {
 func prepareExampleWorkspace(t *testing.T, moduleRoot string) string {
 	t.Helper()
 
-	sourceRoot := filepath.Join(moduleRoot, "examples", "example_consumer")
+	sourceRoot := filepath.Join(moduleRoot, "example")
 	workspaceRoot := filepath.Join(t.TempDir(), "example-consumer")
 	require.NoError(t, copyDir(sourceRoot, workspaceRoot))
 
@@ -267,7 +285,7 @@ func prepareExampleWorkspace(t *testing.T, moduleRoot string) string {
 
 	updatedGoMod := strings.ReplaceAll(
 		string(goModContent),
-		"replace github.com/Yacobolo/toolbelt/apigen => ../..",
+		"replace github.com/Yacobolo/toolbelt/apigen => ..",
 		"replace github.com/Yacobolo/toolbelt/apigen => "+moduleRoot,
 	)
 	require.NoError(t, os.WriteFile(goModPath, []byte(updatedGoMod), 0o644))

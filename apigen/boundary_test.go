@@ -18,7 +18,7 @@ func TestPublicPackagesAvoidRepoPrivateImports(t *testing.T) {
 	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, walkErr error) error {
 		require.NoError(t, walkErr)
 		if d.IsDir() {
-			if d.Name() == "testdata" || d.Name() == "examples" {
+			if d.Name() == "testdata" || d.Name() == "examples" || d.Name() == "example" {
 				return filepath.SkipDir
 			}
 			return nil

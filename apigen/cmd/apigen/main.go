@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/Yacobolo/toolbelt/apigen/cuegen"
@@ -43,20 +44,102 @@ type targetManifest struct {
 	Targets []targetSpec `yaml:"targets"`
 }
 
+type goOutputSpec struct {
+	Dir               string `yaml:"dir"`
+	Package           string `yaml:"package"`
+	ServerFile        string `yaml:"server_file"`
+	RequestModelsFile string `yaml:"request_models_file"`
+	CompatTypes       bool   `yaml:"compat_types"`
+	CompatTypesFile   string `yaml:"compat_types_file"`
+}
+
+type cliOutputSpec struct {
+	Dir     string `yaml:"dir"`
+	Package string `yaml:"package"`
+	File    string `yaml:"file"`
+}
+
 type targetSpec struct {
-	Name                 string `yaml:"name"`
-	CueDir               string `yaml:"cue_dir"`
-	IROut                string `yaml:"ir_out"`
-	OpenAPIOut           string `yaml:"openapi_out"`
-	ServerOut            string `yaml:"server_out"`
-	ServerPackage        string `yaml:"server_package"`
-	RequestModelsOut     string `yaml:"request_models_out"`
-	RequestModelsPackage string `yaml:"request_models_package"`
-	CompatTypesOut       string `yaml:"compat_types_out"`
-	CompatTypesPackage   string `yaml:"compat_types_package"`
-	CLIOut               string `yaml:"cli_out"`
-	CLIPackage           string `yaml:"cli_package"`
-	GenerateCLI          bool   `yaml:"generate_cli"`
+	Name                 string         `yaml:"name"`
+	CueDir               string         `yaml:"cue_dir"`
+	IROut                string         `yaml:"ir_out"`
+	OpenAPIOut           string         `yaml:"openapi_out"`
+	ServerOut            string         `yaml:"server_out"`
+	ServerPackage        string         `yaml:"server_package"`
+	RequestModelsOut     string         `yaml:"request_models_out"`
+	RequestModelsPackage string         `yaml:"request_models_package"`
+	CompatTypesOut       string         `yaml:"compat_types_out"`
+	CompatTypesPackage   string         `yaml:"compat_types_package"`
+	CLIOut               string         `yaml:"-"`
+	CLIPackage           string         `yaml:"cli_package"`
+	GenerateCLI          *bool          `yaml:"generate_cli"`
+	GoOut                *goOutputSpec  `yaml:"go_out"`
+	CLIOutGroup          *cliOutputSpec `yaml:"-"`
+}
+
+var goPackagePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
+
+func (target *targetSpec) UnmarshalYAML(unmarshal func(any) error) error {
+	type rawTargetSpec struct {
+		Name                 string        `yaml:"name"`
+		CueDir               string        `yaml:"cue_dir"`
+		IROut                string        `yaml:"ir_out"`
+		OpenAPIOut           string        `yaml:"openapi_out"`
+		ServerOut            string        `yaml:"server_out"`
+		ServerPackage        string        `yaml:"server_package"`
+		RequestModelsOut     string        `yaml:"request_models_out"`
+		RequestModelsPackage string        `yaml:"request_models_package"`
+		CompatTypesOut       string        `yaml:"compat_types_out"`
+		CompatTypesPackage   string        `yaml:"compat_types_package"`
+		CLIOut               any           `yaml:"cli_out"`
+		CLIPackage           string        `yaml:"cli_package"`
+		GenerateCLI          *bool         `yaml:"generate_cli"`
+		GoOut                *goOutputSpec `yaml:"go_out"`
+	}
+
+	var raw rawTargetSpec
+	if err := unmarshal(&raw); err != nil {
+		return err
+	}
+
+	*target = targetSpec{
+		Name:                 raw.Name,
+		CueDir:               raw.CueDir,
+		IROut:                raw.IROut,
+		OpenAPIOut:           raw.OpenAPIOut,
+		ServerOut:            raw.ServerOut,
+		ServerPackage:        raw.ServerPackage,
+		RequestModelsOut:     raw.RequestModelsOut,
+		RequestModelsPackage: raw.RequestModelsPackage,
+		CompatTypesOut:       raw.CompatTypesOut,
+		CompatTypesPackage:   raw.CompatTypesPackage,
+		CLIPackage:           raw.CLIPackage,
+		GenerateCLI:          raw.GenerateCLI,
+		GoOut:                raw.GoOut,
+	}
+
+	if raw.CLIOut == nil {
+		return nil
+	}
+
+	switch value := raw.CLIOut.(type) {
+	case string:
+		target.CLIOut = strings.TrimSpace(value)
+	case map[string]any:
+		var grouped cliOutputSpec
+		encoded, err := yaml.Marshal(value)
+		if err != nil {
+			return err
+		}
+		if err := yaml.Unmarshal(encoded, &grouped); err != nil {
+			return err
+		}
+		target.CLIOutGroup = &grouped
+	default:
+		return fmt.Errorf("cli_out must be a path string or mapping")
+	}
+
+	return nil
 }
 
 func main() {
@@ -193,15 +276,44 @@ func resolveCommandConfig(command string, manifestPath string, targetName string
 	config.IROut = target.IROut
 	config.OpenAPIOut = target.OpenAPIOut
 	config.CanonicalOpenAPIPath = target.OpenAPIOut
-	config.ServerOut = target.ServerOut
-	config.ServerPackage = coalesceString(target.ServerPackage, defaults.ServerPackage)
-	config.RequestModelsOut = target.RequestModelsOut
-	config.RequestModelsPackage = coalesceString(target.RequestModelsPackage, defaults.RequestModelsPackage)
-	config.CompatTypesOut = target.CompatTypesOut
-	config.CompatTypesPackage = coalesceString(target.CompatTypesPackage, defaults.CompatTypesPackage)
-	config.CLIOut = target.CLIOut
-	config.CLIPackage = coalesceString(target.CLIPackage, defaults.CLIPackage)
-	config.GenerateCLI = target.GenerateCLI
+	if target.usesGroupedGoOut() {
+		config.ServerOut = filepath.Join(target.GoOut.Dir, coalesceString(target.GoOut.ServerFile, "server.apigen.gen.go"))
+		config.ServerPackage, err = inferOrValidateManifestPackage("go_out", target.GoOut.Package, target.GoOut.Dir)
+		if err != nil {
+			return commandConfig{}, err
+		}
+		config.RequestModelsOut = filepath.Join(target.GoOut.Dir, coalesceString(target.GoOut.RequestModelsFile, "request_models.gen.go"))
+		config.RequestModelsPackage = config.ServerPackage
+		if target.GoOut.CompatTypes {
+			config.CompatTypesOut = filepath.Join(target.GoOut.Dir, coalesceString(target.GoOut.CompatTypesFile, "types.gen.go"))
+			config.CompatTypesPackage = config.ServerPackage
+		} else {
+			config.CompatTypesOut = ""
+			config.CompatTypesPackage = config.ServerPackage
+		}
+	} else {
+		config.ServerOut = target.ServerOut
+		config.ServerPackage = coalesceString(target.ServerPackage, defaults.ServerPackage)
+		config.RequestModelsOut = target.RequestModelsOut
+		config.RequestModelsPackage = coalesceString(target.RequestModelsPackage, defaults.RequestModelsPackage)
+		config.CompatTypesOut = target.CompatTypesOut
+		config.CompatTypesPackage = coalesceString(target.CompatTypesPackage, defaults.CompatTypesPackage)
+	}
+	if target.usesGroupedCLIOut() {
+		config.CLIOut = filepath.Join(target.CLIOutGroup.Dir, coalesceString(target.CLIOutGroup.File, "apigen_registry.gen.go"))
+		config.CLIPackage, err = inferOrValidateManifestPackage("cli_out", target.CLIOutGroup.Package, target.CLIOutGroup.Dir)
+		if err != nil {
+			return commandConfig{}, err
+		}
+		config.GenerateCLI = true
+	} else {
+		config.CLIOut = target.CLIOut
+		config.CLIPackage = coalesceString(target.CLIPackage, defaults.CLIPackage)
+		config.GenerateCLI = false
+		if target.GenerateCLI != nil {
+			config.GenerateCLI = *target.GenerateCLI
+		}
+	}
 
 	if err := validateCommandConfig(command, config); err != nil {
 		return commandConfig{}, err
@@ -230,6 +342,9 @@ func loadTargetSpec(manifestPath string, targetName string) (targetSpec, error) 
 		if target.Name != targetName {
 			continue
 		}
+		if err := validateTargetSpec(target); err != nil {
+			return targetSpec{}, err
+		}
 		return resolveTargetPaths(target, manifestDir), nil
 	}
 
@@ -237,6 +352,12 @@ func loadTargetSpec(manifestPath string, targetName string) (targetSpec, error) 
 }
 
 func resolveTargetPaths(target targetSpec, baseDir string) targetSpec {
+	if target.GoOut != nil {
+		target.GoOut.Dir = resolveManifestPath(baseDir, target.GoOut.Dir)
+	}
+	if target.CLIOutGroup != nil {
+		target.CLIOutGroup.Dir = resolveManifestPath(baseDir, target.CLIOutGroup.Dir)
+	}
 	target.CueDir = resolveManifestPath(baseDir, target.CueDir)
 	target.IROut = resolveManifestPath(baseDir, target.IROut)
 	target.OpenAPIOut = resolveManifestPath(baseDir, target.OpenAPIOut)
@@ -295,6 +416,56 @@ func coalesceString(value string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func (target targetSpec) usesGroupedGoOut() bool {
+	return target.GoOut != nil
+}
+
+func (target targetSpec) usesGroupedCLIOut() bool {
+	return target.CLIOutGroup != nil
+}
+
+func (target targetSpec) usesLegacyGoOut() bool {
+	return strings.TrimSpace(target.ServerOut) != "" ||
+		strings.TrimSpace(target.ServerPackage) != "" ||
+		strings.TrimSpace(target.RequestModelsOut) != "" ||
+		strings.TrimSpace(target.RequestModelsPackage) != "" ||
+		strings.TrimSpace(target.CompatTypesOut) != "" ||
+		strings.TrimSpace(target.CompatTypesPackage) != ""
+}
+
+func (target targetSpec) usesLegacyCLIOut() bool {
+	return strings.TrimSpace(target.CLIOut) != "" ||
+		strings.TrimSpace(target.CLIPackage) != "" ||
+		target.GenerateCLI != nil
+}
+
+func validateTargetSpec(target targetSpec) error {
+	if target.usesGroupedGoOut() && target.usesLegacyGoOut() {
+		return fmt.Errorf("target %q cannot mix go_out with flat go output fields", target.Name)
+	}
+	if target.usesGroupedCLIOut() && target.usesLegacyCLIOut() {
+		return fmt.Errorf("target %q cannot mix cli_out with flat cli output fields", target.Name)
+	}
+	if target.usesGroupedGoOut() && strings.TrimSpace(target.GoOut.Dir) == "" {
+		return fmt.Errorf("target %q go_out.dir is required", target.Name)
+	}
+	if target.usesGroupedCLIOut() && strings.TrimSpace(target.CLIOutGroup.Dir) == "" {
+		return fmt.Errorf("target %q cli_out.dir is required", target.Name)
+	}
+	return nil
+}
+
+func inferOrValidateManifestPackage(fieldName string, explicit string, dir string) (string, error) {
+	packageName := strings.TrimSpace(explicit)
+	if packageName == "" {
+		packageName = filepath.Base(filepath.Clean(dir))
+	}
+	if !goPackagePattern.MatchString(packageName) {
+		return "", fmt.Errorf("%s: invalid inferred go package %q", fieldName, packageName)
+	}
+	return packageName, nil
 }
 
 func compileCUE(cueDir string, irOutPath string, openAPIOutPath string) error {

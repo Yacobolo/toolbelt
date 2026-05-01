@@ -1,0 +1,10 @@
+targets:
+  - name: example
+    cue_dir: api/cue
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      dir: internal/api/gen
+      compat_types: true
+    cli_out:
+      dir: cmd/cli/gen

@@ -1,7 +1,7 @@
 package api
 
-schemas_widgets: {
-	Widget: {
+schemas_todos: {
+	Todo: {
 		type: "object"
 		properties: {
 			id: {
@@ -9,33 +9,38 @@ schemas_widgets: {
 					type: "string"
 				}
 			}
-			name: {
+			title: {
+				schema: {
+					type: "string"
+				}
+			}
+			status: {
 				schema: {
 					type: "string"
 				}
 			}
 		}
-		required: ["id", "name"]
+		required: ["id", "title", "status"]
 	}
-	CreateWidgetRequest: {
+	CreateTodoRequest: {
 		type: "object"
 		properties: {
-			name: {
+			title: {
 				schema: {
 					type: "string"
 				}
 			}
 		}
-		required: ["name"]
+		required: ["title"]
 	}
-	ListWidgetsResponse: {
+	ListTodosResponse: {
 		type: "object"
 		properties: {
 			data: {
 				schema: {
 					type: "array"
 					items: {
-						ref: "Widget"
+						ref: "Todo"
 					}
 				}
 			}

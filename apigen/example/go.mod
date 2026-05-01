@@ -1,4 +1,4 @@
-module github.com/example/apigen-consumer
+module github.com/example/apigen-example
 
 go 1.25.8
 
@@ -15,4 +15,4 @@ require (
 	golang.org/x/term v0.41.0 // indirect
 )
 
-replace github.com/Yacobolo/toolbelt/apigen => ../..
+replace github.com/Yacobolo/toolbelt/apigen => ..
