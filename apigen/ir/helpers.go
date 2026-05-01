@@ -33,21 +33,41 @@ func ResolveSchema(doc Document, schemaRef SchemaRef) (Schema, bool) {
 	return schema, ok
 }
 
-// ResolveRequestBodySchema returns the concrete request body schema when present.
-func ResolveRequestBodySchema(doc Document, endpoint Endpoint) (Schema, bool) {
+// ResolveRequestBodySchemaName returns the concrete request body schema name when present.
+func ResolveRequestBodySchemaName(doc Document, endpoint Endpoint) (string, bool) {
 	if endpoint.RequestBody == nil {
-		return Schema{}, false
+		return "", false
 	}
 	ref := endpoint.RequestBody.Schema
 	if ref.Ref == "GenericRequest" {
 		name, ok := ResolveGenericRequestBodySchemaName(doc, endpoint.OperationID)
 		if !ok {
-			return Schema{}, false
+			return "", false
 		}
-		schema, ok := doc.Schemas[name]
-		return schema, ok
+		if _, ok := doc.Schemas[name]; !ok {
+			return "", false
+		}
+		return name, true
 	}
-	return ResolveSchema(doc, ref)
+
+	name, ok := NormalizedSchemaRefName(ref)
+	if !ok {
+		return "", false
+	}
+	if _, ok := doc.Schemas[name]; !ok {
+		return "", false
+	}
+	return name, true
+}
+
+// ResolveRequestBodySchema returns the concrete request body schema when present.
+func ResolveRequestBodySchema(doc Document, endpoint Endpoint) (Schema, bool) {
+	name, ok := ResolveRequestBodySchemaName(doc, endpoint)
+	if !ok {
+		return Schema{}, false
+	}
+	schema, ok := doc.Schemas[name]
+	return schema, ok
 }
 
 // SuccessResponse returns the preferred success response for CLI generation.

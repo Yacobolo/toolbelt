@@ -790,19 +790,10 @@ func requestBodyTypeName(doc ir.Document, endpoint ir.Endpoint) (string, bool) {
 		return "", false
 	}
 
+	if schemaName, ok := ir.ResolveRequestBodySchemaName(doc, endpoint); ok {
+		return "GenSchema" + exportedName(schemaName), false
+	}
 	schema := endpoint.RequestBody.Schema
-	if schema.Ref != "" && schema.Ref != "GenericRequest" {
-		if schemaName, ok := ir.NormalizedSchemaRefName(schema); ok {
-			if _, exists := doc.Schemas[schemaName]; exists {
-				return "GenSchema" + exportedName(schemaName), false
-			}
-		}
-	}
-	if schema.Ref == "GenericRequest" {
-		if schemaName, ok := ir.ResolveGenericRequestBodySchemaName(doc, endpoint.OperationID); ok {
-			return "GenSchema" + schemaName, false
-		}
-	}
 	if schema.Type != "" {
 		return schemaTypeName(schema), false
 	}

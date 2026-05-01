@@ -2,6 +2,7 @@
 package requestmodelgo
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -75,7 +76,9 @@ func emitStandaloneModels(doc ir.Document, opts Options) ([]byte, error) {
 	emitManualCompatibilityPlaceholderTypes(&b, doc)
 
 	emitLegacyParamsAliases(&b, doc)
-	emitLegacyRequestBodyAliases(&b, doc)
+	if err := emitLegacyRequestBodyAliases(&b, doc); err != nil {
+		return nil, err
+	}
 
 	return []byte(b.String()), nil
 }
@@ -533,20 +536,7 @@ func isErrorSchemaRef(schema ir.SchemaRef) bool {
 }
 
 func resolveRequestSchemaName(doc ir.Document, endpoint ir.Endpoint) (string, bool) {
-	if endpoint.RequestBody == nil {
-		return "", false
-	}
-
-	schema := endpoint.RequestBody.Schema
-	if schema.Ref != "" && schema.Ref != "GenericRequest" {
-		return normalizedSchemaRefName(schema)
-	}
-	if schema.Ref == "GenericRequest" {
-		if schemaName, ok := ir.ResolveGenericRequestBodySchemaName(doc, endpoint.OperationID); ok {
-			return schemaName, true
-		}
-	}
-	return "", false
+	return ir.ResolveRequestBodySchemaName(doc, endpoint)
 }
 
 func exportedName(operationID string) string {
@@ -618,8 +608,11 @@ func endpointHasCompatibilityParams(endpoint ir.Endpoint) bool {
 	return false
 }
 
-func emitLegacyRequestBodyAliases(b *strings.Builder, doc ir.Document) {
-	aliases := compatibilityRequestBodyAliases(doc)
+func emitLegacyRequestBodyAliases(b *strings.Builder, doc ir.Document) error {
+	aliases, err := compatibilityRequestBodyAliases(doc)
+	if err != nil {
+		return err
+	}
 	names := make([]string, 0, len(aliases))
 	for name := range aliases {
 		names = append(names, name)
@@ -633,16 +626,23 @@ func emitLegacyRequestBodyAliases(b *strings.Builder, doc ir.Document) {
 		b.WriteString(aliases[name])
 		b.WriteString("\n\n")
 	}
+
+	return nil
 }
 
-func compatibilityRequestBodyAliases(doc ir.Document) map[string]string {
+func compatibilityRequestBodyAliases(doc ir.Document) (map[string]string, error) {
 	aliases := make(map[string]string)
 	for _, endpoint := range doc.Endpoints {
 		if endpoint.RequestBody == nil {
 			continue
 		}
-		name := exportedName(endpoint.OperationID)
-		aliases[name+"JSONRequestBody"] = "Gen" + name + "JSONBody"
+
+		aliasName := exportedName(endpoint.OperationID) + "JSONRequestBody"
+		target, ok := compatibilityRequestBodyAliasTarget(doc, endpoint, aliasName)
+		if !ok {
+			return nil, fmt.Errorf("compat request-body alias generation for %s requires a named IR schema", endpoint.OperationID)
+		}
+		aliases[aliasName] = target
 	}
 
 	for alias, schemaName := range manualCompatibilityRequestBodyAliases {
@@ -652,7 +652,21 @@ func compatibilityRequestBodyAliases(doc ir.Document) map[string]string {
 		aliases[alias] = exportedName(schemaName)
 	}
 
-	return aliases
+	return aliases, nil
+}
+
+func compatibilityRequestBodyAliasTarget(doc ir.Document, endpoint ir.Endpoint, aliasName string) (string, bool) {
+	if schemaName, ok := manualCompatibilityRequestBodyAliases[aliasName]; ok {
+		if _, exists := doc.Schemas[schemaName]; exists {
+			return exportedName(schemaName), true
+		}
+	}
+
+	schemaName, ok := ir.ResolveRequestBodySchemaName(doc, endpoint)
+	if !ok {
+		return "", false
+	}
+	return genSchemaTypeName(schemaName), true
 }
 
 var manualCompatibilityRequestBodyAliases = map[string]string{
