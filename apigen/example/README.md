@@ -17,7 +17,6 @@ This is the canonical APIGen showcase: a small in-memory todo app with authored 
 - `api/gen/openapi.yaml`
 - `internal/api/gen/server.apigen.gen.go`
 - `internal/api/gen/request_models.gen.go`
-- `internal/api/gen/types.gen.go`
 - `cmd/cli/gen/apigen_registry.gen.go`
 
 ## Regenerate

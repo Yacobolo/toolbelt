@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"reflect"
 	"strings"
 
 	apigenchi "github.com/Yacobolo/toolbelt/apigen/runtime/chi"
@@ -227,12 +226,6 @@ type GenBadRequestJSONResponse struct {
 	Headers GenBadRequestResponseHeaders
 }
 
-// BadRequestResponseHeaders aliases the APIGen shared response headers for legacy handlers.
-type BadRequestResponseHeaders = GenBadRequestResponseHeaders
-
-// BadRequestJSONResponse aliases the APIGen shared JSON error type for legacy handlers.
-type BadRequestJSONResponse = GenBadRequestJSONResponse
-
 // GenConflictResponseHeaders represents the APIGen shared response headers for Conflict JSON errors.
 type GenConflictResponseHeaders struct {
 	XRateLimitLimit     int32
@@ -246,12 +239,6 @@ type GenConflictJSONResponse struct {
 
 	Headers GenConflictResponseHeaders
 }
-
-// ConflictResponseHeaders aliases the APIGen shared response headers for legacy handlers.
-type ConflictResponseHeaders = GenConflictResponseHeaders
-
-// ConflictJSONResponse aliases the APIGen shared JSON error type for legacy handlers.
-type ConflictJSONResponse = GenConflictJSONResponse
 
 // GenForbiddenResponseHeaders represents the APIGen shared response headers for Forbidden JSON errors.
 type GenForbiddenResponseHeaders struct {
@@ -267,12 +254,6 @@ type GenForbiddenJSONResponse struct {
 	Headers GenForbiddenResponseHeaders
 }
 
-// ForbiddenResponseHeaders aliases the APIGen shared response headers for legacy handlers.
-type ForbiddenResponseHeaders = GenForbiddenResponseHeaders
-
-// ForbiddenJSONResponse aliases the APIGen shared JSON error type for legacy handlers.
-type ForbiddenJSONResponse = GenForbiddenJSONResponse
-
 // GenInternalErrorResponseHeaders represents the APIGen shared response headers for InternalError JSON errors.
 type GenInternalErrorResponseHeaders struct {
 	XRateLimitLimit     int32
@@ -287,12 +268,6 @@ type GenInternalErrorJSONResponse struct {
 	Headers GenInternalErrorResponseHeaders
 }
 
-// InternalErrorResponseHeaders aliases the APIGen shared response headers for legacy handlers.
-type InternalErrorResponseHeaders = GenInternalErrorResponseHeaders
-
-// InternalErrorJSONResponse aliases the APIGen shared JSON error type for legacy handlers.
-type InternalErrorJSONResponse = GenInternalErrorJSONResponse
-
 // GenNotFoundResponseHeaders represents the APIGen shared response headers for NotFound JSON errors.
 type GenNotFoundResponseHeaders struct {
 	XRateLimitLimit     int32
@@ -306,12 +281,6 @@ type GenNotFoundJSONResponse struct {
 
 	Headers GenNotFoundResponseHeaders
 }
-
-// NotFoundResponseHeaders aliases the APIGen shared response headers for legacy handlers.
-type NotFoundResponseHeaders = GenNotFoundResponseHeaders
-
-// NotFoundJSONResponse aliases the APIGen shared JSON error type for legacy handlers.
-type NotFoundJSONResponse = GenNotFoundJSONResponse
 
 // GenRateLimitExceededResponseHeaders represents the APIGen shared response headers for RateLimitExceeded JSON errors.
 type GenRateLimitExceededResponseHeaders struct {
@@ -328,12 +297,6 @@ type GenRateLimitExceededJSONResponse struct {
 	Headers GenRateLimitExceededResponseHeaders
 }
 
-// RateLimitExceededResponseHeaders aliases the APIGen shared response headers for legacy handlers.
-type RateLimitExceededResponseHeaders = GenRateLimitExceededResponseHeaders
-
-// RateLimitExceededJSONResponse aliases the APIGen shared JSON error type for legacy handlers.
-type RateLimitExceededJSONResponse = GenRateLimitExceededJSONResponse
-
 // GenUnauthorizedResponseHeaders represents the APIGen shared response headers for Unauthorized JSON errors.
 type GenUnauthorizedResponseHeaders struct {
 	XRateLimitLimit     int32
@@ -347,12 +310,6 @@ type GenUnauthorizedJSONResponse struct {
 
 	Headers GenUnauthorizedResponseHeaders
 }
-
-// UnauthorizedResponseHeaders aliases the APIGen shared response headers for legacy handlers.
-type UnauthorizedResponseHeaders = GenUnauthorizedResponseHeaders
-
-// UnauthorizedJSONResponse aliases the APIGen shared JSON error type for legacy handlers.
-type UnauthorizedJSONResponse = GenUnauthorizedJSONResponse
 
 // GenListTodosParams represents the APIGen strict query parameter contract for ListTodos.
 type GenListTodosParams struct {
@@ -392,12 +349,6 @@ func (response GenListTodos200JSONResponse) VisitListTodosResponse(w http.Respon
 	return json.NewEncoder(w).Encode(response.Body)
 }
 
-// ListTodos200ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type ListTodos200ResponseHeaders = GenListTodos200ResponseHeaders
-
-// ListTodos200JSONResponse aliases the APIGen concrete response for legacy handlers.
-type ListTodos200JSONResponse = GenListTodos200JSONResponse
-
 // GenListTodos400ResponseHeaders aliases the APIGen shared response headers for ListTodos 400 errors.
 type GenListTodos400ResponseHeaders = GenBadRequestResponseHeaders
 
@@ -406,275 +357,125 @@ type GenListTodos400JSONResponse struct{ GenBadRequestJSONResponse }
 
 // VisitListTodosResponse writes ListTodos 400 responses to the client.
 func (response GenListTodos400JSONResponse) VisitListTodosResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: ListTodos 400 response body missing")
-	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(400)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// ListTodos400JSONResponse aliases the APIGen concrete response for legacy handlers.
-type ListTodos400JSONResponse = GenListTodos400JSONResponse
 
 // GenListTodos401ResponseHeaders aliases the APIGen shared response headers for ListTodos 401 errors.
 type GenListTodos401ResponseHeaders = GenUnauthorizedResponseHeaders
 
-// GenListTodos401JSONResponse is the APIGen legacy-compatible shared JSON response for ListTodos 401.
+// GenListTodos401JSONResponse is the APIGen shared JSON response for ListTodos 401.
 type GenListTodos401JSONResponse struct{ GenUnauthorizedJSONResponse }
 
 // VisitListTodosResponse writes ListTodos 401 responses to the client.
 func (response GenListTodos401JSONResponse) VisitListTodosResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: ListTodos 401 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(401)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// ListTodos401ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type ListTodos401ResponseHeaders = GenListTodos401ResponseHeaders
-
-// ListTodos401JSONResponse aliases the APIGen concrete response for legacy handlers.
-type ListTodos401JSONResponse = GenListTodos401JSONResponse
 
 // GenListTodos403ResponseHeaders aliases the APIGen shared response headers for ListTodos 403 errors.
 type GenListTodos403ResponseHeaders = GenForbiddenResponseHeaders
 
-// GenListTodos403JSONResponse is the APIGen legacy-compatible shared JSON response for ListTodos 403.
+// GenListTodos403JSONResponse is the APIGen shared JSON response for ListTodos 403.
 type GenListTodos403JSONResponse struct{ GenForbiddenJSONResponse }
 
 // VisitListTodosResponse writes ListTodos 403 responses to the client.
 func (response GenListTodos403JSONResponse) VisitListTodosResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: ListTodos 403 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(403)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// ListTodos403ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type ListTodos403ResponseHeaders = GenListTodos403ResponseHeaders
-
-// ListTodos403JSONResponse aliases the APIGen concrete response for legacy handlers.
-type ListTodos403JSONResponse = GenListTodos403JSONResponse
 
 // GenListTodos404ResponseHeaders aliases the APIGen shared response headers for ListTodos 404 errors.
 type GenListTodos404ResponseHeaders = GenNotFoundResponseHeaders
 
-// GenListTodos404JSONResponse is the APIGen legacy-compatible shared JSON response for ListTodos 404.
+// GenListTodos404JSONResponse is the APIGen shared JSON response for ListTodos 404.
 type GenListTodos404JSONResponse struct{ GenNotFoundJSONResponse }
 
 // VisitListTodosResponse writes ListTodos 404 responses to the client.
 func (response GenListTodos404JSONResponse) VisitListTodosResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: ListTodos 404 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// ListTodos404ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type ListTodos404ResponseHeaders = GenListTodos404ResponseHeaders
-
-// ListTodos404JSONResponse aliases the APIGen concrete response for legacy handlers.
-type ListTodos404JSONResponse = GenListTodos404JSONResponse
 
 // GenListTodos409ResponseHeaders aliases the APIGen shared response headers for ListTodos 409 errors.
 type GenListTodos409ResponseHeaders = GenConflictResponseHeaders
 
-// GenListTodos409JSONResponse is the APIGen legacy-compatible shared JSON response for ListTodos 409.
+// GenListTodos409JSONResponse is the APIGen shared JSON response for ListTodos 409.
 type GenListTodos409JSONResponse struct{ GenConflictJSONResponse }
 
 // VisitListTodosResponse writes ListTodos 409 responses to the client.
 func (response GenListTodos409JSONResponse) VisitListTodosResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: ListTodos 409 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(409)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// ListTodos409ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type ListTodos409ResponseHeaders = GenListTodos409ResponseHeaders
-
-// ListTodos409JSONResponse aliases the APIGen concrete response for legacy handlers.
-type ListTodos409JSONResponse = GenListTodos409JSONResponse
 
 // GenListTodos429ResponseHeaders aliases the APIGen shared response headers for ListTodos 429 errors.
 type GenListTodos429ResponseHeaders = GenRateLimitExceededResponseHeaders
 
-// GenListTodos429JSONResponse is the APIGen legacy-compatible shared JSON response for ListTodos 429.
+// GenListTodos429JSONResponse is the APIGen shared JSON response for ListTodos 429.
 type GenListTodos429JSONResponse struct {
 	GenRateLimitExceededJSONResponse
 }
 
 // VisitListTodosResponse writes ListTodos 429 responses to the client.
 func (response GenListTodos429JSONResponse) VisitListTodosResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("RetryAfter"); v.IsValid() {
-			w.Header().Set("Retry-After", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: ListTodos 429 response body missing")
-	}
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(429)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// ListTodos429ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type ListTodos429ResponseHeaders = GenListTodos429ResponseHeaders
-
-// ListTodos429JSONResponse aliases the APIGen concrete response for legacy handlers.
-type ListTodos429JSONResponse = GenListTodos429JSONResponse
 
 // GenListTodos500ResponseHeaders aliases the APIGen shared response headers for ListTodos 500 errors.
 type GenListTodos500ResponseHeaders = GenInternalErrorResponseHeaders
 
-// GenListTodos500JSONResponse is the APIGen legacy-compatible shared JSON response for ListTodos 500.
+// GenListTodos500JSONResponse is the APIGen shared JSON response for ListTodos 500.
 type GenListTodos500JSONResponse struct{ GenInternalErrorJSONResponse }
 
 // VisitListTodosResponse writes ListTodos 500 responses to the client.
 func (response GenListTodos500JSONResponse) VisitListTodosResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: ListTodos 500 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// ListTodos500ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type ListTodos500ResponseHeaders = GenListTodos500ResponseHeaders
-
-// ListTodos500JSONResponse aliases the APIGen concrete response for legacy handlers.
-type ListTodos500JSONResponse = GenListTodos500JSONResponse
 
 // GenListTodos502ResponseHeaders aliases the APIGen shared response headers for ListTodos 502 errors.
 type GenListTodos502ResponseHeaders = GenInternalErrorResponseHeaders
 
-// GenListTodos502JSONResponse is the APIGen legacy-compatible shared JSON response for ListTodos 502.
+// GenListTodos502JSONResponse is the APIGen shared JSON response for ListTodos 502.
 type GenListTodos502JSONResponse struct{ GenInternalErrorJSONResponse }
 
 // VisitListTodosResponse writes ListTodos 502 responses to the client.
 func (response GenListTodos502JSONResponse) VisitListTodosResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: ListTodos 502 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(502)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// ListTodos502ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type ListTodos502ResponseHeaders = GenListTodos502ResponseHeaders
-
-// ListTodos502JSONResponse aliases the APIGen concrete response for legacy handlers.
-type ListTodos502JSONResponse = GenListTodos502JSONResponse
 
 // GenCreateTodoRequest represents the APIGen strict request contract for CreateTodo.
 type GenCreateTodoRequest struct {
@@ -709,12 +510,6 @@ func (response GenCreateTodo201JSONResponse) VisitCreateTodoResponse(w http.Resp
 	return json.NewEncoder(w).Encode(response.Body)
 }
 
-// CreateTodo201ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type CreateTodo201ResponseHeaders = GenCreateTodo201ResponseHeaders
-
-// CreateTodo201JSONResponse aliases the APIGen concrete response for legacy handlers.
-type CreateTodo201JSONResponse = GenCreateTodo201JSONResponse
-
 // GenCreateTodo400ResponseHeaders aliases the APIGen shared response headers for CreateTodo 400 errors.
 type GenCreateTodo400ResponseHeaders = GenBadRequestResponseHeaders
 
@@ -723,275 +518,125 @@ type GenCreateTodo400JSONResponse struct{ GenBadRequestJSONResponse }
 
 // VisitCreateTodoResponse writes CreateTodo 400 responses to the client.
 func (response GenCreateTodo400JSONResponse) VisitCreateTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: CreateTodo 400 response body missing")
-	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(400)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// CreateTodo400JSONResponse aliases the APIGen concrete response for legacy handlers.
-type CreateTodo400JSONResponse = GenCreateTodo400JSONResponse
 
 // GenCreateTodo401ResponseHeaders aliases the APIGen shared response headers for CreateTodo 401 errors.
 type GenCreateTodo401ResponseHeaders = GenUnauthorizedResponseHeaders
 
-// GenCreateTodo401JSONResponse is the APIGen legacy-compatible shared JSON response for CreateTodo 401.
+// GenCreateTodo401JSONResponse is the APIGen shared JSON response for CreateTodo 401.
 type GenCreateTodo401JSONResponse struct{ GenUnauthorizedJSONResponse }
 
 // VisitCreateTodoResponse writes CreateTodo 401 responses to the client.
 func (response GenCreateTodo401JSONResponse) VisitCreateTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: CreateTodo 401 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(401)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// CreateTodo401ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type CreateTodo401ResponseHeaders = GenCreateTodo401ResponseHeaders
-
-// CreateTodo401JSONResponse aliases the APIGen concrete response for legacy handlers.
-type CreateTodo401JSONResponse = GenCreateTodo401JSONResponse
 
 // GenCreateTodo403ResponseHeaders aliases the APIGen shared response headers for CreateTodo 403 errors.
 type GenCreateTodo403ResponseHeaders = GenForbiddenResponseHeaders
 
-// GenCreateTodo403JSONResponse is the APIGen legacy-compatible shared JSON response for CreateTodo 403.
+// GenCreateTodo403JSONResponse is the APIGen shared JSON response for CreateTodo 403.
 type GenCreateTodo403JSONResponse struct{ GenForbiddenJSONResponse }
 
 // VisitCreateTodoResponse writes CreateTodo 403 responses to the client.
 func (response GenCreateTodo403JSONResponse) VisitCreateTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: CreateTodo 403 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(403)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// CreateTodo403ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type CreateTodo403ResponseHeaders = GenCreateTodo403ResponseHeaders
-
-// CreateTodo403JSONResponse aliases the APIGen concrete response for legacy handlers.
-type CreateTodo403JSONResponse = GenCreateTodo403JSONResponse
 
 // GenCreateTodo404ResponseHeaders aliases the APIGen shared response headers for CreateTodo 404 errors.
 type GenCreateTodo404ResponseHeaders = GenNotFoundResponseHeaders
 
-// GenCreateTodo404JSONResponse is the APIGen legacy-compatible shared JSON response for CreateTodo 404.
+// GenCreateTodo404JSONResponse is the APIGen shared JSON response for CreateTodo 404.
 type GenCreateTodo404JSONResponse struct{ GenNotFoundJSONResponse }
 
 // VisitCreateTodoResponse writes CreateTodo 404 responses to the client.
 func (response GenCreateTodo404JSONResponse) VisitCreateTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: CreateTodo 404 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// CreateTodo404ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type CreateTodo404ResponseHeaders = GenCreateTodo404ResponseHeaders
-
-// CreateTodo404JSONResponse aliases the APIGen concrete response for legacy handlers.
-type CreateTodo404JSONResponse = GenCreateTodo404JSONResponse
 
 // GenCreateTodo409ResponseHeaders aliases the APIGen shared response headers for CreateTodo 409 errors.
 type GenCreateTodo409ResponseHeaders = GenConflictResponseHeaders
 
-// GenCreateTodo409JSONResponse is the APIGen legacy-compatible shared JSON response for CreateTodo 409.
+// GenCreateTodo409JSONResponse is the APIGen shared JSON response for CreateTodo 409.
 type GenCreateTodo409JSONResponse struct{ GenConflictJSONResponse }
 
 // VisitCreateTodoResponse writes CreateTodo 409 responses to the client.
 func (response GenCreateTodo409JSONResponse) VisitCreateTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: CreateTodo 409 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(409)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// CreateTodo409ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type CreateTodo409ResponseHeaders = GenCreateTodo409ResponseHeaders
-
-// CreateTodo409JSONResponse aliases the APIGen concrete response for legacy handlers.
-type CreateTodo409JSONResponse = GenCreateTodo409JSONResponse
 
 // GenCreateTodo429ResponseHeaders aliases the APIGen shared response headers for CreateTodo 429 errors.
 type GenCreateTodo429ResponseHeaders = GenRateLimitExceededResponseHeaders
 
-// GenCreateTodo429JSONResponse is the APIGen legacy-compatible shared JSON response for CreateTodo 429.
+// GenCreateTodo429JSONResponse is the APIGen shared JSON response for CreateTodo 429.
 type GenCreateTodo429JSONResponse struct {
 	GenRateLimitExceededJSONResponse
 }
 
 // VisitCreateTodoResponse writes CreateTodo 429 responses to the client.
 func (response GenCreateTodo429JSONResponse) VisitCreateTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("RetryAfter"); v.IsValid() {
-			w.Header().Set("Retry-After", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: CreateTodo 429 response body missing")
-	}
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(429)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// CreateTodo429ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type CreateTodo429ResponseHeaders = GenCreateTodo429ResponseHeaders
-
-// CreateTodo429JSONResponse aliases the APIGen concrete response for legacy handlers.
-type CreateTodo429JSONResponse = GenCreateTodo429JSONResponse
 
 // GenCreateTodo500ResponseHeaders aliases the APIGen shared response headers for CreateTodo 500 errors.
 type GenCreateTodo500ResponseHeaders = GenInternalErrorResponseHeaders
 
-// GenCreateTodo500JSONResponse is the APIGen legacy-compatible shared JSON response for CreateTodo 500.
+// GenCreateTodo500JSONResponse is the APIGen shared JSON response for CreateTodo 500.
 type GenCreateTodo500JSONResponse struct{ GenInternalErrorJSONResponse }
 
 // VisitCreateTodoResponse writes CreateTodo 500 responses to the client.
 func (response GenCreateTodo500JSONResponse) VisitCreateTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: CreateTodo 500 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// CreateTodo500ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type CreateTodo500ResponseHeaders = GenCreateTodo500ResponseHeaders
-
-// CreateTodo500JSONResponse aliases the APIGen concrete response for legacy handlers.
-type CreateTodo500JSONResponse = GenCreateTodo500JSONResponse
 
 // GenCreateTodo502ResponseHeaders aliases the APIGen shared response headers for CreateTodo 502 errors.
 type GenCreateTodo502ResponseHeaders = GenInternalErrorResponseHeaders
 
-// GenCreateTodo502JSONResponse is the APIGen legacy-compatible shared JSON response for CreateTodo 502.
+// GenCreateTodo502JSONResponse is the APIGen shared JSON response for CreateTodo 502.
 type GenCreateTodo502JSONResponse struct{ GenInternalErrorJSONResponse }
 
 // VisitCreateTodoResponse writes CreateTodo 502 responses to the client.
 func (response GenCreateTodo502JSONResponse) VisitCreateTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: CreateTodo 502 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(502)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// CreateTodo502ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type CreateTodo502ResponseHeaders = GenCreateTodo502ResponseHeaders
-
-// CreateTodo502JSONResponse aliases the APIGen concrete response for legacy handlers.
-type CreateTodo502JSONResponse = GenCreateTodo502JSONResponse
 
 // GenCreateTodoJSONBody aliases the APIGen strict JSON request body schema for CreateTodo.
 type GenCreateTodoJSONBody = GenSchemaCreateTodoRequest
@@ -1027,12 +672,6 @@ func (response GenDeleteTodo204Response) VisitDeleteTodoResponse(w http.Response
 	return nil
 }
 
-// DeleteTodo204ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type DeleteTodo204ResponseHeaders = GenDeleteTodo204ResponseHeaders
-
-// DeleteTodo204Response aliases the APIGen concrete response for legacy handlers.
-type DeleteTodo204Response = GenDeleteTodo204Response
-
 // GenDeleteTodo404ResponseHeaders aliases the APIGen shared response headers for DeleteTodo 404 errors.
 type GenDeleteTodo404ResponseHeaders = GenNotFoundResponseHeaders
 
@@ -1041,275 +680,125 @@ type GenDeleteTodo404JSONResponse struct{ GenNotFoundJSONResponse }
 
 // VisitDeleteTodoResponse writes DeleteTodo 404 responses to the client.
 func (response GenDeleteTodo404JSONResponse) VisitDeleteTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: DeleteTodo 404 response body missing")
-	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// DeleteTodo404JSONResponse aliases the APIGen concrete response for legacy handlers.
-type DeleteTodo404JSONResponse = GenDeleteTodo404JSONResponse
 
 // GenDeleteTodo400ResponseHeaders aliases the APIGen shared response headers for DeleteTodo 400 errors.
 type GenDeleteTodo400ResponseHeaders = GenBadRequestResponseHeaders
 
-// GenDeleteTodo400JSONResponse is the APIGen legacy-compatible shared JSON response for DeleteTodo 400.
+// GenDeleteTodo400JSONResponse is the APIGen shared JSON response for DeleteTodo 400.
 type GenDeleteTodo400JSONResponse struct{ GenBadRequestJSONResponse }
 
 // VisitDeleteTodoResponse writes DeleteTodo 400 responses to the client.
 func (response GenDeleteTodo400JSONResponse) VisitDeleteTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: DeleteTodo 400 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(400)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// DeleteTodo400ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type DeleteTodo400ResponseHeaders = GenDeleteTodo400ResponseHeaders
-
-// DeleteTodo400JSONResponse aliases the APIGen concrete response for legacy handlers.
-type DeleteTodo400JSONResponse = GenDeleteTodo400JSONResponse
 
 // GenDeleteTodo401ResponseHeaders aliases the APIGen shared response headers for DeleteTodo 401 errors.
 type GenDeleteTodo401ResponseHeaders = GenUnauthorizedResponseHeaders
 
-// GenDeleteTodo401JSONResponse is the APIGen legacy-compatible shared JSON response for DeleteTodo 401.
+// GenDeleteTodo401JSONResponse is the APIGen shared JSON response for DeleteTodo 401.
 type GenDeleteTodo401JSONResponse struct{ GenUnauthorizedJSONResponse }
 
 // VisitDeleteTodoResponse writes DeleteTodo 401 responses to the client.
 func (response GenDeleteTodo401JSONResponse) VisitDeleteTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: DeleteTodo 401 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(401)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// DeleteTodo401ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type DeleteTodo401ResponseHeaders = GenDeleteTodo401ResponseHeaders
-
-// DeleteTodo401JSONResponse aliases the APIGen concrete response for legacy handlers.
-type DeleteTodo401JSONResponse = GenDeleteTodo401JSONResponse
 
 // GenDeleteTodo403ResponseHeaders aliases the APIGen shared response headers for DeleteTodo 403 errors.
 type GenDeleteTodo403ResponseHeaders = GenForbiddenResponseHeaders
 
-// GenDeleteTodo403JSONResponse is the APIGen legacy-compatible shared JSON response for DeleteTodo 403.
+// GenDeleteTodo403JSONResponse is the APIGen shared JSON response for DeleteTodo 403.
 type GenDeleteTodo403JSONResponse struct{ GenForbiddenJSONResponse }
 
 // VisitDeleteTodoResponse writes DeleteTodo 403 responses to the client.
 func (response GenDeleteTodo403JSONResponse) VisitDeleteTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: DeleteTodo 403 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(403)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// DeleteTodo403ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type DeleteTodo403ResponseHeaders = GenDeleteTodo403ResponseHeaders
-
-// DeleteTodo403JSONResponse aliases the APIGen concrete response for legacy handlers.
-type DeleteTodo403JSONResponse = GenDeleteTodo403JSONResponse
 
 // GenDeleteTodo409ResponseHeaders aliases the APIGen shared response headers for DeleteTodo 409 errors.
 type GenDeleteTodo409ResponseHeaders = GenConflictResponseHeaders
 
-// GenDeleteTodo409JSONResponse is the APIGen legacy-compatible shared JSON response for DeleteTodo 409.
+// GenDeleteTodo409JSONResponse is the APIGen shared JSON response for DeleteTodo 409.
 type GenDeleteTodo409JSONResponse struct{ GenConflictJSONResponse }
 
 // VisitDeleteTodoResponse writes DeleteTodo 409 responses to the client.
 func (response GenDeleteTodo409JSONResponse) VisitDeleteTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: DeleteTodo 409 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(409)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// DeleteTodo409ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type DeleteTodo409ResponseHeaders = GenDeleteTodo409ResponseHeaders
-
-// DeleteTodo409JSONResponse aliases the APIGen concrete response for legacy handlers.
-type DeleteTodo409JSONResponse = GenDeleteTodo409JSONResponse
 
 // GenDeleteTodo429ResponseHeaders aliases the APIGen shared response headers for DeleteTodo 429 errors.
 type GenDeleteTodo429ResponseHeaders = GenRateLimitExceededResponseHeaders
 
-// GenDeleteTodo429JSONResponse is the APIGen legacy-compatible shared JSON response for DeleteTodo 429.
+// GenDeleteTodo429JSONResponse is the APIGen shared JSON response for DeleteTodo 429.
 type GenDeleteTodo429JSONResponse struct {
 	GenRateLimitExceededJSONResponse
 }
 
 // VisitDeleteTodoResponse writes DeleteTodo 429 responses to the client.
 func (response GenDeleteTodo429JSONResponse) VisitDeleteTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("RetryAfter"); v.IsValid() {
-			w.Header().Set("Retry-After", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: DeleteTodo 429 response body missing")
-	}
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(429)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// DeleteTodo429ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type DeleteTodo429ResponseHeaders = GenDeleteTodo429ResponseHeaders
-
-// DeleteTodo429JSONResponse aliases the APIGen concrete response for legacy handlers.
-type DeleteTodo429JSONResponse = GenDeleteTodo429JSONResponse
 
 // GenDeleteTodo500ResponseHeaders aliases the APIGen shared response headers for DeleteTodo 500 errors.
 type GenDeleteTodo500ResponseHeaders = GenInternalErrorResponseHeaders
 
-// GenDeleteTodo500JSONResponse is the APIGen legacy-compatible shared JSON response for DeleteTodo 500.
+// GenDeleteTodo500JSONResponse is the APIGen shared JSON response for DeleteTodo 500.
 type GenDeleteTodo500JSONResponse struct{ GenInternalErrorJSONResponse }
 
 // VisitDeleteTodoResponse writes DeleteTodo 500 responses to the client.
 func (response GenDeleteTodo500JSONResponse) VisitDeleteTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: DeleteTodo 500 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// DeleteTodo500ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type DeleteTodo500ResponseHeaders = GenDeleteTodo500ResponseHeaders
-
-// DeleteTodo500JSONResponse aliases the APIGen concrete response for legacy handlers.
-type DeleteTodo500JSONResponse = GenDeleteTodo500JSONResponse
 
 // GenDeleteTodo502ResponseHeaders aliases the APIGen shared response headers for DeleteTodo 502 errors.
 type GenDeleteTodo502ResponseHeaders = GenInternalErrorResponseHeaders
 
-// GenDeleteTodo502JSONResponse is the APIGen legacy-compatible shared JSON response for DeleteTodo 502.
+// GenDeleteTodo502JSONResponse is the APIGen shared JSON response for DeleteTodo 502.
 type GenDeleteTodo502JSONResponse struct{ GenInternalErrorJSONResponse }
 
 // VisitDeleteTodoResponse writes DeleteTodo 502 responses to the client.
 func (response GenDeleteTodo502JSONResponse) VisitDeleteTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: DeleteTodo 502 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(502)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// DeleteTodo502ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type DeleteTodo502ResponseHeaders = GenDeleteTodo502ResponseHeaders
-
-// DeleteTodo502JSONResponse aliases the APIGen concrete response for legacy handlers.
-type DeleteTodo502JSONResponse = GenDeleteTodo502JSONResponse
 
 // GenGetTodoRequest represents the APIGen strict request contract for GetTodo.
 type GenGetTodoRequest struct {
@@ -1344,12 +833,6 @@ func (response GenGetTodo200JSONResponse) VisitGetTodoResponse(w http.ResponseWr
 	return json.NewEncoder(w).Encode(response.Body)
 }
 
-// GetTodo200ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type GetTodo200ResponseHeaders = GenGetTodo200ResponseHeaders
-
-// GetTodo200JSONResponse aliases the APIGen concrete response for legacy handlers.
-type GetTodo200JSONResponse = GenGetTodo200JSONResponse
-
 // GenGetTodo404ResponseHeaders aliases the APIGen shared response headers for GetTodo 404 errors.
 type GenGetTodo404ResponseHeaders = GenNotFoundResponseHeaders
 
@@ -1358,275 +841,125 @@ type GenGetTodo404JSONResponse struct{ GenNotFoundJSONResponse }
 
 // VisitGetTodoResponse writes GetTodo 404 responses to the client.
 func (response GenGetTodo404JSONResponse) VisitGetTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: GetTodo 404 response body missing")
-	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// GetTodo404JSONResponse aliases the APIGen concrete response for legacy handlers.
-type GetTodo404JSONResponse = GenGetTodo404JSONResponse
 
 // GenGetTodo400ResponseHeaders aliases the APIGen shared response headers for GetTodo 400 errors.
 type GenGetTodo400ResponseHeaders = GenBadRequestResponseHeaders
 
-// GenGetTodo400JSONResponse is the APIGen legacy-compatible shared JSON response for GetTodo 400.
+// GenGetTodo400JSONResponse is the APIGen shared JSON response for GetTodo 400.
 type GenGetTodo400JSONResponse struct{ GenBadRequestJSONResponse }
 
 // VisitGetTodoResponse writes GetTodo 400 responses to the client.
 func (response GenGetTodo400JSONResponse) VisitGetTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: GetTodo 400 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(400)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// GetTodo400ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type GetTodo400ResponseHeaders = GenGetTodo400ResponseHeaders
-
-// GetTodo400JSONResponse aliases the APIGen concrete response for legacy handlers.
-type GetTodo400JSONResponse = GenGetTodo400JSONResponse
 
 // GenGetTodo401ResponseHeaders aliases the APIGen shared response headers for GetTodo 401 errors.
 type GenGetTodo401ResponseHeaders = GenUnauthorizedResponseHeaders
 
-// GenGetTodo401JSONResponse is the APIGen legacy-compatible shared JSON response for GetTodo 401.
+// GenGetTodo401JSONResponse is the APIGen shared JSON response for GetTodo 401.
 type GenGetTodo401JSONResponse struct{ GenUnauthorizedJSONResponse }
 
 // VisitGetTodoResponse writes GetTodo 401 responses to the client.
 func (response GenGetTodo401JSONResponse) VisitGetTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: GetTodo 401 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(401)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// GetTodo401ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type GetTodo401ResponseHeaders = GenGetTodo401ResponseHeaders
-
-// GetTodo401JSONResponse aliases the APIGen concrete response for legacy handlers.
-type GetTodo401JSONResponse = GenGetTodo401JSONResponse
 
 // GenGetTodo403ResponseHeaders aliases the APIGen shared response headers for GetTodo 403 errors.
 type GenGetTodo403ResponseHeaders = GenForbiddenResponseHeaders
 
-// GenGetTodo403JSONResponse is the APIGen legacy-compatible shared JSON response for GetTodo 403.
+// GenGetTodo403JSONResponse is the APIGen shared JSON response for GetTodo 403.
 type GenGetTodo403JSONResponse struct{ GenForbiddenJSONResponse }
 
 // VisitGetTodoResponse writes GetTodo 403 responses to the client.
 func (response GenGetTodo403JSONResponse) VisitGetTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: GetTodo 403 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(403)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// GetTodo403ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type GetTodo403ResponseHeaders = GenGetTodo403ResponseHeaders
-
-// GetTodo403JSONResponse aliases the APIGen concrete response for legacy handlers.
-type GetTodo403JSONResponse = GenGetTodo403JSONResponse
 
 // GenGetTodo409ResponseHeaders aliases the APIGen shared response headers for GetTodo 409 errors.
 type GenGetTodo409ResponseHeaders = GenConflictResponseHeaders
 
-// GenGetTodo409JSONResponse is the APIGen legacy-compatible shared JSON response for GetTodo 409.
+// GenGetTodo409JSONResponse is the APIGen shared JSON response for GetTodo 409.
 type GenGetTodo409JSONResponse struct{ GenConflictJSONResponse }
 
 // VisitGetTodoResponse writes GetTodo 409 responses to the client.
 func (response GenGetTodo409JSONResponse) VisitGetTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: GetTodo 409 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(409)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// GetTodo409ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type GetTodo409ResponseHeaders = GenGetTodo409ResponseHeaders
-
-// GetTodo409JSONResponse aliases the APIGen concrete response for legacy handlers.
-type GetTodo409JSONResponse = GenGetTodo409JSONResponse
 
 // GenGetTodo429ResponseHeaders aliases the APIGen shared response headers for GetTodo 429 errors.
 type GenGetTodo429ResponseHeaders = GenRateLimitExceededResponseHeaders
 
-// GenGetTodo429JSONResponse is the APIGen legacy-compatible shared JSON response for GetTodo 429.
+// GenGetTodo429JSONResponse is the APIGen shared JSON response for GetTodo 429.
 type GenGetTodo429JSONResponse struct {
 	GenRateLimitExceededJSONResponse
 }
 
 // VisitGetTodoResponse writes GetTodo 429 responses to the client.
 func (response GenGetTodo429JSONResponse) VisitGetTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("RetryAfter"); v.IsValid() {
-			w.Header().Set("Retry-After", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: GetTodo 429 response body missing")
-	}
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(429)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// GetTodo429ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type GetTodo429ResponseHeaders = GenGetTodo429ResponseHeaders
-
-// GetTodo429JSONResponse aliases the APIGen concrete response for legacy handlers.
-type GetTodo429JSONResponse = GenGetTodo429JSONResponse
 
 // GenGetTodo500ResponseHeaders aliases the APIGen shared response headers for GetTodo 500 errors.
 type GenGetTodo500ResponseHeaders = GenInternalErrorResponseHeaders
 
-// GenGetTodo500JSONResponse is the APIGen legacy-compatible shared JSON response for GetTodo 500.
+// GenGetTodo500JSONResponse is the APIGen shared JSON response for GetTodo 500.
 type GenGetTodo500JSONResponse struct{ GenInternalErrorJSONResponse }
 
 // VisitGetTodoResponse writes GetTodo 500 responses to the client.
 func (response GenGetTodo500JSONResponse) VisitGetTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: GetTodo 500 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// GetTodo500ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type GetTodo500ResponseHeaders = GenGetTodo500ResponseHeaders
-
-// GetTodo500JSONResponse aliases the APIGen concrete response for legacy handlers.
-type GetTodo500JSONResponse = GenGetTodo500JSONResponse
 
 // GenGetTodo502ResponseHeaders aliases the APIGen shared response headers for GetTodo 502 errors.
 type GenGetTodo502ResponseHeaders = GenInternalErrorResponseHeaders
 
-// GenGetTodo502JSONResponse is the APIGen legacy-compatible shared JSON response for GetTodo 502.
+// GenGetTodo502JSONResponse is the APIGen shared JSON response for GetTodo 502.
 type GenGetTodo502JSONResponse struct{ GenInternalErrorJSONResponse }
 
 // VisitGetTodoResponse writes GetTodo 502 responses to the client.
 func (response GenGetTodo502JSONResponse) VisitGetTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: GetTodo 502 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(502)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// GetTodo502ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type GetTodo502ResponseHeaders = GenGetTodo502ResponseHeaders
-
-// GetTodo502JSONResponse aliases the APIGen concrete response for legacy handlers.
-type GetTodo502JSONResponse = GenGetTodo502JSONResponse
 
 // GenCompleteTodoRequest represents the APIGen strict request contract for CompleteTodo.
 type GenCompleteTodoRequest struct {
@@ -1661,12 +994,6 @@ func (response GenCompleteTodo200JSONResponse) VisitCompleteTodoResponse(w http.
 	return json.NewEncoder(w).Encode(response.Body)
 }
 
-// CompleteTodo200ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type CompleteTodo200ResponseHeaders = GenCompleteTodo200ResponseHeaders
-
-// CompleteTodo200JSONResponse aliases the APIGen concrete response for legacy handlers.
-type CompleteTodo200JSONResponse = GenCompleteTodo200JSONResponse
-
 // GenCompleteTodo404ResponseHeaders aliases the APIGen shared response headers for CompleteTodo 404 errors.
 type GenCompleteTodo404ResponseHeaders = GenNotFoundResponseHeaders
 
@@ -1675,275 +1002,125 @@ type GenCompleteTodo404JSONResponse struct{ GenNotFoundJSONResponse }
 
 // VisitCompleteTodoResponse writes CompleteTodo 404 responses to the client.
 func (response GenCompleteTodo404JSONResponse) VisitCompleteTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: CompleteTodo 404 response body missing")
-	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// CompleteTodo404JSONResponse aliases the APIGen concrete response for legacy handlers.
-type CompleteTodo404JSONResponse = GenCompleteTodo404JSONResponse
 
 // GenCompleteTodo400ResponseHeaders aliases the APIGen shared response headers for CompleteTodo 400 errors.
 type GenCompleteTodo400ResponseHeaders = GenBadRequestResponseHeaders
 
-// GenCompleteTodo400JSONResponse is the APIGen legacy-compatible shared JSON response for CompleteTodo 400.
+// GenCompleteTodo400JSONResponse is the APIGen shared JSON response for CompleteTodo 400.
 type GenCompleteTodo400JSONResponse struct{ GenBadRequestJSONResponse }
 
 // VisitCompleteTodoResponse writes CompleteTodo 400 responses to the client.
 func (response GenCompleteTodo400JSONResponse) VisitCompleteTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: CompleteTodo 400 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(400)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// CompleteTodo400ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type CompleteTodo400ResponseHeaders = GenCompleteTodo400ResponseHeaders
-
-// CompleteTodo400JSONResponse aliases the APIGen concrete response for legacy handlers.
-type CompleteTodo400JSONResponse = GenCompleteTodo400JSONResponse
 
 // GenCompleteTodo401ResponseHeaders aliases the APIGen shared response headers for CompleteTodo 401 errors.
 type GenCompleteTodo401ResponseHeaders = GenUnauthorizedResponseHeaders
 
-// GenCompleteTodo401JSONResponse is the APIGen legacy-compatible shared JSON response for CompleteTodo 401.
+// GenCompleteTodo401JSONResponse is the APIGen shared JSON response for CompleteTodo 401.
 type GenCompleteTodo401JSONResponse struct{ GenUnauthorizedJSONResponse }
 
 // VisitCompleteTodoResponse writes CompleteTodo 401 responses to the client.
 func (response GenCompleteTodo401JSONResponse) VisitCompleteTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: CompleteTodo 401 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(401)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// CompleteTodo401ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type CompleteTodo401ResponseHeaders = GenCompleteTodo401ResponseHeaders
-
-// CompleteTodo401JSONResponse aliases the APIGen concrete response for legacy handlers.
-type CompleteTodo401JSONResponse = GenCompleteTodo401JSONResponse
 
 // GenCompleteTodo403ResponseHeaders aliases the APIGen shared response headers for CompleteTodo 403 errors.
 type GenCompleteTodo403ResponseHeaders = GenForbiddenResponseHeaders
 
-// GenCompleteTodo403JSONResponse is the APIGen legacy-compatible shared JSON response for CompleteTodo 403.
+// GenCompleteTodo403JSONResponse is the APIGen shared JSON response for CompleteTodo 403.
 type GenCompleteTodo403JSONResponse struct{ GenForbiddenJSONResponse }
 
 // VisitCompleteTodoResponse writes CompleteTodo 403 responses to the client.
 func (response GenCompleteTodo403JSONResponse) VisitCompleteTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: CompleteTodo 403 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(403)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// CompleteTodo403ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type CompleteTodo403ResponseHeaders = GenCompleteTodo403ResponseHeaders
-
-// CompleteTodo403JSONResponse aliases the APIGen concrete response for legacy handlers.
-type CompleteTodo403JSONResponse = GenCompleteTodo403JSONResponse
 
 // GenCompleteTodo409ResponseHeaders aliases the APIGen shared response headers for CompleteTodo 409 errors.
 type GenCompleteTodo409ResponseHeaders = GenConflictResponseHeaders
 
-// GenCompleteTodo409JSONResponse is the APIGen legacy-compatible shared JSON response for CompleteTodo 409.
+// GenCompleteTodo409JSONResponse is the APIGen shared JSON response for CompleteTodo 409.
 type GenCompleteTodo409JSONResponse struct{ GenConflictJSONResponse }
 
 // VisitCompleteTodoResponse writes CompleteTodo 409 responses to the client.
 func (response GenCompleteTodo409JSONResponse) VisitCompleteTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: CompleteTodo 409 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(409)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// CompleteTodo409ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type CompleteTodo409ResponseHeaders = GenCompleteTodo409ResponseHeaders
-
-// CompleteTodo409JSONResponse aliases the APIGen concrete response for legacy handlers.
-type CompleteTodo409JSONResponse = GenCompleteTodo409JSONResponse
 
 // GenCompleteTodo429ResponseHeaders aliases the APIGen shared response headers for CompleteTodo 429 errors.
 type GenCompleteTodo429ResponseHeaders = GenRateLimitExceededResponseHeaders
 
-// GenCompleteTodo429JSONResponse is the APIGen legacy-compatible shared JSON response for CompleteTodo 429.
+// GenCompleteTodo429JSONResponse is the APIGen shared JSON response for CompleteTodo 429.
 type GenCompleteTodo429JSONResponse struct {
 	GenRateLimitExceededJSONResponse
 }
 
 // VisitCompleteTodoResponse writes CompleteTodo 429 responses to the client.
 func (response GenCompleteTodo429JSONResponse) VisitCompleteTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("RetryAfter"); v.IsValid() {
-			w.Header().Set("Retry-After", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: CompleteTodo 429 response body missing")
-	}
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(429)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// CompleteTodo429ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type CompleteTodo429ResponseHeaders = GenCompleteTodo429ResponseHeaders
-
-// CompleteTodo429JSONResponse aliases the APIGen concrete response for legacy handlers.
-type CompleteTodo429JSONResponse = GenCompleteTodo429JSONResponse
 
 // GenCompleteTodo500ResponseHeaders aliases the APIGen shared response headers for CompleteTodo 500 errors.
 type GenCompleteTodo500ResponseHeaders = GenInternalErrorResponseHeaders
 
-// GenCompleteTodo500JSONResponse is the APIGen legacy-compatible shared JSON response for CompleteTodo 500.
+// GenCompleteTodo500JSONResponse is the APIGen shared JSON response for CompleteTodo 500.
 type GenCompleteTodo500JSONResponse struct{ GenInternalErrorJSONResponse }
 
 // VisitCompleteTodoResponse writes CompleteTodo 500 responses to the client.
 func (response GenCompleteTodo500JSONResponse) VisitCompleteTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: CompleteTodo 500 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// CompleteTodo500ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type CompleteTodo500ResponseHeaders = GenCompleteTodo500ResponseHeaders
-
-// CompleteTodo500JSONResponse aliases the APIGen concrete response for legacy handlers.
-type CompleteTodo500JSONResponse = GenCompleteTodo500JSONResponse
 
 // GenCompleteTodo502ResponseHeaders aliases the APIGen shared response headers for CompleteTodo 502 errors.
 type GenCompleteTodo502ResponseHeaders = GenInternalErrorResponseHeaders
 
-// GenCompleteTodo502JSONResponse is the APIGen legacy-compatible shared JSON response for CompleteTodo 502.
+// GenCompleteTodo502JSONResponse is the APIGen shared JSON response for CompleteTodo 502.
 type GenCompleteTodo502JSONResponse struct{ GenInternalErrorJSONResponse }
 
 // VisitCompleteTodoResponse writes CompleteTodo 502 responses to the client.
 func (response GenCompleteTodo502JSONResponse) VisitCompleteTodoResponse(w http.ResponseWriter) error {
-	rv := reflect.ValueOf(response)
-	headers := rv.FieldByName("Headers")
-	if headers.IsValid() {
-		if v := headers.FieldByName("XRateLimitLimit"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitRemaining"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(v.Interface()))
-		}
-		if v := headers.FieldByName("XRateLimitReset"); v.IsValid() {
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(v.Interface()))
-		}
-	}
-	body := rv.FieldByName("Body")
-	if !body.IsValid() {
-		return fmt.Errorf("apigen: CompleteTodo 502 response body missing")
-	}
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
+	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(502)
-	return json.NewEncoder(w).Encode(body.Interface())
+	return json.NewEncoder(w).Encode(response.Body)
 }
-
-// CompleteTodo502ResponseHeaders aliases the APIGen-owned response headers for legacy handlers.
-type CompleteTodo502ResponseHeaders = GenCompleteTodo502ResponseHeaders
-
-// CompleteTodo502JSONResponse aliases the APIGen concrete response for legacy handlers.
-type CompleteTodo502JSONResponse = GenCompleteTodo502JSONResponse
 
 // GenStrictServerInterface represents strict handlers for APIGen transport dispatch.
 type GenStrictServerInterface interface {

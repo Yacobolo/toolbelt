@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/Yacobolo/toolbelt/apigen/ir"
-
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,9 +19,7 @@ func TestEmit_AliasesRequestRoots(t *testing.T) {
 
 	b, err := Emit(doc, Options{})
 	require.NoError(t, err)
-	content := string(b)
-
-	require.Contains(t, content, "type GenSchemaCreateWidgetRequest = CreateWidgetRequest")
+	require.Contains(t, string(b), "type GenSchemaCreateWidgetRequest = CreateWidgetRequest")
 }
 
 func TestEmit_AliasesNonStructRequestRoots(t *testing.T) {
@@ -40,7 +37,7 @@ func TestEmit_AliasesNonStructRequestRoots(t *testing.T) {
 	require.Contains(t, string(b), "type GenSchemaSetDefaultCatalogRequest = SetDefaultCatalogRequest")
 }
 
-func TestEmitWithResponseRoots_AliasesSafeDirectResponseSchemas(t *testing.T) {
+func TestEmit_AliasesSafeDirectResponseSchemas(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
@@ -53,7 +50,7 @@ func TestEmitWithResponseRoots_AliasesSafeDirectResponseSchemas(t *testing.T) {
 		},
 	}
 
-	b, err := EmitWithResponseRoots(doc, Options{})
+	b, err := Emit(doc, Options{})
 	require.NoError(t, err)
 	content := string(b)
 
@@ -61,7 +58,7 @@ func TestEmitWithResponseRoots_AliasesSafeDirectResponseSchemas(t *testing.T) {
 	require.Contains(t, content, "type GenSchemaModel = Model")
 }
 
-func TestEmitWithResponseRoots_EmitsAPIGenOwnedGenericResponse(t *testing.T) {
+func TestEmit_EmitsAPIGenOwnedGenericResponse(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
@@ -78,7 +75,7 @@ func TestEmitWithResponseRoots_EmitsAPIGenOwnedGenericResponse(t *testing.T) {
 		},
 	}
 
-	b, err := EmitWithResponseRoots(doc, Options{})
+	b, err := Emit(doc, Options{})
 	require.NoError(t, err)
 	content := string(b)
 
@@ -87,7 +84,7 @@ func TestEmitWithResponseRoots_EmitsAPIGenOwnedGenericResponse(t *testing.T) {
 	require.Contains(t, content, "Data *GenSchemaRecord `json:\"data,omitempty\"`")
 }
 
-func TestEmitWithResponseRoots_PreservesSchemaRootWhenResponseShapeMetadataExists(t *testing.T) {
+func TestEmit_PreservesSchemaRootWhenResponseShapeMetadataExists(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
@@ -109,7 +106,7 @@ func TestEmitWithResponseRoots_PreservesSchemaRootWhenResponseShapeMetadataExist
 		},
 	}
 
-	b, err := EmitWithResponseRoots(doc, Options{})
+	b, err := Emit(doc, Options{})
 	require.NoError(t, err)
 	content := string(b)
 
@@ -143,7 +140,7 @@ func TestEmit_ApigenOwnedSchemaNames(t *testing.T) {
 		},
 	}
 
-	b, err := EmitWithResponseRoots(doc, Options{})
+	b, err := Emit(doc, Options{})
 	require.NoError(t, err)
 	content := string(b)
 
@@ -153,182 +150,7 @@ func TestEmit_ApigenOwnedSchemaNames(t *testing.T) {
 	require.Contains(t, content, "Columns []any `json:\"columns\"`")
 }
 
-func TestEmitStandaloneCompatibilityTypes_EmitsConcreteCanonicalTypes(t *testing.T) {
-	t.Helper()
-
-	doc := ir.Document{
-		Schemas: map[string]ir.Schema{
-			"WidgetState": {
-				Type: "string",
-				Enum: []string{"draft", "published"},
-			},
-			"CreateWidgetRequest": {
-				Type: "object",
-				Properties: map[string]ir.SchemaProperty{
-					"name": {Schema: ir.SchemaRef{Type: "string"}},
-				},
-				Required: []string{"name"},
-			},
-			"PaginatedWidgets": {
-				Type: "object",
-				Properties: map[string]ir.SchemaProperty{
-					"data": {Schema: ir.SchemaRef{Ref: "WidgetList"}},
-				},
-			},
-			"WidgetList": {
-				Type:  "array",
-				Items: &ir.SchemaRef{Ref: "Widget"},
-			},
-			"Widget": {
-				Type: "object",
-				Properties: map[string]ir.SchemaProperty{
-					"id": {Schema: ir.SchemaRef{Type: "string"}},
-				},
-				Required: []string{"id"},
-			},
-			"AuditWidget": {
-				Type: "object",
-				Properties: map[string]ir.SchemaProperty{
-					"state": {Schema: ir.SchemaRef{Ref: "WidgetState"}},
-				},
-			},
-		},
-		Endpoints: []ir.Endpoint{
-			{
-				OperationID: "createWidget",
-				RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "CreateWidgetRequest"}},
-			},
-			{
-				OperationID: "listWidgets",
-				Parameters: []ir.Parameter{
-					{Name: "max_results", In: "query", Schema: ir.SchemaRef{Type: "integer", Format: "int32"}},
-				},
-				Responses: []ir.Response{{StatusCode: 200, Schema: &ir.SchemaRef{Ref: "PaginatedWidgets"}}},
-			},
-		},
-	}
-
-	b, err := EmitStandaloneCompatibilityTypes(doc, Options{})
-	require.NoError(t, err)
-	content := string(b)
-
-	require.Contains(t, content, "type CreateWidgetRequest struct")
-	require.Contains(t, content, "Name string `json:\"name\"`")
-	require.Contains(t, content, "type Widget struct")
-	require.Contains(t, content, "type WidgetList []Widget")
-	require.Contains(t, content, "type PaginatedWidgets struct")
-	require.Contains(t, content, "type WidgetState string")
-	require.Contains(t, content, "const (")
-	require.Contains(t, content, "WidgetStateDraft WidgetState = \"draft\"")
-	require.Contains(t, content, "WidgetStatePublished WidgetState = \"published\"")
-	require.Contains(t, content, "type AuditWidget struct")
-	require.Contains(t, content, "type ListWidgetsParams = GenListWidgetsParams")
-	require.Contains(t, content, "type CreateWidgetJSONRequestBody = GenSchemaCreateWidgetRequest")
-	require.NotContains(t, content, "GenCreateWidgetJSONBody")
-}
-
-func TestEmitStandaloneCompatibilityTypes_EmitsLegacyBareEnumConstantsWhenUnique(t *testing.T) {
-	t.Helper()
-
-	doc := ir.Document{
-		Schemas: map[string]ir.Schema{
-			"ComputeEndpointType": {
-				Type: "string",
-				Enum: []string{"LOCAL", "REMOTE"},
-			},
-			"PipelineRunStatus": {
-				Type: "string",
-				Enum: []string{"RUNNING", "FAILED"},
-			},
-			"NotebookSessionState": {
-				Type: "string",
-				Enum: []string{"RUNNING", "IDLE"},
-			},
-		},
-	}
-
-	b, err := EmitStandaloneCompatibilityTypes(doc, Options{})
-	require.NoError(t, err)
-	content := string(b)
-
-	require.Contains(t, content, "ComputeEndpointTypeLOCAL ComputeEndpointType = \"LOCAL\"")
-	require.Contains(t, content, "LOCAL ComputeEndpointType = \"LOCAL\"")
-	require.Contains(t, content, "ComputeEndpointTypeREMOTE ComputeEndpointType = \"REMOTE\"")
-	require.Contains(t, content, "REMOTE ComputeEndpointType = \"REMOTE\"")
-	require.Contains(t, content, "PipelineRunStatusRUNNING PipelineRunStatus = \"RUNNING\"")
-	require.Contains(t, content, "NotebookSessionStateRUNNING NotebookSessionState = \"RUNNING\"")
-	require.NotContains(t, content, "\n\tRUNNING PipelineRunStatus = \"RUNNING\"\n")
-}
-
-func TestEmitStandaloneCompatibilityTypes_EmitsTypePrefixedEnumConstantsForMixedCaseValues(t *testing.T) {
-	t.Helper()
-
-	doc := ir.Document{
-		Schemas: map[string]ir.Schema{
-			"ComputeAssignmentPrincipalType": {
-				Type: "string",
-				Enum: []string{"user", "group"},
-			},
-		},
-	}
-
-	b, err := EmitStandaloneCompatibilityTypes(doc, Options{})
-	require.NoError(t, err)
-	content := string(b)
-
-	require.Contains(t, content, "ComputeAssignmentPrincipalTypeUser ComputeAssignmentPrincipalType = \"user\"")
-	require.Contains(t, content, "ComputeAssignmentPrincipalTypeGroup ComputeAssignmentPrincipalType = \"group\"")
-	require.NotContains(t, content, "\n\tUser ComputeAssignmentPrincipalType = \"user\"\n")
-}
-
-func TestEmitStandaloneCompatibilityTypes_EmitsManualRequestBodyAliasesWhenSchemasExist(t *testing.T) {
-	t.Helper()
-
-	doc := ir.Document{
-		Schemas: map[string]ir.Schema{
-			"LocalLoginRequest": {
-				Type: "object",
-				Properties: map[string]ir.SchemaProperty{
-					"email": {Schema: ir.SchemaRef{Type: "string"}},
-				},
-			},
-		},
-	}
-
-	b, err := EmitStandaloneCompatibilityTypes(doc, Options{})
-	require.NoError(t, err)
-	require.Contains(t, string(b), "type LocalLoginJSONRequestBody = LocalLoginRequest")
-}
-
-func TestEmitStandaloneCompatibilityTypes_UsesContractFirstAliasForResolvedGenericRequest(t *testing.T) {
-	t.Helper()
-
-	doc := ir.Document{
-		Schemas: map[string]ir.Schema{
-			"CreatePipelineRequest": {
-				Type: "object",
-				Properties: map[string]ir.SchemaProperty{
-					"name": {Schema: ir.SchemaRef{Type: "string"}},
-				},
-			},
-		},
-		Endpoints: []ir.Endpoint{
-			{
-				OperationID: "createPipeline",
-				RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "GenericRequest"}},
-			},
-		},
-	}
-
-	b, err := EmitStandaloneCompatibilityTypes(doc, Options{})
-	require.NoError(t, err)
-	content := string(b)
-
-	require.Contains(t, content, "type CreatePipelineJSONRequestBody = GenSchemaCreatePipelineRequest")
-	require.NotContains(t, content, "GenCreatePipelineJSONBody")
-}
-
-func TestEmitStandaloneCompatibilityTypes_FailsForUnresolvedRequestBodyAlias(t *testing.T) {
+func TestEmit_FailsForUnresolvedRequestBodySchema(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
@@ -343,21 +165,20 @@ func TestEmitStandaloneCompatibilityTypes_FailsForUnresolvedRequestBodyAlias(t *
 		},
 	}
 
-	_, err := EmitStandaloneCompatibilityTypes(doc, Options{})
+	_, err := Emit(doc, Options{})
 	require.Error(t, err)
-	require.ErrorContains(t, err, "compat request-body alias generation")
+	require.ErrorContains(t, err, "request body generation")
 	require.ErrorContains(t, err, "createWidget")
 }
 
-func TestEmitStandaloneCompatibilityTypes_EmitsLegacyGenericPlaceholders(t *testing.T) {
+func TestEmit_DoesNotEmitCompatibilityPlaceholders(t *testing.T) {
 	t.Helper()
 
-	b, err := EmitStandaloneCompatibilityTypes(ir.Document{}, Options{})
+	b, err := Emit(ir.Document{}, Options{})
 	require.NoError(t, err)
 	content := string(b)
 
-	require.Contains(t, content, "type GenericRequest struct")
-	require.Contains(t, content, "Payload *map[string]string `json:\"payload,omitempty\"`")
-	require.Contains(t, content, "type GenericResponse struct")
-	require.Contains(t, content, "Data *map[string]string `json:\"data,omitempty\"`")
+	require.NotContains(t, content, "type GenericRequest struct")
+	require.NotContains(t, content, "type GenericResponse struct")
+	require.NotContains(t, content, "JSONRequestBody")
 }

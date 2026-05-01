@@ -33,8 +33,6 @@ type commandConfig struct {
 	ServerPackage        string
 	RequestModelsOut     string
 	RequestModelsPackage string
-	CompatTypesOut       string
-	CompatTypesPackage   string
 	CLIOut               string
 	CLIPackage           string
 	GenerateCLI          bool
@@ -49,8 +47,6 @@ type goOutputSpec struct {
 	Package           string `yaml:"package"`
 	ServerFile        string `yaml:"server_file"`
 	RequestModelsFile string `yaml:"request_models_file"`
-	CompatTypes       bool   `yaml:"compat_types"`
-	CompatTypesFile   string `yaml:"compat_types_file"`
 }
 
 type cliOutputSpec struct {
@@ -123,8 +119,6 @@ func (target *targetSpec) UnmarshalYAML(unmarshal func(any) error) error {
 	}
 
 	switch value := raw.CLIOut.(type) {
-	case string:
-		target.CLIOut = strings.TrimSpace(value)
 	case map[string]any:
 		var grouped cliOutputSpec
 		encoded, err := yaml.Marshal(value)
@@ -135,8 +129,12 @@ func (target *targetSpec) UnmarshalYAML(unmarshal func(any) error) error {
 			return err
 		}
 		target.CLIOutGroup = &grouped
+	case string:
+		if strings.TrimSpace(value) != "" {
+			return fmt.Errorf("cli_out must be a mapping")
+		}
 	default:
-		return fmt.Errorf("cli_out must be a path string or mapping")
+		return fmt.Errorf("cli_out must be a mapping")
 	}
 
 	return nil
@@ -171,8 +169,6 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 	serverPackage := fs.String("server-package", "api", "generated server Go package name")
 	requestModelsOut := fs.String("request-models-out", "internal/api/gen_request_models.gen.go", "output APIGen request models Go path")
 	requestModelsPackage := fs.String("request-models-package", "api", "generated request models Go package name")
-	compatTypesOut := fs.String("compat-types-out", "", "optional output path for standalone APIGen-owned compatibility schema types")
-	compatTypesPackage := fs.String("compat-types-package", "api", "generated compatibility schema types Go package name")
 	cliOut := fs.String("cli-out", "pkg/cli/gen/apigen_registry.gen.go", "output CLI Go path")
 	cliPackage := fs.String("cli-package", "gen", "generated CLI Go package name")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -193,8 +189,6 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 		ServerPackage:        *serverPackage,
 		RequestModelsOut:     *requestModelsOut,
 		RequestModelsPackage: *requestModelsPackage,
-		CompatTypesOut:       *compatTypesOut,
-		CompatTypesPackage:   *compatTypesPackage,
 		CLIOut:               *cliOut,
 		CLIPackage:           *cliPackage,
 		GenerateCLI:          true,
@@ -225,7 +219,7 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 		if err != nil {
 			return failf(stderr, "load ir: %v", err)
 		}
-		if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CompatTypesOut, config.CompatTypesPackage, config.CanonicalOpenAPIPath); err != nil {
+		if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CanonicalOpenAPIPath); err != nil {
 			return failf(stderr, "generate server: %v", err)
 		}
 	case "cli":
@@ -244,7 +238,7 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 		if err != nil {
 			return failf(stderr, "load ir: %v", err)
 		}
-		if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CompatTypesOut, config.CompatTypesPackage, config.CanonicalOpenAPIPath); err != nil {
+		if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CanonicalOpenAPIPath); err != nil {
 			return failf(stderr, "generate server: %v", err)
 		}
 		if config.GenerateCLI {
@@ -284,20 +278,8 @@ func resolveCommandConfig(command string, manifestPath string, targetName string
 		}
 		config.RequestModelsOut = filepath.Join(target.GoOut.Dir, coalesceString(target.GoOut.RequestModelsFile, "request_models.gen.go"))
 		config.RequestModelsPackage = config.ServerPackage
-		if target.GoOut.CompatTypes {
-			config.CompatTypesOut = filepath.Join(target.GoOut.Dir, coalesceString(target.GoOut.CompatTypesFile, "types.gen.go"))
-			config.CompatTypesPackage = config.ServerPackage
-		} else {
-			config.CompatTypesOut = ""
-			config.CompatTypesPackage = config.ServerPackage
-		}
 	} else {
-		config.ServerOut = target.ServerOut
-		config.ServerPackage = coalesceString(target.ServerPackage, defaults.ServerPackage)
-		config.RequestModelsOut = target.RequestModelsOut
-		config.RequestModelsPackage = coalesceString(target.RequestModelsPackage, defaults.RequestModelsPackage)
-		config.CompatTypesOut = target.CompatTypesOut
-		config.CompatTypesPackage = coalesceString(target.CompatTypesPackage, defaults.CompatTypesPackage)
+		return commandConfig{}, fmt.Errorf("target %q must declare go_out", target.Name)
 	}
 	if target.usesGroupedCLIOut() {
 		config.CLIOut = filepath.Join(target.CLIOutGroup.Dir, coalesceString(target.CLIOutGroup.File, "apigen_registry.gen.go"))
@@ -307,12 +289,9 @@ func resolveCommandConfig(command string, manifestPath string, targetName string
 		}
 		config.GenerateCLI = true
 	} else {
-		config.CLIOut = target.CLIOut
-		config.CLIPackage = coalesceString(target.CLIPackage, defaults.CLIPackage)
+		config.CLIOut = ""
+		config.CLIPackage = defaults.CLIPackage
 		config.GenerateCLI = false
-		if target.GenerateCLI != nil {
-			config.GenerateCLI = *target.GenerateCLI
-		}
 	}
 
 	if err := validateCommandConfig(command, config); err != nil {
@@ -361,10 +340,6 @@ func resolveTargetPaths(target targetSpec, baseDir string) targetSpec {
 	target.CueDir = resolveManifestPath(baseDir, target.CueDir)
 	target.IROut = resolveManifestPath(baseDir, target.IROut)
 	target.OpenAPIOut = resolveManifestPath(baseDir, target.OpenAPIOut)
-	target.ServerOut = resolveManifestPath(baseDir, target.ServerOut)
-	target.RequestModelsOut = resolveManifestPath(baseDir, target.RequestModelsOut)
-	target.CompatTypesOut = resolveManifestPath(baseDir, target.CompatTypesOut)
-	target.CLIOut = resolveManifestPath(baseDir, target.CLIOut)
 	return target
 }
 
@@ -442,11 +417,11 @@ func (target targetSpec) usesLegacyCLIOut() bool {
 }
 
 func validateTargetSpec(target targetSpec) error {
-	if target.usesGroupedGoOut() && target.usesLegacyGoOut() {
-		return fmt.Errorf("target %q cannot mix go_out with flat go output fields", target.Name)
+	if target.usesLegacyGoOut() || target.usesLegacyCLIOut() {
+		return fmt.Errorf("target %q uses legacy flat manifest fields that are not supported in apigen 0.2.0", target.Name)
 	}
-	if target.usesGroupedCLIOut() && target.usesLegacyCLIOut() {
-		return fmt.Errorf("target %q cannot mix cli_out with flat cli output fields", target.Name)
+	if !target.usesGroupedGoOut() {
+		return fmt.Errorf("target %q must declare go_out", target.Name)
 	}
 	if target.usesGroupedGoOut() && strings.TrimSpace(target.GoOut.Dir) == "" {
 		return fmt.Errorf("target %q go_out.dir is required", target.Name)
@@ -504,7 +479,7 @@ func generateOpenAPI(doc ir.Document, outPath string) error {
 	return nil
 }
 
-func generateServer(doc ir.Document, outPath string, serverPackage string, requestModelsOutPath string, requestModelsPackage string, compatTypesOutPath string, compatTypesPackage string, canonicalOpenAPIPath string) error {
+func generateServer(doc ir.Document, outPath string, serverPackage string, requestModelsOutPath string, requestModelsPackage string, canonicalOpenAPIPath string) error {
 	if err := servergoemit.ValidateOperationIDs(doc); err != nil {
 		return fmt.Errorf("validate operation ids: %w", err)
 	}
@@ -512,7 +487,7 @@ func generateServer(doc ir.Document, outPath string, serverPackage string, reque
 	if err != nil {
 		return fmt.Errorf("load canonical openapi: %w", err)
 	}
-	b, err := servergoemit.EmitWithLegacyResponsesAndSpec(doc, servergoemit.Options{
+	b, err := servergoemit.Emit(doc, servergoemit.Options{
 		PackageName:             serverPackage,
 		EmbeddedOpenAPISpecJSON: embeddedSpecJSON,
 	})
@@ -526,7 +501,7 @@ func generateServer(doc ir.Document, outPath string, serverPackage string, reque
 	if err := writeFile(outPath, formatted); err != nil {
 		return err
 	}
-	requestModels, err := requestmodelgoemit.EmitWithResponseRoots(doc, requestmodelgoemit.Options{
+	requestModels, err := requestmodelgoemit.Emit(doc, requestmodelgoemit.Options{
 		PackageName: requestModelsPackage,
 	})
 	if err != nil {
@@ -538,21 +513,6 @@ func generateServer(doc ir.Document, outPath string, serverPackage string, reque
 	}
 	if err := writeFile(requestModelsOutPath, formattedRequestModels); err != nil {
 		return err
-	}
-	if compatTypesOutPath != "" {
-		compatTypes, err := requestmodelgoemit.EmitStandaloneCompatibilityTypes(doc, requestmodelgoemit.Options{
-			PackageName: compatTypesPackage,
-		})
-		if err != nil {
-			return fmt.Errorf("emit compatibility types go: %w", err)
-		}
-		formattedCompatTypes, err := format.Source(compatTypes)
-		if err != nil {
-			return fmt.Errorf("format compatibility types go output: %w", err)
-		}
-		if err := writeFile(compatTypesOutPath, formattedCompatTypes); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -617,7 +577,7 @@ Commands:
   cue-compile    CUE -> JSON IR + OpenAPI
   cue-bootstrap  JSON IR -> starter CUE files
   openapi        JSON IR -> OpenAPI
-  server         JSON IR -> server + request models + optional compat types
+  server         JSON IR -> server + request models
   cli            JSON IR -> Cobra registry
   all            JSON IR -> all Go outputs
 

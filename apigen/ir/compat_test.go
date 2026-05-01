@@ -27,11 +27,11 @@ func TestV1FixtureLoadsAndEmits(t *testing.T) {
 	require.Contains(t, string(openapiYAML), "x-authz:")
 	require.NotContains(t, string(openapiYAML), "x-cli-command:")
 
-	requestModels, err := requestmodelgoemit.EmitWithResponseRoots(doc, requestmodelgoemit.Options{})
+	requestModels, err := requestmodelgoemit.Emit(doc, requestmodelgoemit.Options{})
 	require.NoError(t, err)
 	require.Contains(t, string(requestModels), "type GenSchemaCreateWidgetRequest = CreateWidgetRequest")
 
-	serverCode, err := servergoemit.EmitWithLegacyResponses(doc, servergoemit.Options{})
+	serverCode, err := servergoemit.Emit(doc, servergoemit.Options{})
 	require.NoError(t, err)
 	require.Contains(t, string(serverCode), `apigenchi "github.com/Yacobolo/toolbelt/apigen/runtime/chi"`)
 	require.Contains(t, string(serverCode), "func RegisterAPIGenRoutes(router apigenchi.Router, server GenServerInterface)")
