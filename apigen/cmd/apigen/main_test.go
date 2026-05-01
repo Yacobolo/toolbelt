@@ -82,7 +82,7 @@ func TestGenerateArtifacts(t *testing.T) {
 	require.NoError(t, os.WriteFile(canonicalOpenAPIPath, []byte("openapi: 3.0.0\ninfo:\n  title: Duck\n  version: 0.1.0\npaths: {}\n"), 0o644))
 
 	require.NoError(t, generateOpenAPI(doc, openapiPath))
-	require.NoError(t, generateServer(doc, serverPath, "api", requestModelsPath, "api", "", "api", canonicalOpenAPIPath))
+	require.NoError(t, generateServer(doc, serverPath, "api", requestModelsPath, "api", canonicalOpenAPIPath))
 	require.NoError(t, generateCLI(doc, cliPath, "gen"))
 
 	_, err = os.Stat(openapiPath)
@@ -93,36 +93,6 @@ func TestGenerateArtifacts(t *testing.T) {
 	require.NoError(t, err)
 	_, err = os.Stat(cliPath)
 	require.NoError(t, err)
-}
-
-func TestResolveCommandConfig_ManifestTarget(t *testing.T) {
-	t.Helper()
-
-	dir := t.TempDir()
-	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
-	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
-  - name: v1
-    cue_dir: api/v1/cue
-    ir_out: internal/api/gen/json-ir.json
-    openapi_out: internal/api/gen/openapi.yaml
-    server_out: internal/api/server.apigen.gen.go
-    server_package: api
-    request_models_out: internal/api/gen_request_models.gen.go
-    request_models_package: api
-    compat_types_out: internal/api/types.gen.go
-    compat_types_package: api
-    cli_out: pkg/cli/gen/apigen_registry.gen.go
-    cli_package: gen
-    generate_cli: true
-`), 0o644))
-
-	config, err := resolveCommandConfig("all", manifestPath, "v1", commandConfig{})
-	require.NoError(t, err)
-	require.Equal(t, filepath.Join(dir, "api", "v1", "cue"), config.CueDir)
-	require.Equal(t, filepath.Join(dir, "internal", "api", "gen", "json-ir.json"), config.IRPath)
-	require.Equal(t, filepath.Join(dir, "internal", "api", "gen", "openapi.yaml"), config.CanonicalOpenAPIPath)
-	require.Equal(t, filepath.Join(dir, "pkg", "cli", "gen", "apigen_registry.gen.go"), config.CLIOut)
-	require.True(t, config.GenerateCLI)
 }
 
 func TestResolveCommandConfig_GroupedManifestTarget(t *testing.T) {
@@ -137,7 +107,6 @@ func TestResolveCommandConfig_GroupedManifestTarget(t *testing.T) {
     openapi_out: api/gen/openapi.yaml
     go_out:
       dir: internal/api/gen
-      compat_types: true
     cli_out:
       dir: cmd/cli/gen
 `), 0o644))
@@ -151,8 +120,6 @@ func TestResolveCommandConfig_GroupedManifestTarget(t *testing.T) {
 	require.Equal(t, "gen", config.ServerPackage)
 	require.Equal(t, filepath.Join(dir, "internal", "api", "gen", "request_models.gen.go"), config.RequestModelsOut)
 	require.Equal(t, "gen", config.RequestModelsPackage)
-	require.Equal(t, filepath.Join(dir, "internal", "api", "gen", "types.gen.go"), config.CompatTypesOut)
-	require.Equal(t, "gen", config.CompatTypesPackage)
 	require.Equal(t, filepath.Join(dir, "cmd", "cli", "gen", "apigen_registry.gen.go"), config.CLIOut)
 	require.Equal(t, "gen", config.CLIPackage)
 	require.True(t, config.GenerateCLI)
@@ -173,8 +140,6 @@ func TestResolveCommandConfig_GroupedManifestOverrides(t *testing.T) {
       package: transport
       server_file: service_server.gen.go
       request_models_file: models.gen.go
-      compat_types: true
-      compat_types_file: compat.gen.go
     cli_out:
       dir: internal/generated/commands
       package: cli
@@ -187,8 +152,6 @@ func TestResolveCommandConfig_GroupedManifestOverrides(t *testing.T) {
 	require.Equal(t, "transport", config.ServerPackage)
 	require.Equal(t, filepath.Join(dir, "internal", "generated", "api", "models.gen.go"), config.RequestModelsOut)
 	require.Equal(t, "transport", config.RequestModelsPackage)
-	require.Equal(t, filepath.Join(dir, "internal", "generated", "api", "compat.gen.go"), config.CompatTypesOut)
-	require.Equal(t, "transport", config.CompatTypesPackage)
 	require.Equal(t, filepath.Join(dir, "internal", "generated", "commands", "registry.gen.go"), config.CLIOut)
 	require.Equal(t, "cli", config.CLIPackage)
 }
@@ -217,7 +180,7 @@ func TestResolveCommandConfig_GroupedManifestWithoutCLI(t *testing.T) {
 	require.ErrorContains(t, err, "cli_out")
 }
 
-func TestResolveCommandConfig_GroupedManifestRejectsMixedOutputConfig(t *testing.T) {
+func TestResolveCommandConfig_GroupedManifestRejectsLegacyFields(t *testing.T) {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -234,7 +197,27 @@ func TestResolveCommandConfig_GroupedManifestRejectsMixedOutputConfig(t *testing
 
 	_, err := resolveCommandConfig("all", manifestPath, "example", commandConfig{})
 	require.Error(t, err)
-	require.ErrorContains(t, err, "cannot mix go_out")
+	require.ErrorContains(t, err, "legacy flat manifest fields")
+}
+
+func TestResolveCommandConfig_GroupedManifestRejectsStringCLIOut(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
+	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
+  - name: example
+    cue_dir: api/cue
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      dir: internal/api/gen
+    cli_out: cmd/cli/gen/apigen_registry.gen.go
+`), 0o644))
+
+	_, err := resolveCommandConfig("all", manifestPath, "example", commandConfig{})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "cli_out must be a mapping")
 }
 
 func TestResolveCommandConfig_GroupedManifestRejectsInvalidInferredPackage(t *testing.T) {
@@ -256,32 +239,6 @@ func TestResolveCommandConfig_GroupedManifestRejectsInvalidInferredPackage(t *te
 	require.ErrorContains(t, err, "invalid inferred go package")
 }
 
-func TestResolveCommandConfig_ManifestDisablesCLI(t *testing.T) {
-	t.Helper()
-
-	dir := t.TempDir()
-	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
-	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
-  - name: v2
-    cue_dir: api/v2/cue
-    ir_out: internal/api/v2/gen/json-ir.json
-    openapi_out: internal/api/v2/gen/openapi.yaml
-    server_out: internal/api/v2/server.apigen.gen.go
-    server_package: apiv2
-    request_models_out: internal/api/v2/gen_request_models.gen.go
-    request_models_package: apiv2
-    generate_cli: false
-`), 0o644))
-
-	config, err := resolveCommandConfig("all", manifestPath, "v2", commandConfig{})
-	require.NoError(t, err)
-	require.False(t, config.GenerateCLI)
-
-	_, err = resolveCommandConfig("cli", manifestPath, "v2", commandConfig{})
-	require.Error(t, err)
-	require.ErrorContains(t, err, "cli_out")
-}
-
 func TestMultiTargetManifest_GeneratesVersionedArtifacts(t *testing.T) {
 	t.Helper()
 
@@ -295,22 +252,24 @@ func TestMultiTargetManifest_GeneratesVersionedArtifacts(t *testing.T) {
     cue_dir: api/v1/cue
     ir_out: internal/api/v1/gen/json-ir.json
     openapi_out: internal/api/v1/gen/openapi.yaml
-    server_out: internal/api/v1/server.apigen.gen.go
-    server_package: apiv1
-    request_models_out: internal/api/v1/gen_request_models.gen.go
-    request_models_package: apiv1
-    cli_out: pkg/cli/gen/apigen_v1_registry.gen.go
-    cli_package: genv1
-    generate_cli: true
+    go_out:
+      dir: internal/api/v1
+      package: apiv1
+      server_file: server.apigen.gen.go
+      request_models_file: request_models.gen.go
+    cli_out:
+      dir: pkg/cli/gen
+      package: genv1
+      file: apigen_v1_registry.gen.go
   - name: v2
     cue_dir: api/v2/cue
     ir_out: internal/api/v2/gen/json-ir.json
     openapi_out: internal/api/v2/gen/openapi.yaml
-    server_out: internal/api/v2/server.apigen.gen.go
-    server_package: apiv2
-    request_models_out: internal/api/v2/gen_request_models.gen.go
-    request_models_package: apiv2
-    generate_cli: false
+    go_out:
+      dir: internal/api/v2
+      package: apiv2
+      server_file: server.apigen.gen.go
+      request_models_file: request_models.gen.go
 `), 0o644))
 
 	v1Config, err := resolveCommandConfig("all", manifestPath, "v1", commandConfig{})
@@ -320,7 +279,7 @@ func TestMultiTargetManifest_GeneratesVersionedArtifacts(t *testing.T) {
 	v1Doc, err := loadDocument(v1Config.IRPath)
 	require.NoError(t, err)
 	require.Equal(t, "/v1", v1Doc.API.BasePath)
-	require.NoError(t, generateServer(v1Doc, v1Config.ServerOut, v1Config.ServerPackage, v1Config.RequestModelsOut, v1Config.RequestModelsPackage, v1Config.CompatTypesOut, v1Config.CompatTypesPackage, v1Config.CanonicalOpenAPIPath))
+	require.NoError(t, generateServer(v1Doc, v1Config.ServerOut, v1Config.ServerPackage, v1Config.RequestModelsOut, v1Config.RequestModelsPackage, v1Config.CanonicalOpenAPIPath))
 	require.NoError(t, generateCLI(v1Doc, v1Config.CLIOut, v1Config.CLIPackage))
 
 	v1OpenAPI := mustReadString(t, v1Config.OpenAPIOut)
@@ -338,7 +297,7 @@ func TestMultiTargetManifest_GeneratesVersionedArtifacts(t *testing.T) {
 	v2Doc, err := loadDocument(v2Config.IRPath)
 	require.NoError(t, err)
 	require.Equal(t, "/v2", v2Doc.API.BasePath)
-	require.NoError(t, generateServer(v2Doc, v2Config.ServerOut, v2Config.ServerPackage, v2Config.RequestModelsOut, v2Config.RequestModelsPackage, v2Config.CompatTypesOut, v2Config.CompatTypesPackage, v2Config.CanonicalOpenAPIPath))
+	require.NoError(t, generateServer(v2Doc, v2Config.ServerOut, v2Config.ServerPackage, v2Config.RequestModelsOut, v2Config.RequestModelsPackage, v2Config.CanonicalOpenAPIPath))
 
 	v2OpenAPI := mustReadString(t, v2Config.OpenAPIOut)
 	require.Contains(t, v2OpenAPI, "/v2/widgets:")
@@ -349,60 +308,7 @@ func TestMultiTargetManifest_GeneratesVersionedArtifacts(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
-func TestGenerateServer_SupportsSplitPackageCompatTypesFromIROwnedSymbols(t *testing.T) {
-	t.Helper()
-
-	dir := t.TempDir()
-	doc := ir.Document{
-		SchemaVersion: "v1",
-		API:           ir.API{BasePath: "/v1"},
-		Info:          ir.Info{Title: "Widget API", Version: "1.0.0"},
-		OpenAPI:       ir.OpenAPI{Version: "3.0.0"},
-		Schemas: map[string]ir.Schema{
-			"CreateWidgetRequest": {
-				Type: "object",
-				Properties: map[string]ir.SchemaProperty{
-					"name": {Schema: ir.SchemaRef{Type: "string"}},
-				},
-				Required: []string{"name"},
-			},
-			"Widget": {
-				Type: "object",
-				Properties: map[string]ir.SchemaProperty{
-					"id": {Schema: ir.SchemaRef{Type: "string"}},
-				},
-				Required: []string{"id"},
-			},
-		},
-		Endpoints: []ir.Endpoint{
-			{
-				Method:      "post",
-				Path:        "/widgets",
-				OperationID: "createWidget",
-				RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "CreateWidgetRequest"}},
-				Responses:   []ir.Response{{StatusCode: 201, Description: "created", Schema: &ir.SchemaRef{Ref: "Widget"}}},
-			},
-		},
-	}
-
-	canonicalOpenAPIPath := writeCanonicalOpenAPI(t, dir, doc)
-	serverPath := filepath.Join(dir, "server.apigen.gen.go")
-	requestModelsPath := filepath.Join(dir, "request_models.gen.go")
-	compatTypesPath := filepath.Join(dir, "types.gen.go")
-
-	err := generateServer(doc, serverPath, "api", requestModelsPath, "genreq", compatTypesPath, "gencompat", canonicalOpenAPIPath)
-	require.NoError(t, err)
-
-	serverContent := mustReadString(t, serverPath)
-	compatContent := mustReadString(t, compatTypesPath)
-
-	require.Contains(t, serverContent, "type GenCreateWidgetJSONBody = GenSchemaCreateWidgetRequest")
-	require.Contains(t, compatContent, "package gencompat")
-	require.Contains(t, compatContent, "type CreateWidgetJSONRequestBody = GenSchemaCreateWidgetRequest")
-	require.NotContains(t, compatContent, "GenCreateWidgetJSONBody")
-}
-
-func TestGenerateServer_FailsForSplitPackageCompatTypesWithoutIROwnedRequestBodySymbol(t *testing.T) {
+func TestGenerateServer_FailsForUnnamedRequestBodySchema(t *testing.T) {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -435,12 +341,10 @@ func TestGenerateServer_FailsForSplitPackageCompatTypesWithoutIROwnedRequestBody
 	canonicalOpenAPIPath := writeCanonicalOpenAPI(t, dir, doc)
 	serverPath := filepath.Join(dir, "server.apigen.gen.go")
 	requestModelsPath := filepath.Join(dir, "request_models.gen.go")
-	compatTypesPath := filepath.Join(dir, "types.gen.go")
 
-	err := generateServer(doc, serverPath, "api", requestModelsPath, "genreq", compatTypesPath, "gencompat", canonicalOpenAPIPath)
+	err := generateServer(doc, serverPath, "api", requestModelsPath, "api", canonicalOpenAPIPath)
 	require.Error(t, err)
-	require.ErrorContains(t, err, "emit compatibility types go")
-	require.ErrorContains(t, err, "compat request-body alias generation")
+	require.ErrorContains(t, err, "request body generation")
 	require.ErrorContains(t, err, "createWidget")
 }
 

@@ -1,6 +1,6 @@
 # apigen
 
-`apigen` compiles authored API contracts into canonical OpenAPI, versioned JSON IR, generated Go server code, generated request-model compatibility types, and generated Cobra CLI registries.
+`apigen` compiles authored API contracts into canonical OpenAPI, versioned JSON IR, generated Go server code, generated request-model types, and generated Cobra CLI registries.
 
 Module path: `github.com/Yacobolo/toolbelt/apigen`
 
@@ -26,7 +26,7 @@ Commands:
 - `cue-compile`: CUE -> JSON IR + OpenAPI
 - `cue-bootstrap`: JSON IR -> starter CUE files
 - `openapi`: JSON IR -> OpenAPI
-- `server`: JSON IR -> server + request models + optional compat types
+- `server`: JSON IR -> server + request models
 - `cli`: JSON IR -> Cobra registry
 - `all`: JSON IR -> all Go outputs
 
@@ -42,12 +42,9 @@ targets:
     openapi_out: api/gen/openapi.yaml
     go_out:
       dir: internal/api/gen
-      compat_types: true
     cli_out:
       dir: cmd/cli/gen
 ```
-
-When `compat_types_out` is enabled, request-body compatibility aliases must resolve from named IR-owned schemas. Split-package compat generation does not depend on server-package-only `Gen<Operation>IDJSONBody` aliases.
 
 Manifest target fields:
 
@@ -58,23 +55,9 @@ Manifest target fields:
 - `go_out.package`
 - `go_out.server_file`
 - `go_out.request_models_file`
-- `go_out.compat_types`
-- `go_out.compat_types_file`
 - `cli_out.dir`
 - `cli_out.package`
 - `cli_out.file`
-
-Legacy flat manifest fields remain supported:
-
-- `server_out`
-- `server_package`
-- `request_models_out`
-- `request_models_package`
-- `compat_types_out`
-- `compat_types_package`
-- `cli_out`
-- `cli_package`
-- `generate_cli`
 
 ## Public Surface
 
@@ -104,10 +87,10 @@ Typical flow:
 
 1. Author API contracts in CUE.
 2. Run `cue-compile` to produce JSON IR and canonical OpenAPI.
-3. Run `all` to generate server, request-model, compat-type, and CLI outputs.
+3. Run `all` to generate server, request-model, and CLI outputs.
 4. Build your service against `runtime/chi` and your CLI against `runtime/cobra`.
 
-The runnable reference showcase lives in `example/`. It is a small todo app with checked-in `json-ir`, OpenAPI, server transport, compat types, request-model aliases, CLI registry metadata, handwritten strict handlers, and a generated Cobra CLI.
+The runnable reference showcase lives in `example/`. It is a small todo app with checked-in `json-ir`, OpenAPI, server transport, request-model aliases, CLI registry metadata, handwritten strict handlers, and a generated Cobra CLI.
 
 Install as a dependency with:
 
@@ -119,10 +102,9 @@ go get github.com/Yacobolo/toolbelt/apigen
 
 JSON IR currently supports schema version `v1`. Required root fields are `schema_version`, `info.title`, `info.version`, and at least one endpoint. Supported endpoint extensions include `x-authz` and `x-apigen-manual`; supported response extensions include `x-apigen-response-shape`.
 
-For split-package generation, compat request-body aliases are contract-first:
+Generated request bodies are contract-first:
 
-- compat output may reference `GenSchema...` symbols derived from IR
-- compat output must not reference server-only `Gen<Operation>IDJSONBody` symbols
-- if a request body cannot be resolved to a named IR schema, compat generation fails explicitly
+- request bodies used in generated server and request-model output must resolve to named IR-owned schemas
+- generation fails explicitly when a request body cannot be mapped to a named IR schema
 
-See [`ir/CONTRACT.md`](./ir/CONTRACT.md) for the full IR contract and run `go test ./...` for the module smoke and compatibility coverage.
+See [`ir/CONTRACT.md`](./ir/CONTRACT.md) for the full IR contract and run `go test ./...` for the module smoke coverage.

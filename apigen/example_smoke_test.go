@@ -33,7 +33,6 @@ func TestExample_CUEToGeneratedBuildAndRun(t *testing.T) {
 		filepath.Join(exampleRoot, "api", "gen"),
 		filepath.Join(exampleRoot, "internal", "api", "gen", "server.apigen.gen.go"),
 		filepath.Join(exampleRoot, "internal", "api", "gen", "request_models.gen.go"),
-		filepath.Join(exampleRoot, "internal", "api", "gen", "types.gen.go"),
 		filepath.Join(exampleRoot, "cmd", "cli", "gen", "apigen_registry.gen.go"),
 		filepath.Join(exampleRoot, "server"),
 		filepath.Join(exampleRoot, "cli"),
@@ -91,7 +90,6 @@ func TestExample_CUEToGeneratedBuildAndRun(t *testing.T) {
 
 	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "gen", "server.apigen.gen.go"))
 	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "gen", "request_models.gen.go"))
-	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "gen", "types.gen.go"))
 	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "cmd", "cli", "gen", "apigen_registry.gen.go"))
 
 	routerSource := mustReadFile(t, filepath.Join(exampleRoot, "internal", "api", "router.go"))
