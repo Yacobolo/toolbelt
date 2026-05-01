@@ -6,16 +6,18 @@ This is the canonical APIGen showcase: a small in-memory todo app with authored 
 
 - `api/cue/`: authored todo contract
 - `apigen.targets.yaml`: regeneration target manifest
-- `cmd/server/main.go`: strict server implementation and `/openapi.json` utility route
+- `internal/api/server.go`: strict handler implementation and in-memory todo store
+- `internal/api/router.go`: router assembly and `/openapi.json` utility route
+- `cmd/server/main.go`: tiny HTTP bootstrap
 - `cmd/cli/main.go`: tiny Cobra root that mounts generated commands
 
 ## Generated files
 
 - `api/gen/json-ir.json`
 - `api/gen/openapi.yaml`
-- `internal/api/server.apigen.gen.go`
-- `internal/api/gen_request_models.gen.go`
-- `internal/api/types.gen.go`
+- `internal/api/gen/server.apigen.gen.go`
+- `internal/api/gen/gen_request_models.gen.go`
+- `internal/api/gen/types.gen.go`
 - `cmd/cli/gen/apigen_registry.gen.go`
 
 ## Regenerate
@@ -52,5 +54,5 @@ Optional:
 
 - CUE -> JSON IR -> OpenAPI -> generated Go artifacts
 - strict handler integration via `RegisterAPIGenStrictRoutes`
-- generated request and response types in handwritten business logic
+- handwritten handlers in `internal/api` using generated request and response types from `internal/api/gen`
 - generated Cobra commands with path args, query params, JSON body input, detail output, collection output, and confirmation

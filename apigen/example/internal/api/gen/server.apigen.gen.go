@@ -1,4 +1,4 @@
-package api
+package gen
 
 import (
 	"context"

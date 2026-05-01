@@ -31,9 +31,9 @@ func TestExample_CUEToGeneratedBuildAndRun(t *testing.T) {
 
 	cleanupPaths := []string{
 		filepath.Join(exampleRoot, "api", "gen"),
-		filepath.Join(exampleRoot, "internal", "api", "server.apigen.gen.go"),
-		filepath.Join(exampleRoot, "internal", "api", "gen_request_models.gen.go"),
-		filepath.Join(exampleRoot, "internal", "api", "types.gen.go"),
+		filepath.Join(exampleRoot, "internal", "api", "gen", "server.apigen.gen.go"),
+		filepath.Join(exampleRoot, "internal", "api", "gen", "gen_request_models.gen.go"),
+		filepath.Join(exampleRoot, "internal", "api", "gen", "types.gen.go"),
 		filepath.Join(exampleRoot, "cmd", "cli", "gen", "apigen_registry.gen.go"),
 		filepath.Join(exampleRoot, "server"),
 		filepath.Join(exampleRoot, "cli"),
@@ -74,11 +74,12 @@ func TestExample_CUEToGeneratedBuildAndRun(t *testing.T) {
 	runCommand(t, exampleRoot, "go", "build", "-o", serverBinary, "./cmd/server")
 	runCommand(t, exampleRoot, "go", "build", "-o", cliBinary, "./cmd/cli")
 
-	serverGenerated := mustReadFile(t, filepath.Join(exampleRoot, "internal", "api", "server.apigen.gen.go"))
+	serverGenerated := mustReadFile(t, filepath.Join(exampleRoot, "internal", "api", "gen", "server.apigen.gen.go"))
 	require.Contains(t, serverGenerated, "APIGen Todo Example")
 	require.Contains(t, serverGenerated, `func RegisterAPIGenStrictRoutes`)
 	require.Contains(t, serverGenerated, `type GenStrictServerInterface interface`)
 	require.Contains(t, serverGenerated, `"/todos"`)
+	require.Contains(t, serverGenerated, "package gen")
 
 	cliGenerated := mustReadFile(t, filepath.Join(exampleRoot, "cmd", "cli", "gen", "apigen_registry.gen.go"))
 	require.Contains(t, cliGenerated, `Command: []string{"todos", "list"}`)
@@ -88,10 +89,16 @@ func TestExample_CUEToGeneratedBuildAndRun(t *testing.T) {
 	require.Contains(t, cliGenerated, `Confirm: "always"`)
 	require.NotContains(t, cliGenerated, "widgets")
 
-	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "server.apigen.gen.go"))
-	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "gen_request_models.gen.go"))
-	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "types.gen.go"))
+	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "gen", "server.apigen.gen.go"))
+	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "gen", "gen_request_models.gen.go"))
+	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "gen", "types.gen.go"))
 	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "cmd", "cli", "gen", "apigen_registry.gen.go"))
+
+	routerSource := mustReadFile(t, filepath.Join(exampleRoot, "internal", "api", "router.go"))
+	require.Contains(t, routerSource, "gen.RegisterAPIGenStrictRoutes")
+
+	serverSource := mustReadFile(t, filepath.Join(exampleRoot, "internal", "api", "server.go"))
+	require.Contains(t, serverSource, "var _ gen.GenStrictServerInterface = (*Server)(nil)")
 
 	serverCmd := exec.Command(serverBinary)
 	serverCmd.Dir = exampleRoot

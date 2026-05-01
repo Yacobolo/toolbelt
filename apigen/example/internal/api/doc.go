@@ -1,2 +1,2 @@
-// Package api contains APIGen-generated transport for the todo example.
+// Package api contains the handwritten todo example wiring and handlers.
 package api
