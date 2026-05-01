@@ -7,9 +7,9 @@ api: {
 }
 
 info: {
-	title:       "APIGen Example API"
+	title:       "APIGen Todo Example"
 	version:     "0.1.0"
-	description: "Minimal example API authored in CUE for APIGen smoke tests."
+	description: "Small in-memory todo API authored in CUE to showcase APIGen generation and strict server wiring."
 }
 
 servers: [
@@ -22,14 +22,14 @@ servers: [
 
 tags: [
 	{
-		name:        "Widgets"
-		description: "Example widget lifecycle endpoints."
+		name:        "Todos"
+		description: "Todo lifecycle endpoints for the APIGen example."
 	},
 ]
 
 openapi: {
 	version: "3.0.0"
-	tag_order: ["Widgets"]
+	tag_order: ["Todos"]
 	security_schemes: {
 		BearerAuth: {
 			type:   "http"

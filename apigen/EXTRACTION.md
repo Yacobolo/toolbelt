@@ -4,7 +4,7 @@ APIGen now lives in an in-repo nested module rooted at `apigen`.
 This repo remains the source of truth for APIGen while the following stay green together:
 
 - `github.com/Yacobolo/toolbelt/apigen/...` has no imports of sibling repo-local `github.com/Yacobolo/toolbelt/...` packages outside `github.com/Yacobolo/toolbelt/apigen/...`
-- the bundled example fixture under `apigen/examples/example_consumer` compiles its source API spec to OpenAPI + JSON IR
+- the bundled example fixture under `apigen/example` compiles its source API spec to OpenAPI + JSON IR
 - the fixture generates Go server and CLI code using APIGen
 - the fixture builds against `github.com/Yacobolo/toolbelt/apigen/runtime/chi` and `github.com/Yacobolo/toolbelt/apigen/runtime/cobra`
 - JSON IR `v1` remains documented and fixture-tested

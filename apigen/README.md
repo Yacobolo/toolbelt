@@ -80,7 +80,7 @@ Typical flow:
 3. Run `all` to generate server, request-model, compat-type, and CLI outputs.
 4. Build your service against `runtime/chi` and your CLI against `runtime/cobra`.
 
-The runnable reference consumer lives in `examples/example_consumer`.
+The runnable reference showcase lives in `example/`. It is a small todo app with checked-in `json-ir`, OpenAPI, server transport, compat types, request-model aliases, CLI registry metadata, handwritten strict handlers, and a generated Cobra CLI.
 
 Install as a dependency with:
 
