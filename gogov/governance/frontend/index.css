@@ -11,8 +11,8 @@ governance-code-viewer {
 }
 
 .governance-graph-canvas {
-  height: 34rem;
-  min-height: 34rem;
+  height: clamp(42rem, 78vh, 64rem);
+  min-height: 42rem;
 }
 
 .governance-graph-shell .react-flow__node.selected .governance-node {
@@ -48,6 +48,7 @@ governance-code-viewer {
   max-width: 14rem;
   border: 1px solid color-mix(in oklab, oklch(74% 0.01 85) 60%, white);
   background: color-mix(in oklab, white 96%, oklch(97% 0.004 85));
+  cursor: pointer;
   padding: 0.8rem 0.9rem;
   transition:
     border-color 160ms ease,
@@ -75,6 +76,20 @@ governance-code-viewer {
   background: color-mix(in oklab, oklch(93% 0.004 90) 84%, white);
 }
 
+.governance-node.is-active {
+  border-color: oklch(30% 0.012 255);
+  background: color-mix(in oklab, oklch(97% 0.012 255) 92%, white);
+}
+
+.governance-node.is-related {
+  border-color: color-mix(in oklab, oklch(62% 0.012 255) 35%, white);
+  background: color-mix(in oklab, oklch(98% 0.009 255) 88%, white);
+}
+
+.governance-node.is-muted {
+  opacity: 0.26;
+}
+
 .governance-node-handle {
   opacity: 0;
   border: 0;
@@ -94,6 +109,11 @@ governance-code-viewer {
   font-weight: 600;
   line-height: 1.25;
   color: oklch(22% 0.012 260);
+}
+
+.governance-node:focus-visible {
+  outline: 2px solid oklch(54% 0.02 255 / 0.45);
+  outline-offset: 2px;
 }
 
 .governance-node.is-overview .governance-node-title {
@@ -118,6 +138,14 @@ governance-code-viewer {
 .governance-edge-overview {
   opacity: 0.42;
   pointer-events: none;
+}
+
+.governance-edge.is-lineage {
+  opacity: 0.92;
+}
+
+.governance-edge.is-muted {
+  opacity: 0.12;
 }
 
 .governance-edge-overview.selected,

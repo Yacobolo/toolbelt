@@ -560,6 +560,35 @@ func (s *Store) GetPackage(ctx context.Context, path string) (model.Package, err
 	return item, nil
 }
 
+func (s *Store) GetPackageByDir(ctx context.Context, dir string) (model.Package, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT path, name, dir, file_count, test_file_count, loc, non_empty_loc,
+		       imports_count, imported_by_count, violation_count
+		FROM packages
+		WHERE dir = ?
+		   OR (? = '.' AND (dir = '' OR dir = '.'))
+		   OR (? = '' AND (dir = '' OR dir = '.'))`, dir, dir, dir)
+	var item model.Package
+	if err := row.Scan(
+		&item.Path,
+		&item.Name,
+		&item.Dir,
+		&item.FileCount,
+		&item.TestFileCount,
+		&item.LOC,
+		&item.NonEmptyLOC,
+		&item.ImportsCount,
+		&item.ImportedByCount,
+		&item.ViolationCount,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return model.Package{}, sql.ErrNoRows
+		}
+		return model.Package{}, fmt.Errorf("get package by dir %s: %w", dir, err)
+	}
+	return item, nil
+}
+
 func (s *Store) ListPackageEdges(ctx context.Context) ([]model.PackageEdge, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT from_path, to_path, weight FROM package_edges ORDER BY from_path, to_path`)
 	if err != nil {

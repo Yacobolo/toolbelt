@@ -280,7 +280,7 @@ func dashboardView(page dashboardData) g.Node {
 					h.H2(h.Class("text-2xl font-bold"), g.Text("Largest packages")),
 					h.A(h.Class("text-sm font-semibold text-stone-700 underline"), h.Href(repoPackagesHref(page.RepoID)), g.Text("Open package catalog")),
 				),
-				hotPackagesNodes(page.RepoID, page.HotPackages),
+				hotPackagesNodes(page.RepoID, modulePath(page.Meta), page.HotPackages),
 			),
 		),
 		h.Section(
@@ -373,7 +373,6 @@ func fileDetailView(page fileDetailData) g.Node {
 	return h.Main(
 		h.Class("space-y-6"),
 		data.Signals(map[string]any{
-			"fileDetailTab": "overview",
 			"fileGraph":     page.Graph,
 			"fileSource":    page.Source,
 		}),
@@ -390,21 +389,21 @@ func fileDetailView(page fileDetailData) g.Node {
 				),
 				h.A(
 					h.Class("inline-flex items-center gap-2 border border-stone-300 px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-100"),
-					h.Href(packageHref(page.RepoID, page.File.PackagePath)),
+					h.Href(packageHref(page.RepoID, page.File.PackagePath, page.Meta)),
 					uiIcon("packages", "h-4 w-4 shrink-0"),
 					g.Text("Open package"),
 				),
 			),
 		),
 		detailTabs(
-			"fileDetailTab",
+			page.ActiveTab,
 			[]detailTab{
-				{Value: "overview", Label: "Overview"},
-				{Value: "lineage", Label: "Lineage"},
-				{Value: "source", Label: "Source"},
+				{Value: "overview", Label: "Overview", Href: detailTabHref(fileHref(page.RepoID, page.File.Path), "overview")},
+				{Value: "lineage", Label: "Lineage", Href: detailTabHref(fileHref(page.RepoID, page.File.Path), "lineage")},
+				{Value: "source", Label: "Source", Href: detailTabHref(fileHref(page.RepoID, page.File.Path), "source")},
 			},
 		),
-		detailPane("fileDetailTab", "overview",
+		detailPane(page.ActiveTab, "overview",
 			h.Section(
 				h.ID("overview"),
 				h.Class("grid gap-4 xl:grid-cols-3"),
@@ -439,7 +438,7 @@ func fileDetailView(page fileDetailData) g.Node {
 				),
 			),
 		),
-		detailPane("fileDetailTab", "lineage",
+		detailPane(page.ActiveTab, "lineage",
 			h.Div(
 				h.ID("lineage"),
 				h.Class("space-y-4"),
@@ -473,7 +472,7 @@ func fileDetailView(page fileDetailData) g.Node {
 				),
 			),
 		),
-		detailPane("fileDetailTab", "source",
+		detailPane(page.ActiveTab, "source",
 			h.Div(
 				h.ID("source"),
 				h.Class("space-y-4"),
@@ -526,7 +525,7 @@ func packagesView(page packagesData) g.Node {
 							h.Th(h.Class("pb-3"), g.Text("Imported by")),
 						),
 					),
-					h.TBody(packageRows(page.RepoID, page.Packages)),
+					h.TBody(packageRows(page.RepoID, modulePath(page.Meta), page.Packages)),
 				),
 			),
 		),
@@ -537,24 +536,23 @@ func packageDetailView(page packageDetailData) g.Node {
 	return h.Main(
 		h.Class("space-y-6"),
 		data.Signals(map[string]any{
-			"packageDetailTab": "overview",
 			"packageGraph":     page.Graph,
 		}),
 		h.Section(
 			h.ID("package-header"),
 			h.Class("border-b border-stone-200 pb-6"),
 			h.P(h.Class("text-xs uppercase tracking-[0.2em] text-stone-500"), g.Text(page.Package.Name)),
-			h.H2(h.Class("mt-2 text-3xl font-black tracking-tight text-stone-950"), g.Text(page.Package.Path)),
+			h.H2(h.Class("mt-2 text-3xl font-black tracking-tight text-stone-950"), g.Text(packageDisplayPath(page.Package))),
 		),
 		detailTabs(
-			"packageDetailTab",
+			page.ActiveTab,
 			[]detailTab{
-				{Value: "overview", Label: "Overview"},
-				{Value: "neighborhood", Label: "Neighborhood"},
-				{Value: "files", Label: "Files"},
+				{Value: "overview", Label: "Overview", Href: detailTabHref(packageHref(page.RepoID, page.Package.Path, page.Meta), "overview")},
+				{Value: "neighborhood", Label: "Neighborhood", Href: detailTabHref(packageHref(page.RepoID, page.Package.Path, page.Meta), "neighborhood")},
+				{Value: "files", Label: "Files", Href: detailTabHref(packageHref(page.RepoID, page.Package.Path, page.Meta), "files")},
 			},
 		),
-		detailPane("packageDetailTab", "overview",
+		detailPane(page.ActiveTab, "overview",
 			h.Section(
 				h.ID("package-overview"),
 				h.Class("grid gap-4 xl:grid-cols-4"),
@@ -568,16 +566,16 @@ func packageDetailView(page packageDetailData) g.Node {
 				h.Section(
 					h.Class("border border-stone-200 bg-white p-6"),
 					h.H3(h.Class("text-xl font-bold"), g.Text("Dependencies")),
-					h.Div(h.Class("mt-4 space-y-2"), packageEdgeNodes(page.RepoID, topPackageEdges(page.Outbound, false, 10), false)),
+					h.Div(h.Class("mt-4 space-y-2"), packageEdgeNodes(page.RepoID, modulePath(page.Meta), topPackageEdges(page.Outbound, false, 10), false)),
 				),
 				h.Section(
 					h.Class("border border-stone-200 bg-white p-6"),
 					h.H3(h.Class("text-xl font-bold"), g.Text("Dependents")),
-					h.Div(h.Class("mt-4 space-y-2"), packageEdgeNodes(page.RepoID, topPackageEdges(page.Inbound, true, 10), true)),
+					h.Div(h.Class("mt-4 space-y-2"), packageEdgeNodes(page.RepoID, modulePath(page.Meta), topPackageEdges(page.Inbound, true, 10), true)),
 				),
 			),
 		),
-		detailPane("packageDetailTab", "neighborhood",
+		detailPane(page.ActiveTab, "neighborhood",
 			h.Div(
 				h.ID("neighborhood"),
 				h.Class("space-y-4"),
@@ -604,13 +602,13 @@ func packageDetailView(page packageDetailData) g.Node {
 									h.Th(h.Class("pb-3"), g.Text("Weight")),
 								),
 							),
-							h.TBody(packageConnectionRows(page.RepoID, page.Inbound, page.Outbound, 24)),
+							h.TBody(packageConnectionRows(page.RepoID, modulePath(page.Meta), page.Inbound, page.Outbound, 24)),
 						),
 					),
 				),
 			),
 		),
-		detailPane("packageDetailTab", "files",
+		detailPane(page.ActiveTab, "files",
 			h.Section(
 				h.ID("package-files"),
 				h.Class(workspaceCanvasClass("overflow-hidden")),
@@ -642,6 +640,7 @@ type breadcrumbItem struct {
 type detailTab struct {
 	Value string
 	Label string
+	Href  string
 }
 
 func breadcrumbsNode(items []breadcrumbItem) g.Node {
@@ -699,10 +698,10 @@ func statusDot(tone string) g.Node {
 	return h.Span(h.Class(className))
 }
 
-func detailTabs(signal string, tabs []detailTab) g.Node {
+func detailTabs(active string, tabs []detailTab) g.Node {
 	buttons := g.Group{}
 	for _, tab := range tabs {
-		buttons = append(buttons, detailTabButton(signal, tab.Value, tab.Label))
+		buttons = append(buttons, detailTabButton(active, tab))
 	}
 
 	return h.Section(
@@ -711,27 +710,40 @@ func detailTabs(signal string, tabs []detailTab) g.Node {
 	)
 }
 
-func detailTabButton(signal string, value string, label string) g.Node {
-	return h.Button(
-		h.Type("button"),
-		data.On("click", "$"+signal+" = '"+value+"'"),
-		data.Attr("class", detailTabClassExpr(signal, value)),
-		data.Attr("aria-pressed", "$"+signal+" === '"+value+"' ? 'true' : 'false'"),
-		detailTabIcon(signal, value),
-		g.Text(label),
+func detailTabButton(active string, tab detailTab) g.Node {
+	return h.A(
+		h.Class(detailTabClass(active, tab.Value)),
+		h.Href(tab.Href),
+		g.Attr("aria-current", detailAriaCurrent(active, tab.Value)),
+		detailTabIcon(active, tab.Value),
+		g.Text(tab.Label),
 	)
 }
 
-func detailTabClassExpr(signal string, value string) string {
-	return "'inline-flex items-center gap-2 border-b-2 px-1 py-3 text-sm font-semibold transition ' + ($" + signal + " === '" + value + "' ? 'border-stone-950 text-stone-950' : 'border-transparent text-stone-500 hover:text-stone-950')"
+func detailTabClass(active string, value string) string {
+	base := "inline-flex items-center gap-2 border-b-2 px-1 py-3 text-sm font-semibold transition"
+	if active == value {
+		return base + " border-stone-950 text-stone-950"
+	}
+	return base + " border-transparent text-stone-500 hover:text-stone-950"
 }
 
-func detailTabIconClass(signal string, value string) string {
-	return "'h-4 w-4 shrink-0 ' + ($" + signal + " === '" + value + "' ? 'text-stone-50' : 'text-stone-400')"
+func detailAriaCurrent(active string, value string) string {
+	if active == value {
+		return "page"
+	}
+	return "false"
 }
 
-func detailTabIcon(signal string, value string) g.Node {
-	iconClass := data.Attr("class", detailTabIconClass(signal, value))
+func detailTabIconClass(active string, value string) string {
+	if active == value {
+		return "h-4 w-4 shrink-0 text-stone-950"
+	}
+	return "h-4 w-4 shrink-0 text-stone-400"
+}
+
+func detailTabIcon(active string, value string) g.Node {
+	iconClass := h.Class(detailTabIconClass(active, value))
 	switch value {
 	case "overview":
 		return lucide.House(iconClass)
@@ -746,12 +758,11 @@ func detailTabIcon(signal string, value string) g.Node {
 	}
 }
 
-func detailPane(signal string, value string, children ...g.Node) g.Node {
-	return h.Div(
-		data.Show("$"+signal+" === '"+value+"'"),
-		h.Class("space-y-6"),
-		g.Group(children),
-	)
+func detailPane(active string, value string, children ...g.Node) g.Node {
+	if active != value {
+		return nil
+	}
+	return h.Div(h.Class("space-y-6"), g.Group(children))
 }
 
 func workspaceCanvasClass(extra string) string {
@@ -763,7 +774,7 @@ func workspaceCanvasClass(extra string) string {
 }
 
 func lineageStageClass(extra string) string {
-	base := "-mx-6 overflow-hidden border-y border-stone-200 bg-white sm:-mx-8 xl:-mx-10"
+	base := "relative left-1/2 right-1/2 -mx-[50vw] w-screen overflow-hidden border-y border-stone-200 bg-white lg:left-[calc((100vw-18rem-100%)/-2)] lg:right-[calc((100vw-18rem-100%)/-2)] lg:mx-0 lg:w-[calc(100vw-18rem)]"
 	if extra == "" {
 		return base
 	}
@@ -852,7 +863,7 @@ func largestFilesRows(repoID string, files []model.File) g.Node {
 	return rows
 }
 
-func hotPackagesNodes(repoID string, packages []model.Package) g.Node {
+func hotPackagesNodes(repoID string, modulePath string, packages []model.Package) g.Node {
 	if len(packages) == 0 {
 		return h.P(h.Class("text-sm text-stone-500"), g.Text("No packages recorded in the current snapshot."))
 	}
@@ -861,7 +872,7 @@ func hotPackagesNodes(repoID string, packages []model.Package) g.Node {
 	for _, pkg := range packages {
 		nodes = append(nodes, h.Div(
 			h.Class("border border-stone-200 p-4"),
-			h.P(h.Class("text-sm font-semibold text-stone-900"), packageLink(repoID, pkg.Path)),
+			h.P(h.Class("text-sm font-semibold text-stone-900"), packageLink(repoID, modulePath, pkg.Path)),
 			h.P(h.Class("mt-1 text-sm text-stone-700"), g.Text(strconv.Itoa(pkg.LOC)+" LOC")),
 			h.P(h.Class("mt-2 text-xs uppercase tracking-[0.18em] text-stone-500"), g.Text(strconv.Itoa(pkg.ImportsCount)+" imports · "+strconv.Itoa(pkg.ImportedByCount)+" dependents")),
 		))
@@ -1087,7 +1098,7 @@ func topFileEdges(edges []model.FileEdge, inbound bool, limit int) []model.FileE
 	return items
 }
 
-func packageRows(repoID string, packages []model.Package) g.Node {
+func packageRows(repoID string, modulePath string, packages []model.Package) g.Node {
 	if len(packages) == 0 {
 		return h.Tr(h.Td(h.Class("py-3 text-stone-500"), g.Attr("colspan", "5"), g.Text("No packages recorded in the current snapshot.")))
 	}
@@ -1096,7 +1107,7 @@ func packageRows(repoID string, packages []model.Package) g.Node {
 	for _, item := range packages {
 		rows = append(rows, h.Tr(
 			h.Class("border-t border-stone-200"),
-			h.Td(h.Class("py-3"), packageLink(repoID, item.Path)),
+			h.Td(h.Class("py-3"), packageLink(repoID, modulePath, item.Path)),
 			h.Td(h.Class("py-3"), g.Text(strconv.Itoa(item.FileCount)+" (+"+strconv.Itoa(item.TestFileCount)+" tests)")),
 			h.Td(h.Class("py-3"), g.Text(strconv.Itoa(item.LOC))),
 			h.Td(h.Class("py-3"), g.Text(strconv.Itoa(item.ImportsCount))),
@@ -1126,7 +1137,7 @@ func topPackageEdges(edges []model.PackageEdge, inbound bool, limit int) []model
 	return items
 }
 
-func packageEdgeNodes(repoID string, edges []model.PackageEdge, inbound bool) g.Node {
+func packageEdgeNodes(repoID string, modulePath string, edges []model.PackageEdge, inbound bool) g.Node {
 	if len(edges) == 0 {
 		message := "No outbound package dependencies."
 		if inbound {
@@ -1143,14 +1154,14 @@ func packageEdgeNodes(repoID string, edges []model.PackageEdge, inbound bool) g.
 		}
 		nodes = append(nodes, h.Div(
 			h.Class("border border-stone-200 px-4 py-3 text-sm"),
-			h.A(h.Class("font-medium underline"), h.Href(packageHref(repoID, targetPath)), g.Text(targetPath)),
+			h.A(h.Class("font-medium underline"), h.Href(packageHref(repoID, targetPath, &model.SnapshotMeta{ModulePath: modulePath})), g.Text(targetPath)),
 			h.P(h.Class("text-stone-500"), g.Text("weight "+strconv.Itoa(edge.Weight))),
 		))
 	}
 	return nodes
 }
 
-func packageConnectionRows(repoID string, inbound []model.PackageEdge, outbound []model.PackageEdge, limit int) g.Node {
+func packageConnectionRows(repoID string, modulePath string, inbound []model.PackageEdge, outbound []model.PackageEdge, limit int) g.Node {
 	inboundItems := topPackageEdges(inbound, true, limit)
 	outboundItems := topPackageEdges(outbound, false, limit)
 	if len(inboundItems) == 0 && len(outboundItems) == 0 {
@@ -1168,7 +1179,7 @@ func packageConnectionRows(repoID string, inbound []model.PackageEdge, outbound 
 		rows = append(rows, h.Tr(
 			h.Class("border-t border-stone-200"),
 			h.Td(h.Class("py-3 text-stone-500"), g.Text("Inbound")),
-			h.Td(h.Class("py-3"), packageLink(repoID, edge.FromPath)),
+			h.Td(h.Class("py-3"), packageLink(repoID, modulePath, edge.FromPath)),
 			h.Td(h.Class("py-3"), g.Text(strconv.Itoa(edge.Weight))),
 		))
 	}
@@ -1176,7 +1187,7 @@ func packageConnectionRows(repoID string, inbound []model.PackageEdge, outbound 
 		rows = append(rows, h.Tr(
 			h.Class("border-t border-stone-200"),
 			h.Td(h.Class("py-3 text-stone-500"), g.Text("Outbound")),
-			h.Td(h.Class("py-3"), packageLink(repoID, edge.ToPath)),
+			h.Td(h.Class("py-3"), packageLink(repoID, modulePath, edge.ToPath)),
 			h.Td(h.Class("py-3"), g.Text(strconv.Itoa(edge.Weight))),
 		))
 	}
@@ -1204,8 +1215,8 @@ func fileLink(repoID string, path string) g.Node {
 	return h.A(h.Class("font-medium underline"), h.Href(fileHref(repoID, path)), g.Text(path))
 }
 
-func packageLink(repoID string, path string) g.Node {
-	return h.A(h.Class("font-medium underline"), h.Href(packageHref(repoID, path)), g.Text(path))
+func packageLink(repoID string, modulePath string, packagePath string) g.Node {
+	return h.A(h.Class("font-medium underline"), h.Href(packageHref(repoID, packagePath, &model.SnapshotMeta{ModulePath: modulePath})), g.Text(packagePath))
 }
 
 func repoBaseHref(repoID string) string {
@@ -1229,15 +1240,59 @@ func repoRefreshHref(repoID string) string {
 }
 
 func fileHref(repoID string, path string) string {
-	return repoFilesHref(repoID) + "/" + pathEscape(path)
+	return repoFilesHref(repoID) + "/" + escapePathSegments(path)
 }
 
-func packageHref(repoID string, path string) string {
-	return repoPackagesHref(repoID) + "/" + pathEscape(path)
+func packageHref(repoID string, packagePath string, meta *model.SnapshotMeta) string {
+	return repoPackagesHref(repoID) + "/" + escapePathSegments(packageRoutePath(packagePath, meta))
+}
+
+func detailTabHref(base string, tab string) string {
+	values := url.Values{}
+	values.Set("tab", tab)
+	return base + "?" + values.Encode()
 }
 
 func pathEscape(value string) string {
 	return url.PathEscape(value)
+}
+
+const rootPackageRouteSegment = "@root"
+
+func escapePathSegments(value string) string {
+	parts := strings.Split(value, "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return strings.Join(parts, "/")
+}
+
+func packageRoutePath(packagePath string, meta *model.SnapshotMeta) string {
+	if meta != nil {
+		modulePath := strings.Trim(strings.TrimSpace(meta.ModulePath), "/")
+		if modulePath != "" {
+			trimmed := strings.TrimPrefix(packagePath, modulePath)
+			trimmed = strings.TrimPrefix(trimmed, "/")
+			if trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	if packagePath == "" || packagePath == "." {
+		return rootPackageRouteSegment
+	}
+	return packagePath
+}
+
+func packageDisplayPath(pkg model.Package) string {
+	dir := strings.TrimSpace(pkg.Dir)
+	if dir == "" || dir == "." {
+		if pkg.Name != "" {
+			return pkg.Name
+		}
+		return rootPackageRouteSegment
+	}
+	return dir
 }
 
 func repoDisplayPath(repo config.Repository) string {
@@ -1263,6 +1318,13 @@ func formatTimeMeta(meta *model.SnapshotMeta) string {
 
 func formatTimeValue(value time.Time) string {
 	return value.Local().Format("2006-01-02 15:04:05")
+}
+
+func modulePath(meta *model.SnapshotMeta) string {
+	if meta == nil {
+		return ""
+	}
+	return meta.ModulePath
 }
 
 func shortPkg(value string) string {

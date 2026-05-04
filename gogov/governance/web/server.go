@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -109,6 +110,7 @@ type fileDetailData struct {
 	RepoID       string
 	Meta         *model.SnapshotMeta
 	File         model.File
+	ActiveTab    string
 	Symbols      []model.Symbol
 	Inbound      []model.FileEdge
 	Outbound     []model.FileEdge
@@ -128,6 +130,7 @@ type packageDetailData struct {
 	RepoID   string
 	Meta     *model.SnapshotMeta
 	Package  model.Package
+	ActiveTab string
 	Files    []model.File
 	Inbound  []model.PackageEdge
 	Outbound []model.PackageEdge
@@ -380,6 +383,7 @@ func (s *Server) fileDetail(w http.ResponseWriter, r *http.Request) {
 		RepoID:       rc.Repo.ID,
 		Meta:         meta,
 		File:         file,
+		ActiveTab:    detailTabValue(r, "overview", "overview", "lineage", "source"),
 		Symbols:      symbols,
 		Inbound:      inbound,
 		Outbound:     outbound,
@@ -431,10 +435,18 @@ func (s *Server) packageDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	meta, _ := snapshotMeta(r.Context(), rc.Store)
-	packagePath := strings.TrimPrefix(chi.URLParam(r, "*"), "/")
-	packagePath, _ = url.PathUnescape(packagePath)
+	packageKey := strings.TrimPrefix(chi.URLParam(r, "*"), "/")
+	packageKey, _ = url.PathUnescape(packageKey)
+	if cleanRoute := packageRoutePath(packageKey, meta); cleanRoute != packageKey {
+		target := repoPackagesHref(rc.Repo.ID) + "/" + escapePathSegments(cleanRoute)
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, target, http.StatusMovedPermanently)
+		return
+	}
 
-	item, err := rc.Store.GetPackage(r.Context(), packagePath)
+	item, err := s.packageFromRoute(r.Context(), rc.Store, meta, packageKey)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			http.NotFound(w, r)
@@ -443,12 +455,13 @@ func (s *Server) packageDetail(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	files, err := rc.Store.ListPackageFiles(r.Context(), packagePath)
+
+	files, err := rc.Store.ListPackageFiles(r.Context(), item.Path)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	neighborhood, err := rc.Store.ListPackageEdgeNeighborhood(r.Context(), packagePath)
+	neighborhood, err := rc.Store.ListPackageEdgeNeighborhood(r.Context(), item.Path)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -456,14 +469,14 @@ func (s *Server) packageDetail(w http.ResponseWriter, r *http.Request) {
 	inbound := make([]model.PackageEdge, 0)
 	outbound := make([]model.PackageEdge, 0)
 	for _, edge := range neighborhood {
-		if edge.FromPath == packagePath {
+		if edge.FromPath == item.Path {
 			outbound = append(outbound, edge)
 		}
-		if edge.ToPath == packagePath {
+		if edge.ToPath == item.Path {
 			inbound = append(inbound, edge)
 		}
 	}
-	graph, err := s.packageGraph(r.Context(), rc.Store, packagePath)
+	graph, err := s.packageGraph(r.Context(), rc.Store, item.Path)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -472,20 +485,39 @@ func (s *Server) packageDetail(w http.ResponseWriter, r *http.Request) {
 	s.render(w, governancePage(s.repoLayout(
 		rc.Repo,
 		"packages",
-		shortPkg(item.Path),
+		packageDisplayPath(item),
 		"",
-		[]breadcrumbItem{{Label: "Catalog", Href: "/"}, {Label: rc.Repo.Name, Href: repoBaseHref(rc.Repo.ID)}, {Label: "Packages", Href: repoPackagesHref(rc.Repo.ID)}, {Label: item.Path}},
+		[]breadcrumbItem{{Label: "Catalog", Href: "/"}, {Label: rc.Repo.Name, Href: repoBaseHref(rc.Repo.ID)}, {Label: "Packages", Href: repoPackagesHref(rc.Repo.ID)}, {Label: packageDisplayPath(item)}},
 		packageHealthLabel(item),
 		packageHealthTone(item),
 	), packageDetailView(packageDetailData{
-		RepoID:   rc.Repo.ID,
-		Meta:     meta,
-		Package:  item,
-		Files:    files,
-		Inbound:  inbound,
-		Outbound: outbound,
-		Graph:    graph,
+		RepoID:    rc.Repo.ID,
+		Meta:      meta,
+		Package:   item,
+		ActiveTab: detailTabValue(r, "overview", "overview", "neighborhood", "files"),
+		Files:     files,
+		Inbound:   inbound,
+		Outbound:  outbound,
+		Graph:     graph,
 	})))
+}
+
+func (s *Server) packageFromRoute(ctx context.Context, st *store.Store, meta *model.SnapshotMeta, routePath string) (model.Package, error) {
+	dir := packageRouteToDir(routePath)
+	if meta != nil && strings.TrimSpace(meta.ModulePath) != "" {
+		canonicalPath := meta.ModulePath
+		if dir != "." && dir != "" {
+			canonicalPath = path.Join(meta.ModulePath, dir)
+		}
+		item, err := st.GetPackage(ctx, canonicalPath)
+		if err == nil {
+			return item, nil
+		}
+		if err != sql.ErrNoRows {
+			return model.Package{}, err
+		}
+	}
+	return st.GetPackageByDir(ctx, dir)
 }
 
 func (s *Server) render(w http.ResponseWriter, page g.Node) {
@@ -514,6 +546,24 @@ func (s *Server) writeRepoError(w http.ResponseWriter, r *http.Request, err erro
 		return
 	}
 	http.Error(w, err.Error(), http.StatusInternalServerError)
+}
+
+func detailTabValue(r *http.Request, fallback string, allowed ...string) string {
+	value := strings.TrimSpace(r.URL.Query().Get("tab"))
+	for _, candidate := range allowed {
+		if value == candidate {
+			return value
+		}
+	}
+	return fallback
+}
+
+func packageRouteToDir(routePath string) string {
+	routePath = strings.Trim(strings.TrimSpace(routePath), "/")
+	if routePath == "" || routePath == rootPackageRouteSegment {
+		return "."
+	}
+	return routePath
 }
 
 func (s *Server) repoLayout(repo config.Repository, section string, title string, message string, breadcrumbs []breadcrumbItem, statusLabel string, statusTone string) layoutData {
