@@ -60,7 +60,7 @@ func TestReplaceSnapshotKeepsOnlyLatestStateAndRetainsRuns(t *testing.T) {
 			ViolationsCount: 1,
 		},
 		Packages:   []model.Package{{Path: "example.com/two", Name: "two", FileCount: 1, ViolationCount: 1}},
-		Files:      []model.File{{Path: "two.go", PackagePath: "example.com/two", PackageName: "two", LOC: 12, NonEmptyLOC: 11, ViolationCount: 1}},
+		Files:      []model.File{{Path: "two.go", PackagePath: "example.com/two", PackageName: "two", LOC: 12, NonEmptyLOC: 11, ViolationCount: 1, IsGenerated: true, IsIgnored: true}},
 		Violations: []model.Violation{{ScopeType: "package", ScopeKey: "example.com/two", RuleName: "rule"}},
 	}
 	if err := st.ReplaceSnapshot(ctx, snapshot2); err != nil {
@@ -81,6 +81,9 @@ func TestReplaceSnapshotKeepsOnlyLatestStateAndRetainsRuns(t *testing.T) {
 	}
 	if len(files) != 1 || files[0].Path != "two.go" {
 		t.Fatalf("unexpected latest files: %+v", files)
+	}
+	if !files[0].IsGenerated || !files[0].IsIgnored {
+		t.Fatalf("expected stored tags to round-trip, got %+v", files[0])
 	}
 
 	runs, err := st.ListRuns(ctx, 10)

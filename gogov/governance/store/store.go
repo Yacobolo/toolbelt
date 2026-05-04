@@ -72,6 +72,8 @@ CREATE TABLE IF NOT EXISTS files (
 	function_count INTEGER NOT NULL,
 	exported_symbol_count INTEGER NOT NULL,
 	is_test INTEGER NOT NULL,
+	is_generated INTEGER NOT NULL DEFAULT 0,
+	is_ignored INTEGER NOT NULL DEFAULT 0,
 	fan_in INTEGER NOT NULL,
 	fan_out INTEGER NOT NULL,
 	violation_count INTEGER NOT NULL,
@@ -152,6 +154,10 @@ func Open(path string) (*Store, error) {
 	if _, err := db.ExecContext(ctx, schema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize governance schema: %w", err)
+	}
+	if err := ensureSchemaMigrations(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
 
 	return &Store{db: db}, nil
@@ -301,9 +307,9 @@ func (s *Store) ReplaceSnapshot(ctx context.Context, snapshot model.Snapshot) er
 		if _, err = tx.ExecContext(ctx, `
 			INSERT INTO files (
 				path, dir, package_path, package_name, loc, non_empty_loc, function_count,
-				exported_symbol_count, is_test, fan_in, fan_out, violation_count,
-				covered_statements, total_statements, coverage_pct
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				exported_symbol_count, is_test, is_generated, is_ignored, fan_in, fan_out,
+				violation_count, covered_statements, total_statements, coverage_pct
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			item.Path,
 			item.Dir,
 			item.PackagePath,
@@ -313,6 +319,8 @@ func (s *Store) ReplaceSnapshot(ctx context.Context, snapshot model.Snapshot) er
 			item.FunctionCount,
 			item.ExportedSymbolCount,
 			boolToInt(item.IsTest),
+			boolToInt(item.IsGenerated),
+			boolToInt(item.IsIgnored),
 			item.FanIn,
 			item.FanOut,
 			item.ViolationCount,
@@ -453,7 +461,7 @@ func (s *Store) ListRuns(ctx context.Context, limit int) ([]model.Run, error) {
 func (s *Store) ListFiles(ctx context.Context) ([]model.File, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT path, dir, package_path, package_name, loc, non_empty_loc, function_count,
-		       exported_symbol_count, is_test, fan_in, fan_out, violation_count,
+		       exported_symbol_count, is_test, is_generated, is_ignored, fan_in, fan_out, violation_count,
 		       covered_statements, total_statements, coverage_pct
 		FROM files`)
 	if err != nil {
@@ -478,7 +486,7 @@ func (s *Store) ListFiles(ctx context.Context) ([]model.File, error) {
 func (s *Store) GetFile(ctx context.Context, path string) (model.File, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT path, dir, package_path, package_name, loc, non_empty_loc, function_count,
-		       exported_symbol_count, is_test, fan_in, fan_out, violation_count,
+		       exported_symbol_count, is_test, is_generated, is_ignored, fan_in, fan_out, violation_count,
 		       covered_statements, total_statements, coverage_pct
 		FROM files WHERE path = ?`, path)
 	item, err := scanFile(row)
@@ -548,6 +556,35 @@ func (s *Store) GetPackage(ctx context.Context, path string) (model.Package, err
 			return model.Package{}, sql.ErrNoRows
 		}
 		return model.Package{}, fmt.Errorf("get package %s: %w", path, err)
+	}
+	return item, nil
+}
+
+func (s *Store) GetPackageByDir(ctx context.Context, dir string) (model.Package, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT path, name, dir, file_count, test_file_count, loc, non_empty_loc,
+		       imports_count, imported_by_count, violation_count
+		FROM packages
+		WHERE dir = ?
+		   OR (? = '.' AND (dir = '' OR dir = '.'))
+		   OR (? = '' AND (dir = '' OR dir = '.'))`, dir, dir, dir)
+	var item model.Package
+	if err := row.Scan(
+		&item.Path,
+		&item.Name,
+		&item.Dir,
+		&item.FileCount,
+		&item.TestFileCount,
+		&item.LOC,
+		&item.NonEmptyLOC,
+		&item.ImportsCount,
+		&item.ImportedByCount,
+		&item.ViolationCount,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return model.Package{}, sql.ErrNoRows
+		}
+		return model.Package{}, fmt.Errorf("get package by dir %s: %w", dir, err)
 	}
 	return item, nil
 }
@@ -703,7 +740,7 @@ func (s *Store) ListViolationsForScope(ctx context.Context, scopeType string, sc
 func (s *Store) ListPackageFiles(ctx context.Context, packagePath string) ([]model.File, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT path, dir, package_path, package_name, loc, non_empty_loc, function_count,
-		       exported_symbol_count, is_test, fan_in, fan_out, violation_count,
+		       exported_symbol_count, is_test, is_generated, is_ignored, fan_in, fan_out, violation_count,
 		       covered_statements, total_statements, coverage_pct
 		FROM files
 		WHERE package_path = ?
@@ -755,7 +792,7 @@ func (s *Store) ListPackageEdgeNeighborhood(ctx context.Context, packagePath str
 func (s *Store) ListRelatedTestFiles(ctx context.Context, dir string, packagePath string) ([]model.File, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT path, dir, package_path, package_name, loc, non_empty_loc, function_count,
-		       exported_symbol_count, is_test, fan_in, fan_out, violation_count,
+		       exported_symbol_count, is_test, is_generated, is_ignored, fan_in, fan_out, violation_count,
 		       covered_statements, total_statements, coverage_pct
 		FROM files
 		WHERE dir = ? AND package_path = ? AND is_test = 1
@@ -820,6 +857,8 @@ func scanRun(scanner interface{ Scan(dest ...any) error }) (model.Run, error) {
 func scanFile(scanner interface{ Scan(dest ...any) error }) (model.File, error) {
 	var item model.File
 	var isTest int
+	var isGenerated int
+	var isIgnored int
 	var coverage sql.NullFloat64
 	if err := scanner.Scan(
 		&item.Path,
@@ -831,6 +870,8 @@ func scanFile(scanner interface{ Scan(dest ...any) error }) (model.File, error) 
 		&item.FunctionCount,
 		&item.ExportedSymbolCount,
 		&isTest,
+		&isGenerated,
+		&isIgnored,
 		&item.FanIn,
 		&item.FanOut,
 		&item.ViolationCount,
@@ -841,10 +882,58 @@ func scanFile(scanner interface{ Scan(dest ...any) error }) (model.File, error) 
 		return model.File{}, err
 	}
 	item.IsTest = isTest == 1
+	item.IsGenerated = isGenerated == 1
+	item.IsIgnored = isIgnored == 1
 	if coverage.Valid {
 		item.CoveragePct = &coverage.Float64
 	}
 	return item, nil
+}
+
+func ensureSchemaMigrations(ctx context.Context, db *sql.DB) error {
+	for _, column := range []struct {
+		name       string
+		definition string
+	}{
+		{name: "is_generated", definition: "INTEGER NOT NULL DEFAULT 0"},
+		{name: "is_ignored", definition: "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		if err := ensureColumn(ctx, db, "files", column.name, column.definition); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureColumn(ctx context.Context, db *sql.DB, table string, column string, definition string) error {
+	rows, err := db.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return fmt.Errorf("inspect %s schema: %w", table, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name string
+		var columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return fmt.Errorf("scan %s schema: %w", table, err)
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate %s schema: %w", table, err)
+	}
+
+	if _, err := db.ExecContext(ctx, "ALTER TABLE "+table+" ADD COLUMN "+column+" "+definition); err != nil {
+		return fmt.Errorf("add %s.%s: %w", table, column, err)
+	}
+	return nil
 }
 
 func nullableTime(value *time.Time) any {

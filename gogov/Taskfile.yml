@@ -1,0 +1,7 @@
+version: "3"
+
+tasks:
+  serve:
+    desc: Start the gogov server with air live reload
+    cmds:
+      - air

@@ -19,6 +19,12 @@ From this module:
 go run ./cmd/gogov serve
 ```
 
+Or run the live-reloading dev server with:
+
+```bash
+task serve
+```
+
 Refresh a single configured repository:
 
 ```bash
