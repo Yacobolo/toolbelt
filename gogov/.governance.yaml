@@ -1,0 +1,4 @@
+bind_address: "127.0.0.1:8787"
+repositories:
+  - "/Users/yacobolo/dev/ai-platform"
+  - "/Users/yacobolo/dev/duck-demo"
