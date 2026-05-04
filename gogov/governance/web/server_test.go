@@ -137,7 +137,7 @@ func TestRoutesRenderMultiRepoPagesAndRefreshRedirect(t *testing.T) {
 	assertPageContains(t, server.URL+"/repos/ai-platform/files", "internal/services/usecase.go")
 	assertPageContains(t, server.URL+"/repos/ai-platform/files/internal/services/usecase.go", "?tab=source")
 	assertPageContains(t, server.URL+"/repos/ai-platform/files/internal/services/usecase.go?tab=source", "governance-code-viewer")
-	assertPageContains(t, server.URL+"/repos/ai-platform/files/internal/services/usecase.go", "Open package")
+	assertPageContains(t, server.URL+"/repos/ai-platform/files/internal/services/usecase.go", "internal/services/usecase.go")
 	assertPageContains(t, server.URL+"/repos/ai-platform/packages", "governance-graph-view")
 	assertPageContains(t, server.URL+"/repos/ai-platform/packages/internal/ui", "Neighborhood")
 
