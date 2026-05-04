@@ -69,6 +69,8 @@ type File struct {
 	FunctionCount       int
 	ExportedSymbolCount int
 	IsTest              bool
+	IsGenerated         bool
+	IsIgnored           bool
 	FanIn               int
 	FanOut              int
 	ViolationCount      int

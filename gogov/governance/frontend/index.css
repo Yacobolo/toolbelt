@@ -7,34 +7,7 @@ governance-code-viewer {
 
 .governance-graph-shell {
   overflow: hidden;
-  border-radius: 1.5rem;
-  border: 1px solid color-mix(in oklab, oklch(75% 0.01 260) 55%, white);
-  background:
-    radial-gradient(circle at top left, color-mix(in oklab, oklch(97% 0.02 95) 88%, white), transparent 38%),
-    linear-gradient(180deg, color-mix(in oklab, oklch(98% 0.005 95) 85%, white), white);
-}
-
-.governance-graph-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  border-bottom: 1px solid color-mix(in oklab, oklch(75% 0.01 260) 55%, white);
-  padding: 1rem 1.25rem 0.9rem;
-}
-
-.governance-graph-title h4 {
-  margin: 0;
-  font-size: 0.95rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  color: oklch(28% 0.01 260);
-}
-
-.governance-graph-title p {
-  margin: 0;
-  font-size: 0.75rem;
-  color: oklch(52% 0.02 260);
+  background: white;
 }
 
 .governance-graph-canvas {
@@ -42,10 +15,14 @@ governance-code-viewer {
   min-height: 34rem;
 }
 
+.governance-graph-shell .react-flow__node.selected .governance-node {
+  border-color: oklch(30% 0.01 255);
+  background: color-mix(in oklab, oklch(97% 0.012 85) 94%, white);
+}
+
 .governance-graph-empty,
 .governance-code-empty {
   border: 1px dashed color-mix(in oklab, oklch(75% 0.01 260) 40%, white);
-  border-radius: 1.5rem;
   padding: 1.25rem;
   color: oklch(45% 0.015 260);
   background: color-mix(in oklab, oklch(99% 0.005 95) 92%, white);
@@ -53,7 +30,6 @@ governance-code-viewer {
 
 .governance-graph-loading,
 .governance-code-loading {
-  border-radius: 1.5rem;
   padding: 1.25rem;
   color: oklch(35% 0.015 260);
   background: color-mix(in oklab, oklch(98% 0.008 80) 90%, white);
@@ -62,7 +38,6 @@ governance-code-viewer {
 .governance-graph-error,
 .governance-code-error {
   border: 1px solid color-mix(in oklab, oklch(71% 0.12 22) 50%, white);
-  border-radius: 1.5rem;
   padding: 1.25rem;
   color: oklch(44% 0.12 22);
   background: color-mix(in oklab, oklch(96% 0.02 22) 90%, white);
@@ -71,24 +46,60 @@ governance-code-viewer {
 .governance-node {
   min-width: 10rem;
   max-width: 14rem;
-  border-radius: 1rem;
-  border: 1px solid color-mix(in oklab, oklch(72% 0.015 260) 52%, white);
-  background: white;
-  box-shadow: 0 0.8rem 2rem -1.4rem color-mix(in oklab, oklch(30% 0.01 260) 30%, transparent);
-  padding: 0.75rem 0.85rem;
+  border: 1px solid color-mix(in oklab, oklch(74% 0.01 85) 60%, white);
+  background: color-mix(in oklab, white 96%, oklch(97% 0.004 85));
+  padding: 0.8rem 0.9rem;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    padding 160ms ease,
+    width 160ms ease,
+    min-width 160ms ease;
+}
+
+.governance-node.is-overview {
+  min-width: 7rem;
+  max-width: 10rem;
+  border-color: color-mix(in oklab, oklch(78% 0.008 90) 72%, white);
+  background: color-mix(in oklab, white 97%, oklch(98% 0.005 90));
+  padding: 0.5rem 0.6rem;
+}
+
+.governance-node.is-overview.is-collapsed {
+  min-width: 2.35rem;
+  width: 2.35rem;
+  max-width: 2.35rem;
+  min-height: 0.6rem;
+  padding: 0;
+  border-color: color-mix(in oklab, oklch(80% 0.006 90) 72%, white);
+  background: color-mix(in oklab, oklch(93% 0.004 90) 84%, white);
+}
+
+.governance-node-handle {
+  opacity: 0;
+  border: 0;
+  background: transparent;
+  width: 0.5rem;
+  height: 0.5rem;
 }
 
 .governance-node[data-tone="focus"] {
-  border-color: color-mix(in oklab, oklch(72% 0.16 95) 62%, white);
-  background: color-mix(in oklab, oklch(98% 0.025 95) 92%, white);
+  border-color: oklch(28% 0.01 85);
+  background: color-mix(in oklab, oklch(98% 0.012 85) 94%, white);
 }
 
 .governance-node-title {
   margin: 0;
   font-size: 0.82rem;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.25;
   color: oklch(22% 0.012 260);
+}
+
+.governance-node.is-overview .governance-node-title {
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
 }
 
 .governance-node-subtitle {
@@ -98,9 +109,28 @@ governance-code-viewer {
   color: oklch(49% 0.018 260);
 }
 
+.governance-node.is-overview .governance-node-subtitle {
+  margin-top: 0.28rem;
+  font-size: 0.62rem;
+  color: oklch(54% 0.015 260);
+}
+
+.governance-edge-overview {
+  opacity: 0.42;
+  pointer-events: none;
+}
+
+.governance-edge-overview.selected,
+.governance-edge-overview:focus-visible {
+  opacity: 0.85;
+}
+
+.governance-edge-overview path {
+  pointer-events: none;
+}
+
 .governance-code-shell {
   overflow: hidden;
-  border-radius: 1.5rem;
   border: 1px solid color-mix(in oklab, oklch(75% 0.01 260) 55%, white);
   background: white;
 }

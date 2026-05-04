@@ -62,7 +62,7 @@ func Analyze(ctx context.Context, repo config.Repository, logger *slog.Logger) (
 		logger.Warn("package load completed with errors", "count", len(packageErrors), "repo", repo.Root)
 	}
 
-	fileAcc, packageAcc, err := discoverFiles(repo, modulePath)
+	fileAcc, packageAcc, err := discoverFiles(ctx, repo, modulePath)
 	if err != nil {
 		return model.Snapshot{}, err
 	}
@@ -179,44 +179,32 @@ func readModulePath(repoRoot string) (string, error) {
 	return "", fmt.Errorf("module path not found in go.mod")
 }
 
-func discoverFiles(repo config.Repository, modulePath string) (map[string]*fileAccumulator, map[string]*packageAccumulator, error) {
+func discoverFiles(ctx context.Context, repo config.Repository, modulePath string) (map[string]*fileAccumulator, map[string]*packageAccumulator, error) {
 	files := map[string]*fileAccumulator{}
 	packagesMap := map[string]*packageAccumulator{}
 	ignorePaths := config.DefaultIgnorePaths()
 
-	err := filepath.WalkDir(repo.Root, func(absPath string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if absPath == repo.Root {
-			return nil
-		}
-		rel, err := filepath.Rel(repo.Root, absPath)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		if shouldIgnore(rel, ignorePaths) {
-			if entry.IsDir() {
-				return filepath.SkipDir
+	relPaths, err := walkRepositoryGoFiles(repo.Root, ignorePaths)
+	if err != nil {
+		return nil, nil, err
+	}
+	ignoredPaths := listIgnoredGitFiles(ctx, repo.Root)
+	for _, rel := range relPaths {
+		absPath := filepath.Join(repo.Root, filepath.FromSlash(rel))
+		if _, err := os.Stat(absPath); err != nil {
+			if os.IsNotExist(err) {
+				continue
 			}
-			return nil
+			return nil, nil, fmt.Errorf("stat %s: %w", rel, err)
 		}
-		if entry.IsDir() {
-			return nil
-		}
-		if filepath.Ext(absPath) != ".go" {
-			return nil
-		}
-
 		src, err := os.ReadFile(absPath)
 		if err != nil {
-			return fmt.Errorf("read %s: %w", rel, err)
+			return nil, nil, fmt.Errorf("read %s: %w", rel, err)
 		}
 		fset := token.NewFileSet()
 		fileNode, err := parser.ParseFile(fset, absPath, src, parser.ParseComments)
 		if err != nil {
-			return fmt.Errorf("parse %s: %w", rel, err)
+			return nil, nil, fmt.Errorf("parse %s: %w", rel, err)
 		}
 
 		loc, nonEmpty := countLOC(src)
@@ -238,6 +226,8 @@ func discoverFiles(repo config.Repository, modulePath string) (map[string]*fileA
 				LOC:         loc,
 				NonEmptyLOC: nonEmpty,
 				IsTest:      strings.HasSuffix(rel, "_test.go"),
+				IsGenerated: isGeneratedGoFile(rel, src),
+				IsIgnored:   ignoredPaths[rel],
 			},
 		}
 		item.FunctionCount, item.ExportedSymbolCount, item.Symbols = collectFileSymbols(rel, fileNode, fset)
@@ -260,12 +250,80 @@ func discoverFiles(repo config.Repository, modulePath string) (map[string]*fileA
 		}
 		pkg.LOC += loc
 		pkg.NonEmptyLOC += nonEmpty
+	}
+	return files, packagesMap, nil
+}
+
+func listIgnoredGitFiles(ctx context.Context, repoRoot string) map[string]bool {
+	cmd := exec.CommandContext(ctx, "git", "ls-files", "--others", "--ignored", "--exclude-standard", "-z")
+	cmd.Dir = repoRoot
+	output, err := cmd.Output()
+	if err != nil {
+		return map[string]bool{}
+	}
+
+	ignored := map[string]bool{}
+	for _, rel := range strings.Split(string(output), "\x00") {
+		rel = strings.TrimSpace(filepath.ToSlash(rel))
+		if rel == "" || filepath.Ext(rel) != ".go" {
+			continue
+		}
+		ignored[rel] = true
+	}
+	return ignored
+}
+
+func walkRepositoryGoFiles(repoRoot string, ignorePaths []string) ([]string, error) {
+	files := make([]string, 0)
+	err := filepath.WalkDir(repoRoot, func(absPath string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if absPath == repoRoot {
+			return nil
+		}
+		rel, err := filepath.Rel(repoRoot, absPath)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if shouldIgnore(rel, ignorePaths) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.IsDir() || filepath.Ext(absPath) != ".go" {
+			return nil
+		}
+		files = append(files, rel)
 		return nil
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return files, packagesMap, nil
+	sort.Strings(files)
+	return files, nil
+}
+
+func isGeneratedGoFile(relPath string, src []byte) bool {
+	base := strings.ToLower(filepath.Base(relPath))
+	if strings.HasSuffix(base, ".gen.go") || strings.HasSuffix(base, ".generated.go") || strings.HasPrefix(base, "zz_generated.") {
+		return true
+	}
+
+	lines := strings.Split(string(src), "\n")
+	limit := 8
+	if len(lines) < limit {
+		limit = len(lines)
+	}
+	for i := 0; i < limit; i++ {
+		line := strings.ToLower(strings.TrimSpace(lines[i]))
+		if strings.Contains(line, "code generated") || strings.Contains(line, "do not edit") {
+			return true
+		}
+	}
+	return false
 }
 
 func loadPackages(ctx context.Context, repoRoot string) ([]*packages.Package, []error, error) {
