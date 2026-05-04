@@ -11,6 +11,7 @@ import {
   Position,
   ReactFlow,
   ReactFlowProvider,
+  useReactFlow,
   useViewport,
   type Edge,
   type NodeChange,
@@ -64,10 +65,10 @@ const MetricNode = ({ data, selected }: NodeProps<Node<MetricNodeData>>) => {
   const { zoom } = useViewport();
   const isOverview = data.mode === 'overview';
   const isHighlighted = data.emphasis === 'active' || data.emphasis === 'related';
-  const showLabel = !isOverview || zoom >= 0.55 || selected || isHighlighted;
+  const showLabel = !isOverview || zoom >= 0.2 || selected || isHighlighted;
   const showSubtitle = !isOverview
     ? Boolean(data.subtitle)
-    : (zoom >= 0.82 || data.emphasis === 'active') && Boolean(data.subtitle);
+    : (zoom >= 0.64 || data.emphasis === 'active') && Boolean(data.subtitle);
   const title = data.subtitle ? `${data.fullLabel} • ${data.subtitle}` : data.fullLabel;
 
   let className = 'governance-node';
@@ -227,9 +228,11 @@ function buildLineageSelection(graph: GraphResponse, selectedNodeId: string | nu
   return { highlightedNodes, highlightedEdges };
 }
 
-function GraphCanvas({ graph, graphMode }: GraphCanvasProps) {
+function GraphCanvasInner({ graph, graphMode }: GraphCanvasProps) {
+  const { fitView } = useReactFlow();
   const [selectedNodeId, setSelectedNodeId] = React.useState<string | null>(null);
   const [nodes, setNodes] = React.useState<Node<MetricNodeData>[]>([]);
+  const lastFitKeyRef = React.useRef<string>('');
 
   const handleSelectNode = React.useCallback((nodeID: string) => {
     setSelectedNodeId((current) => (current === nodeID ? null : nodeID));
@@ -249,6 +252,29 @@ function GraphCanvas({ graph, graphMode }: GraphCanvasProps) {
       buildGraphNodes(graph, graphMode, selectedNodeId, lineageSelection, handleSelectNode, current),
     );
   }, [graph, graphMode, handleSelectNode, lineageSelection, selectedNodeId]);
+
+  React.useEffect(() => {
+    if (nodes.length === 0) {
+      return;
+    }
+
+    const fitKey = `${graphMode}:${graph.title}:${graph.nodes.length}:${graph.edges.length}`;
+    if (lastFitKeyRef.current === fitKey) {
+      return;
+    }
+    lastFitKeyRef.current = fitKey;
+
+    const frame = requestAnimationFrame(() => {
+      void fitView({
+        padding: graphMode === 'overview' ? 0.16 : 0.12,
+        duration: 280,
+        minZoom: 0.2,
+        maxZoom: 1.2,
+      });
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [fitView, graph, graphMode, nodes.length]);
 
   const handleNodesChange = React.useCallback(
     (changes: NodeChange<Node<MetricNodeData>>[]) => {
@@ -288,43 +314,47 @@ function GraphCanvas({ graph, graphMode }: GraphCanvasProps) {
   );
 
   return (
+    <ReactFlow
+      nodes={nodes}
+      edges={edges}
+      nodeTypes={nodeTypes}
+      onNodesChange={handleNodesChange}
+      defaultEdgeOptions={{
+        style: {
+          stroke: graphMode === 'overview' ? 'oklch(76% 0.008 255 / 0.55)' : 'oklch(71% 0.01 255)',
+          strokeWidth: graphMode === 'overview' ? 1 : 1.4,
+        },
+      }}
+      nodesDraggable={true}
+      nodesConnectable={false}
+      elementsSelectable={true}
+      onPaneClick={() => {
+        setSelectedNodeId(null);
+      }}
+      proOptions={{ hideAttribution: true }}
+      minZoom={0.2}
+      maxZoom={1.4}
+    >
+      <Background
+        color={
+          graphMode === 'overview'
+            ? 'color-mix(in oklab, oklch(82% 0.006 85) 52%, white)'
+            : 'color-mix(in oklab, oklch(82% 0.006 85) 68%, white)'
+        }
+        gap={graphMode === 'overview' ? 22 : 20}
+        size={1}
+        variant={BackgroundVariant.Dots}
+      />
+      <MiniMap />
+      <Controls />
+    </ReactFlow>
+  );
+}
+
+function GraphCanvas({ graph, graphMode }: GraphCanvasProps) {
+  return (
     <ReactFlowProvider>
-      <ReactFlow
-        fitView
-        fitViewOptions={graphMode === 'overview' ? { padding: 0.18 } : { padding: 0.12 }}
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        onNodesChange={handleNodesChange}
-        defaultEdgeOptions={{
-          style: {
-            stroke: graphMode === 'overview' ? 'oklch(76% 0.008 255 / 0.55)' : 'oklch(71% 0.01 255)',
-            strokeWidth: graphMode === 'overview' ? 1 : 1.4,
-          },
-        }}
-        nodesDraggable={true}
-        nodesConnectable={false}
-        elementsSelectable={true}
-        onPaneClick={() => {
-          setSelectedNodeId(null);
-        }}
-        proOptions={{ hideAttribution: true }}
-        minZoom={0.2}
-        maxZoom={1.4}
-      >
-        <Background
-          color={
-            graphMode === 'overview'
-              ? 'color-mix(in oklab, oklch(82% 0.006 85) 52%, white)'
-              : 'color-mix(in oklab, oklch(82% 0.006 85) 68%, white)'
-          }
-          gap={graphMode === 'overview' ? 22 : 20}
-          size={1}
-          variant={BackgroundVariant.Dots}
-        />
-        <MiniMap />
-        <Controls />
-      </ReactFlow>
+      <GraphCanvasInner graph={graph} graphMode={graphMode} />
     </ReactFlowProvider>
   );
 }

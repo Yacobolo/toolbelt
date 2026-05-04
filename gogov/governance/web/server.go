@@ -77,6 +77,8 @@ type layoutData struct {
 	Repositories []config.Repository
 	ActiveRepo   *config.Repository
 	RefreshPath  string
+	MainClass    string
+	ContentClass string
 }
 
 type homeData struct {
@@ -127,14 +129,14 @@ type packagesData struct {
 }
 
 type packageDetailData struct {
-	RepoID   string
-	Meta     *model.SnapshotMeta
-	Package  model.Package
+	RepoID    string
+	Meta      *model.SnapshotMeta
+	Package   model.Package
 	ActiveTab string
-	Files    []model.File
-	Inbound  []model.PackageEdge
-	Outbound []model.PackageEdge
-	Graph    graphResponse
+	Files     []model.File
+	Inbound   []model.PackageEdge
+	Outbound  []model.PackageEdge
+	Graph     graphResponse
 }
 
 type repoContext struct {
@@ -411,7 +413,7 @@ func (s *Server) packages(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.render(w, governancePage(s.repoLayout(
+	layout := s.repoLayout(
 		rc.Repo,
 		"packages",
 		"Package Catalog",
@@ -419,7 +421,10 @@ func (s *Server) packages(w http.ResponseWriter, r *http.Request) {
 		[]breadcrumbItem{{Label: "Catalog", Href: "/"}, {Label: rc.Repo.Name, Href: repoBaseHref(rc.Repo.ID)}, {Label: "Packages"}},
 		strconv.Itoa(len(packagesList))+" packages",
 		"neutral",
-	), packagesView(packagesData{
+	)
+	layout.MainClass = "overflow-hidden"
+	layout.ContentClass = "h-full w-full"
+	s.render(w, governancePage(layout, packagesView(packagesData{
 		RepoID:   rc.Repo.ID,
 		Meta:     meta,
 		Packages: packagesList,

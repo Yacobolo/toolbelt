@@ -5,9 +5,19 @@ governance-code-viewer {
   display: block;
 }
 
+governance-graph-view.governance-graph-workbench,
+governance-graph-view.governance-graph-workbench .governance-graph-shell,
+governance-graph-view.governance-graph-workbench .governance-graph-canvas {
+  height: 100%;
+}
+
+governance-graph-view.governance-graph-workbench .governance-graph-canvas {
+  min-height: 0;
+}
+
 .governance-graph-shell {
   overflow: hidden;
-  background: white;
+  background: color-mix(in oklab, white 94%, oklch(96% 0.004 95));
 }
 
 .governance-graph-canvas {
@@ -59,11 +69,11 @@ governance-code-viewer {
 }
 
 .governance-node.is-overview {
-  min-width: 7rem;
-  max-width: 10rem;
+  min-width: 5.75rem;
+  max-width: 8.25rem;
   border-color: color-mix(in oklab, oklch(78% 0.008 90) 72%, white);
   background: color-mix(in oklab, white 97%, oklch(98% 0.005 90));
-  padding: 0.5rem 0.6rem;
+  padding: 0.42rem 0.5rem;
 }
 
 .governance-node.is-overview.is-collapsed {
@@ -103,6 +113,36 @@ governance-code-viewer {
   background: color-mix(in oklab, oklch(98% 0.012 85) 94%, white);
 }
 
+.governance-node[data-tone="entry"] {
+  border-color: color-mix(in oklab, oklch(68% 0.03 80) 38%, white);
+  background: color-mix(in oklab, oklch(97% 0.012 80) 92%, white);
+}
+
+.governance-node[data-tone="delivery"] {
+  border-color: color-mix(in oklab, oklch(70% 0.025 220) 34%, white);
+  background: color-mix(in oklab, oklch(97% 0.012 220) 90%, white);
+}
+
+.governance-node[data-tone="application"] {
+  border-color: color-mix(in oklab, oklch(71% 0.022 145) 36%, white);
+  background: color-mix(in oklab, oklch(97% 0.011 145) 91%, white);
+}
+
+.governance-node[data-tone="domain"] {
+  border-color: color-mix(in oklab, oklch(68% 0.026 320) 28%, white);
+  background: color-mix(in oklab, oklch(97% 0.011 320) 90%, white);
+}
+
+.governance-node[data-tone="foundation"] {
+  border-color: color-mix(in oklab, oklch(72% 0.01 255) 42%, white);
+  background: color-mix(in oklab, oklch(97% 0.008 255) 89%, white);
+}
+
+.governance-node[data-tone="support"] {
+  border-color: color-mix(in oklab, oklch(75% 0.01 95) 52%, white);
+  background: color-mix(in oklab, oklch(98% 0.006 95) 92%, white);
+}
+
 .governance-node-title {
   margin: 0;
   font-size: 0.82rem;
@@ -117,7 +157,7 @@ governance-code-viewer {
 }
 
 .governance-node.is-overview .governance-node-title {
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   font-weight: 650;
   letter-spacing: 0.01em;
 }
