@@ -5,4 +5,5 @@ This repo is a monorepo for standalone Go tools and supporting modules.
 ## Tools
 
 - [`apigen`](./apigen/README.md): compile CUE API contracts into OpenAPI, JSON IR, generated Go server code, and Cobra CLI registries.
+- [`datastar-url-sync`](./datastar-url-sync/README.md): extracted Datastar pattern for syncing a `urlParams` signal with browser query params.
 - [`gogov`](./gogov/README.md): local-first multi-repository Go catalog for files, packages, lineage, and source.

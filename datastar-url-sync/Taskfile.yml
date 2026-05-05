@@ -1,0 +1,17 @@
+version: "3"
+
+tasks:
+  tidy:
+    desc: Resolve Go module dependencies for the demo server
+    cmds:
+      - go mod tidy
+
+  serve:
+    desc: Start a local static server for the Datastar URL sync demo
+    cmds:
+      - go run .
+
+  build:
+    desc: Build the TypeScript browser modules
+    cmds:
+      - npm run build
