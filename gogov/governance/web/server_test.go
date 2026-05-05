@@ -41,6 +41,7 @@ func TestRoutesRenderMultiRepoPagesAndRefreshRedirect(t *testing.T) {
 
 	mustWriteFile(t, filepath.Join(repoOneRoot, "go.mod"), "module example.com/repo\n\ngo 1.23.0\n")
 	mustWriteFile(t, filepath.Join(repoOneRoot, "internal", "services", "usecase.go"), "package services\n\nfunc Run() {}\n")
+	mustWriteFile(t, filepath.Join(repoOneRoot, "internal", "services", "usecase_test.go"), "package services\n\nimport \"testing\"\n\nfunc TestRun(t *testing.T) {}\n")
 	mustWriteFile(t, filepath.Join(repoOneRoot, "internal", "ui", "page.go"), "package ui\n\nfunc Page() {}\n")
 	mustWriteFile(t, filepath.Join(repoTwoRoot, "go.mod"), "module example.com/duck\n\ngo 1.23.0\n")
 	mustWriteFile(t, filepath.Join(repoTwoRoot, "main.go"), "package main\n\nfunc main() {}\n")
@@ -101,20 +102,25 @@ func TestRoutesRenderMultiRepoPagesAndRefreshRedirect(t *testing.T) {
 			CommitSHA:         "abc123",
 			RefreshedAt:       now,
 			CoverageStatus:    model.CoverageStatusAvailable,
-			FilesCount:        2,
+			FilesCount:        3,
 			PackagesCount:     2,
 			PackageEdgesCount: 1,
 			FileEdgesCount:    1,
 		},
 		Packages: []model.Package{
-			{Path: "example.com/repo/internal/services", Name: "services", Dir: "internal/services", FileCount: 1, LOC: 20},
+			{Path: "example.com/repo/internal/services", Name: "services", Dir: "internal/services", FileCount: 2, TestFileCount: 1, LOC: 35},
 			{Path: "example.com/repo/internal/ui", Name: "ui", Dir: "internal/ui", FileCount: 1, LOC: 10},
 		},
 		Files: []model.File{
-			{Path: "internal/services/usecase.go", Dir: "internal/services", PackagePath: "example.com/repo/internal/services", PackageName: "services", LOC: 20, NonEmptyLOC: 18},
+			{Path: "internal/services/usecase.go", Dir: "internal/services", PackagePath: "example.com/repo/internal/services", PackageName: "services", LOC: 20, NonEmptyLOC: 18, CoveredStatements: 8, TotalStatements: 10},
+			{Path: "internal/services/usecase_test.go", Dir: "internal/services", PackagePath: "example.com/repo/internal/services", PackageName: "services", LOC: 15, NonEmptyLOC: 12, IsTest: true, FunctionCount: 1},
 			{Path: "internal/ui/page.go", Dir: "internal/ui", PackagePath: "example.com/repo/internal/ui", PackageName: "ui", LOC: 10, NonEmptyLOC: 9},
+			{Path: "internal/store/queries/queries.sql.go", Dir: "internal/store/queries", PackagePath: "example.com/repo/internal/services", PackageName: "services", LOC: 5000, NonEmptyLOC: 4900, IsGenerated: true},
 		},
-		Symbols:      []model.Symbol{{FilePath: "internal/services/usecase.go", Name: "Run", Kind: "func", Line: 3}},
+		Symbols: []model.Symbol{
+			{FilePath: "internal/services/usecase.go", Name: "Run", Kind: "func", Line: 3},
+			{FilePath: "internal/services/usecase_test.go", Name: "TestRun", Kind: "func", Line: 5},
+		},
 		PackageEdges: []model.PackageEdge{{FromPath: "example.com/repo/internal/ui", ToPath: "example.com/repo/internal/services", Weight: 1}},
 		FileEdges:    []model.FileEdge{{FromPath: "internal/ui/page.go", ToPath: "internal/services/usecase.go", Weight: 1, Kind: "symbol"}},
 	}); err != nil {
@@ -134,10 +140,24 @@ func TestRoutesRenderMultiRepoPagesAndRefreshRedirect(t *testing.T) {
 	assertPageContains(t, server.URL+"/", "duck-demo")
 	assertPageContains(t, server.URL+"/repos/ai-platform", "Largest files")
 	assertPageContains(t, server.URL+"/repos/ai-platform", "/repos/duck-demo")
+	assertPageNotContains(t, server.URL+"/repos/ai-platform", "internal/store/queries/queries.sql.go")
 	assertPageContains(t, server.URL+"/repos/ai-platform/files", "internal/services/usecase.go")
+	assertPageContains(t, server.URL+"/repos/ai-platform/files/internal", "services/")
+	assertPageContains(t, server.URL+"/repos/ai-platform/files/internal", "/repos/ai-platform/files/internal/services")
+	assertPageContains(t, server.URL+"/repos/ai-platform/files/internal/services", "usecase.go")
 	assertPageContains(t, server.URL+"/repos/ai-platform/files/internal/services/usecase.go", "?tab=source")
 	assertPageContains(t, server.URL+"/repos/ai-platform/files/internal/services/usecase.go?tab=source", "governance-code-viewer")
 	assertPageContains(t, server.URL+"/repos/ai-platform/files/internal/services/usecase.go", "internal/services/usecase.go")
+	assertPageContains(t, server.URL+"/repos/ai-platform/files/internal/services/usecase.go", "/repos/ai-platform/files/internal")
+	assertPageContains(t, server.URL+"/repos/ai-platform/files/internal/services/usecase.go", "/repos/ai-platform/files/internal/services")
+	assertPageContains(t, server.URL+"/repos/ai-platform/tests", "Recommended next actions")
+	assertPageContains(t, server.URL+"/repos/ai-platform/tests", "High-risk packages with no tests")
+	assertPageContains(t, server.URL+"/repos/ai-platform/tests?tab=contracts", "Contract coverage")
+	assertPageContains(t, server.URL+"/repos/ai-platform/tests?tab=gaps", "Critical gaps")
+	assertPageContains(t, server.URL+"/repos/ai-platform/tests?tab=inventory", "Test inventory")
+	assertPageContains(t, server.URL+"/repos/ai-platform/tests?tab=contracts", "/repos/ai-platform/packages/internal/services")
+	assertPageContains(t, server.URL+"/repos/ai-platform/tests", "/repos/ai-platform/tests?tab=contracts")
+	assertPageContains(t, server.URL+"/repos/ai-platform", "/repos/ai-platform/tests")
 	assertPageContains(t, server.URL+"/repos/ai-platform/packages", "governance-graph-view")
 	assertPageContains(t, server.URL+"/repos/ai-platform/packages/internal/ui", "Neighborhood")
 
@@ -188,6 +208,25 @@ func assertPageContains(t *testing.T, url string, needle string) {
 	}
 	if !strings.Contains(string(body), needle) {
 		t.Fatalf("%s body did not contain %q:\n%s", url, needle, string(body))
+	}
+}
+
+func assertPageNotContains(t *testing.T, url string, needle string) {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("http.Get(%s) error = %v", url, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("io.ReadAll(%s) error = %v", url, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("%s returned status %d", url, resp.StatusCode)
+	}
+	if strings.Contains(string(body), needle) {
+		t.Fatalf("%s body unexpectedly contained %q:\n%s", url, needle, string(body))
 	}
 }
 

@@ -108,6 +108,7 @@ func appShellSidebar(layout layoutData) g.Node {
 							appShellNavLink(repoBaseHref(layout.ActiveRepo.ID), "overview", layout.Section, "Overview"),
 							appShellNavLink(repoRunsHref(layout.ActiveRepo.ID), "runs", layout.Section, "Runs"),
 							appShellNavLink(repoFilesHref(layout.ActiveRepo.ID), "files", layout.Section, "Files"),
+							appShellNavLink(repoTestsHref(layout.ActiveRepo.ID), "tests", layout.Section, "Tests"),
 							appShellNavLink(repoPackagesHref(layout.ActiveRepo.ID), "packages", layout.Section, "Packages"),
 						),
 					)

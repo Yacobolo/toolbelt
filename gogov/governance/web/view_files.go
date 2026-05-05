@@ -3,6 +3,7 @@ package web
 import (
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/Yacobolo/toolbelt/gogov/governance/model"
 
@@ -145,6 +146,23 @@ func fileDetailView(page fileDetailData) g.Node {
 	)
 }
 
+func fileDirectoryView(page fileDirectoryData) g.Node {
+	return h.Main(
+		h.Class("space-y-6"),
+		h.Section(
+			h.Class("grid gap-4 md:grid-cols-2 xl:grid-cols-4"),
+			statusCard("Directories", strconv.Itoa(page.DirectDirCount)),
+			statusCard("Files", strconv.Itoa(page.DirectFileCount)),
+			statusCard("Recursive files", strconv.Itoa(page.TotalFileCount)),
+			statusCard("Surface", strconv.Itoa(page.TotalLOC)+" LOC"),
+		),
+		h.Section(
+			h.Class("border border-stone-200 bg-white p-4 sm:p-6"),
+			governanceTable([]string{"Name", "Type", "LOC", "Coverage", "Tags"}, fileDirectoryRows(page.RepoID, page.Entries)),
+		),
+	)
+}
+
 func sortOption(value string, label string, selected string) g.Node {
 	return h.Option(h.Value(value), g.If(value == selected, h.Selected()), g.Text(label))
 }
@@ -170,6 +188,93 @@ func fileRows(repoID string, files []model.File) g.Node {
 	return rows
 }
 
+func fileDirectoryRows(repoID string, entries []fileDirectoryEntry) g.Node {
+	if len(entries) == 0 {
+		return h.Tr(h.Td(h.Class(governanceTableCellClass("text-stone-500")), g.Attr("colspan", "5"), g.Text("No files or subdirectories found at this path.")))
+	}
+
+	rows := g.Group{}
+	for _, item := range entries {
+		rows = append(rows, h.Tr(
+			h.Class("border-t border-stone-200"),
+			h.Td(h.Class(governanceTableCellClass("")), fileDirectoryEntryLink(repoID, item)),
+			h.Td(h.Class(governanceTableCellClass("text-stone-600")), g.Text(fileDirectoryTypeLabel(item))),
+			h.Td(h.Class(governanceTableCellClass("")), g.Text(fileDirectoryLocText(item))),
+			h.Td(h.Class(governanceTableCellClass("")), g.Text(fileDirectoryCoverageText(item))),
+			h.Td(h.Class(governanceTableCellClass("")), fileDirectoryTags(item)),
+		))
+	}
+	return rows
+}
+
+func fileDirectoryEntryLink(repoID string, entry fileDirectoryEntry) g.Node {
+	label := entry.Name
+	href := fileHref(repoID, entry.Path)
+	if entry.IsDirectory {
+		label += "/"
+		href = directoryHref(repoID, entry.Path)
+	}
+	return h.A(h.Class("font-medium underline"), h.Href(href), g.Text(label))
+}
+
+func fileDirectoryTypeLabel(entry fileDirectoryEntry) string {
+	if entry.IsDirectory {
+		if entry.TotalFileCount == 1 {
+			return "directory · 1 file"
+		}
+		return "directory · " + strconv.Itoa(entry.TotalFileCount) + " files"
+	}
+	return "file"
+}
+
+func fileDirectoryLocText(entry fileDirectoryEntry) string {
+	if entry.IsDirectory {
+		return strconv.Itoa(entry.LOC)
+	}
+	if entry.File == nil {
+		return strconv.Itoa(entry.LOC)
+	}
+	return strconv.Itoa(entry.File.LOC)
+}
+
+func fileDirectoryCoverageText(entry fileDirectoryEntry) string {
+	if entry.IsDirectory {
+		return coverageText(entry.CoveragePct)
+	}
+	if entry.File == nil {
+		return "n/a"
+	}
+	return coverageText(entry.File.CoveragePct)
+}
+
+func fileDirectoryTags(entry fileDirectoryEntry) g.Node {
+	if !entry.IsDirectory && entry.File != nil {
+		return fileTagBadges(*entry.File)
+	}
+
+	if entry.IsDirectory {
+		tags := g.Group{}
+		if entry.TestFileCount > 0 {
+			tags = append(tags, fileTagBadge(fileCountLabel(entry.TestFileCount, "test"), "border-emerald-200 bg-emerald-50 text-emerald-800"))
+		}
+		if entry.GeneratedCount > 0 {
+			tags = append(tags, fileTagBadge(fileCountLabel(entry.GeneratedCount, "generated"), "border-sky-200 bg-sky-50 text-sky-800"))
+		}
+		if len(tags) > 0 {
+			return h.Div(h.Class("flex flex-wrap gap-2"), tags)
+		}
+	}
+
+	return nil
+}
+
+func fileCountLabel(count int, label string) string {
+	if count == 1 {
+		return "1 " + label
+	}
+	return strconv.Itoa(count) + " " + label
+}
+
 func fileTagBadges(file model.File) g.Node {
 	tags := g.Group{}
 	if file.IsIgnored {
@@ -190,7 +295,7 @@ func fileTagBadges(file model.File) g.Node {
 func fileTagBadge(label string, classes string) g.Node {
 	return h.Span(
 		h.Class("inline-flex items-center border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] "+classes),
-		g.Text(label),
+		g.Text(strings.ReplaceAll(label, "_", " ")),
 	)
 }
 

@@ -54,7 +54,8 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/", s.dashboard)
 		r.Get("/runs", s.runs)
 		r.Get("/files", s.files)
-		r.Get("/files/*", s.fileDetail)
+		r.Get("/files/*", s.fileBrowse)
+		r.Get("/tests", s.tests)
 		r.Get("/packages", s.packages)
 		r.Get("/packages/*", s.packageDetail)
 	})
@@ -109,15 +110,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	sort.Slice(files, func(i, j int) bool {
-		if files[i].LOC == files[j].LOC {
-			return files[i].Path < files[j].Path
-		}
-		return files[i].LOC > files[j].LOC
-	})
-	if len(files) > 10 {
-		files = files[:10]
-	}
+	files = overviewLargestFiles(files, 10)
 
 	packagesList, err := rc.Store.ListPackages(r.Context())
 	if err != nil {
@@ -149,6 +142,26 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		BigFiles:    files,
 		HotPackages: packagesList,
 	})))
+}
+
+func overviewLargestFiles(files []model.File, limit int) []model.File {
+	filtered := make([]model.File, 0, len(files))
+	for _, item := range files {
+		if item.IsGenerated {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].LOC == filtered[j].LOC {
+			return filtered[i].Path < filtered[j].Path
+		}
+		return filtered[i].LOC > filtered[j].LOC
+	})
+	if len(filtered) > limit {
+		filtered = filtered[:limit]
+	}
+	return filtered
 }
 
 func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
@@ -245,7 +258,7 @@ func (s *Server) files(w http.ResponseWriter, r *http.Request) {
 	})))
 }
 
-func (s *Server) fileDetail(w http.ResponseWriter, r *http.Request) {
+func (s *Server) fileBrowse(w http.ResponseWriter, r *http.Request) {
 	rc, err := s.resolveRepo(r)
 	if err != nil {
 		s.writeRepoError(w, r, err)
@@ -259,7 +272,26 @@ func (s *Server) fileDetail(w http.ResponseWriter, r *http.Request) {
 	file, err := rc.Store.GetFile(r.Context(), filePath)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			http.NotFound(w, r)
+			files, listErr := rc.Store.ListFiles(r.Context())
+			if listErr != nil {
+				http.Error(w, listErr.Error(), http.StatusInternalServerError)
+				return
+			}
+			dirPage, ok := buildFileDirectoryData(rc.Repo.ID, meta, filePath, files)
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+
+			s.render(w, governancePage(s.repoLayout(
+				rc.Repo,
+				"files",
+				path.Base(dirPage.Path),
+				"",
+				directoryBreadcrumbs(rc.Repo.ID, rc.Repo.Name, dirPage.Path),
+				strconv.Itoa(dirPage.DirectFileCount)+" files / "+strconv.Itoa(dirPage.DirectDirCount)+" dirs",
+				"neutral",
+			), fileDirectoryView(dirPage)))
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -300,7 +332,7 @@ func (s *Server) fileDetail(w http.ResponseWriter, r *http.Request) {
 		"files",
 		filepath.Base(file.Path),
 		"",
-		[]breadcrumbItem{{Label: "Catalog", Href: "/"}, {Label: rc.Repo.Name, Href: repoBaseHref(rc.Repo.ID)}, {Label: "Files", Href: repoFilesHref(rc.Repo.ID)}, {Label: file.Path}},
+		fileBreadcrumbs(rc.Repo.ID, rc.Repo.Name, file.Path),
 		fileHealthLabel(file),
 		fileHealthTone(file),
 	), fileDetailView(fileDetailData{
@@ -315,6 +347,195 @@ func (s *Server) fileDetail(w http.ResponseWriter, r *http.Request) {
 		Graph:        graph,
 		Source:       source,
 	})))
+}
+
+func buildFileDirectoryData(repoID string, meta *model.SnapshotMeta, dirPath string, files []model.File) (fileDirectoryData, bool) {
+	normalized := strings.Trim(strings.TrimSpace(dirPath), "/")
+	prefix := normalized
+	if prefix != "" {
+		prefix += "/"
+	}
+
+	entryMap := map[string]*fileDirectoryEntry{}
+	matched := false
+	totalFileCount := 0
+	totalLOC := 0
+	testFileCount := 0
+	generatedCount := 0
+
+	for _, item := range files {
+		filePath := strings.Trim(item.Path, "/")
+		rest := filePath
+		if normalized != "" {
+			if !strings.HasPrefix(filePath, prefix) {
+				continue
+			}
+			rest = strings.TrimPrefix(filePath, prefix)
+		}
+		if rest == "" {
+			continue
+		}
+
+		matched = true
+		totalFileCount++
+		totalLOC += item.LOC
+		if item.IsTest {
+			testFileCount++
+		}
+		if item.IsGenerated {
+			generatedCount++
+		}
+
+		parts := strings.Split(rest, "/")
+		name := parts[0]
+		childPath := name
+		if normalized != "" {
+			childPath = normalized + "/" + name
+		}
+
+		entry := entryMap[name]
+		if entry == nil {
+			entry = &fileDirectoryEntry{
+				Name: name,
+				Path: childPath,
+			}
+			entryMap[name] = entry
+		}
+
+		if len(parts) == 1 {
+			fileCopy := item
+			entry.File = &fileCopy
+			entry.LOC = item.LOC
+			entry.CoveragePct = item.CoveragePct
+			entry.TestFileCount = boolCount(item.IsTest)
+			entry.GeneratedCount = boolCount(item.IsGenerated)
+			continue
+		}
+
+		entry.IsDirectory = true
+		entry.TotalFileCount++
+		entry.LOC += item.LOC
+		if item.IsTest {
+			entry.TestFileCount++
+		}
+		if item.IsGenerated {
+			entry.GeneratedCount++
+		}
+	}
+
+	if !matched {
+		return fileDirectoryData{}, false
+	}
+
+	entries := make([]fileDirectoryEntry, 0, len(entryMap))
+	directDirCount := 0
+	directFileCount := 0
+	for _, entry := range entryMap {
+		if entry.IsDirectory {
+			directDirCount++
+			coverage := aggregateCoverage(directoryCoverageFiles(entry.Path, files))
+			entry.CoveragePct = coverage
+		} else {
+			directFileCount++
+			entry.TotalFileCount = 1
+		}
+		entries = append(entries, *entry)
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].IsDirectory != entries[j].IsDirectory {
+			return entries[i].IsDirectory
+		}
+		return entries[i].Name < entries[j].Name
+	})
+
+	return fileDirectoryData{
+		RepoID:          repoID,
+		Meta:            meta,
+		Path:            normalized,
+		Entries:         entries,
+		DirectDirCount:  directDirCount,
+		DirectFileCount: directFileCount,
+		TotalFileCount:  totalFileCount,
+		TotalLOC:        totalLOC,
+		TestFileCount:   testFileCount,
+		GeneratedCount:  generatedCount,
+	}, true
+}
+
+func directoryCoverageFiles(dirPath string, files []model.File) []model.File {
+	prefix := strings.Trim(strings.TrimSpace(dirPath), "/")
+	if prefix != "" {
+		prefix += "/"
+	}
+	matches := make([]model.File, 0)
+	for _, item := range files {
+		filePath := strings.Trim(item.Path, "/")
+		if prefix == "" || strings.HasPrefix(filePath, prefix) {
+			matches = append(matches, item)
+		}
+	}
+	return matches
+}
+
+func boolCount(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func (s *Server) tests(w http.ResponseWriter, r *http.Request) {
+	rc, err := s.resolveRepo(r)
+	if err != nil {
+		s.writeRepoError(w, r, err)
+		return
+	}
+
+	meta, _ := snapshotMeta(r.Context(), rc.Store)
+	packagesList, err := rc.Store.ListPackages(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	files, err := rc.Store.ListFiles(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	testFiles, err := rc.Store.ListTestFiles(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	page := buildTestsData(
+		rc.Repo.ID,
+		detailTabValue(r, "recommendations", "recommendations", "contracts", "gaps", "inventory"),
+		meta,
+		packagesList,
+		files,
+		testFiles,
+	)
+	statusLabel := strconv.Itoa(page.Summary.CriticalGaps) + " critical gaps"
+	if page.Summary.CriticalGaps == 1 {
+		statusLabel = "1 critical gap"
+	}
+	if page.Summary.CriticalGaps == 0 {
+		statusLabel = strconv.Itoa(page.Summary.TotalTestFiles) + " test files"
+		if page.Summary.TotalTestFiles == 1 {
+			statusLabel = "1 test file"
+		}
+	}
+	s.render(w, governancePage(s.repoLayout(
+		rc.Repo,
+		"tests",
+		"Test Contracts",
+		"",
+		[]breadcrumbItem{{Label: "Catalog", Href: "/"}, {Label: rc.Repo.Name, Href: repoBaseHref(rc.Repo.ID)}, {Label: "Tests"}},
+		statusLabel,
+		"neutral",
+	), testsView(page)))
 }
 
 func (s *Server) packages(w http.ResponseWriter, r *http.Request) {

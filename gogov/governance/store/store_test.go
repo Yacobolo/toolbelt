@@ -94,3 +94,66 @@ func TestReplaceSnapshotKeepsOnlyLatestStateAndRetainsRuns(t *testing.T) {
 		t.Fatalf("expected 2 runs, got %d", len(runs))
 	}
 }
+
+func TestListTestFilesReturnsOnlyTaggedTestFiles(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".governance", "governance.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	ctx := context.Background()
+	started := time.Now().UTC()
+	if err := st.CreateRun(ctx, model.Run{
+		ID:             "run-tests",
+		Status:         model.RunStatusSucceeded,
+		CoverageStatus: model.CoverageStatusAvailable,
+		RepoRoot:       "/tmp/repo",
+		StartedAt:      started,
+	}); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+
+	coverage := 82.5
+	if err := st.ReplaceSnapshot(ctx, model.Snapshot{
+		Meta: model.SnapshotMeta{
+			RunID:          "run-tests",
+			RepoRoot:       "/tmp/repo",
+			ModulePath:     "example.com/repo",
+			RefreshedAt:    started,
+			CoverageStatus: model.CoverageStatusAvailable,
+			FilesCount:     4,
+			PackagesCount:  2,
+		},
+		Packages: []model.Package{
+			{Path: "example.com/repo/internal/services", Name: "services", Dir: "internal/services", FileCount: 3, TestFileCount: 1, LOC: 130},
+			{Path: "example.com/repo/internal/ui", Name: "ui", Dir: "internal/ui", FileCount: 1, TestFileCount: 0, LOC: 40},
+		},
+		Files: []model.File{
+			{Path: "internal/services/run.go", Dir: "internal/services", PackagePath: "example.com/repo/internal/services", PackageName: "services", LOC: 50, NonEmptyLOC: 42, CoveredStatements: 20, TotalStatements: 25, CoveragePct: &coverage},
+			{Path: "internal/services/contracts.go", Dir: "internal/services", PackagePath: "example.com/repo/internal/services", PackageName: "services", LOC: 40, NonEmptyLOC: 34},
+			{Path: "internal/services/run_test.go", Dir: "internal/services", PackagePath: "example.com/repo/internal/services", PackageName: "services", LOC: 35, NonEmptyLOC: 30, IsTest: true, FunctionCount: 2},
+			{Path: "internal/ui/page.go", Dir: "internal/ui", PackagePath: "example.com/repo/internal/ui", PackageName: "ui", LOC: 40, NonEmptyLOC: 33},
+		},
+		Symbols: []model.Symbol{
+			{FilePath: "internal/services/run_test.go", Name: "TestRunContract", Kind: "func", Line: 5},
+			{FilePath: "internal/services/run_test.go", Name: "TestRunEdgeCase", Kind: "func", Line: 12},
+		},
+	}); err != nil {
+		t.Fatalf("ReplaceSnapshot() error = %v", err)
+	}
+
+	testFiles, err := st.ListTestFiles(ctx)
+	if err != nil {
+		t.Fatalf("ListTestFiles() error = %v", err)
+	}
+	if len(testFiles) != 1 {
+		t.Fatalf("expected 1 test file, got %d", len(testFiles))
+	}
+	if testFiles[0].Path != "internal/services/run_test.go" || !testFiles[0].IsTest {
+		t.Fatalf("unexpected test files: %+v", testFiles)
+	}
+}

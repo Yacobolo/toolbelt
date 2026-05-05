@@ -483,6 +483,33 @@ func (s *Store) ListFiles(ctx context.Context) ([]model.File, error) {
 	return files, nil
 }
 
+func (s *Store) ListTestFiles(ctx context.Context) ([]model.File, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT path, dir, package_path, package_name, loc, non_empty_loc, function_count,
+		       exported_symbol_count, is_test, is_generated, is_ignored, fan_in, fan_out, violation_count,
+		       covered_statements, total_statements, coverage_pct
+		FROM files
+		WHERE is_test = 1
+		ORDER BY package_path ASC, path ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("list test files: %w", err)
+	}
+	defer rows.Close()
+
+	var files []model.File
+	for rows.Next() {
+		item, err := scanFile(rows)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate test files: %w", err)
+	}
+	return files, nil
+}
+
 func (s *Store) GetFile(ctx context.Context, path string) (model.File, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT path, dir, package_path, package_name, loc, non_empty_loc, function_count,
