@@ -15,10 +15,8 @@ This example mirrors the pattern used in the Explore surface:
 ## Files
 
 - `server.go`: Go server and gomponents-rendered demo page
-- `src/url-params.ts`: URL param helpers
-- `src/datastar-url-sync.ts`: Datastar-oriented URL sync helpers scoped to the `urlParams` signal
-- `src/main.ts`: browser entrypoint
-- `dist/*.js`: built browser modules
+- `src/main.ts`: single-file TypeScript implementation for the URL param helpers and the Datastar `urlParams` sync bridge
+- `dist/main.js`: built browser module
 - `go.mod`: local Go module for gomponents dependencies
 
 ## Run
