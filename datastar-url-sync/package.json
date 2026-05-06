@@ -1,0 +1,11 @@
+{
+  "name": "datastar-url-sync",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p ."
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
