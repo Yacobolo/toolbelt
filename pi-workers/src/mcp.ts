@@ -20,7 +20,7 @@ import type {
 } from "./index.js";
 import type { LiveAgent, WaitResult } from "./agent-registry.js";
 
-const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
+const DEFAULT_WAIT_TIMEOUT_MS = 600_000;
 const MIN_WAIT_TIMEOUT_MS = 10_000;
 const MAX_WAIT_TIMEOUT_MS = 3_600_000;
 const TASK_NAME_PATTERN = /^[a-z0-9_]+$/;
@@ -87,7 +87,7 @@ export function createPiWorkersMcpServer(options: PiWorkersMcpOptions = {}): Mcp
 
   server.registerTool("pi_workers_wait_agent", {
     title: "Pi Workers Wait Agent",
-    description: "Wait for a live Pi worker mailbox update. Defaults to 30000 ms, matching Codex wait_agent.",
+    description: "Wait for a live Pi worker mailbox update. Defaults to 600000 ms so long-running workers can report without chatty polling.",
     inputSchema: {
       timeout_ms: z.number().int().min(MIN_WAIT_TIMEOUT_MS).max(MAX_WAIT_TIMEOUT_MS).optional(),
     },
