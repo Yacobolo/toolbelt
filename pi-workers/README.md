@@ -41,6 +41,22 @@ pi-workers-mcp
 The command is a STDIO MCP server, so it normally waits for an MCP client and
 prints nothing when started by hand. Stop it with `Ctrl-C`.
 
+## Codex Skill
+
+The package includes a concise Codex skill that teaches the parent agent when
+and how to use the MCP tools without duplicating this README:
+
+```text
+pi-workers/skills/pi-workers/SKILL.md
+```
+
+Install it into your user Codex skills with a symlink:
+
+```bash
+mkdir -p ~/.codex/skills
+ln -sfn "$(pwd)/pi-workers/skills/pi-workers" ~/.codex/skills/pi-workers
+```
+
 ## Codex MCP Config
 
 Register the STDIO MCP server in your user Codex config, not in project git:
