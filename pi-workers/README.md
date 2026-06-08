@@ -126,9 +126,9 @@ server process. `task_name` is the local handle, so an active task name cannot
 be reused until that worker reaches a terminal state or is closed.
 
 `pi_workers_wait_agent` accepts optional `timeout_ms` only. It waits for the
-next live-agent mailbox update and returns one result. The default is `30000`,
-minimum `10000`, maximum `3600000`. If a status transition already happened,
-the queued update is returned immediately.
+next live-agent mailbox update and returns one result. The default is `600000`
+(10 minutes), minimum `10000`, maximum `3600000`. If a status transition
+already happened, the queued update is returned immediately.
 
 `pi_workers_send_message` and `pi_workers_followup_task` send a Pi resume
 message to a task name or raw run id. `pi_workers_close_agent` interrupts a task

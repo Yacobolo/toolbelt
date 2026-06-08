@@ -35,7 +35,7 @@ Safety defaults: reviewers are read-only. Use one `worker` for a given worktree 
 4. Wait only when useful.
    - Use `pi_workers_wait_agent` when you need the next mailbox update from any live worker.
    - `wait_agent` is not targeted. With multiple workers, it may return whichever worker updates next.
-   - Timeout is not completion or failure. Default is 30s; use `timeout_ms` when a longer blocking wait is useful.
+   - Timeout is not completion or failure. Default is 10 minutes; wait silently inside the tool call instead of narrating repeated "still running" checks. Use `timeout_ms` only when a shorter or longer blocking wait is intentional.
    - Read generated `.pi-agents/...` Markdown reports only when needed to integrate findings.
 
 5. Control active workers.
