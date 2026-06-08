@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -268,10 +270,15 @@ function resultTimedOut(details: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isEntrypoint()) {
   main().catch((error) => {
     const message = error instanceof PiWorkersError || error instanceof Error ? error.message : String(error);
     process.stderr.write(`${message}\n`);
     process.exit(1);
   });
+}
+
+function isEntrypoint(): boolean {
+  const entry = process.argv[1];
+  return entry !== undefined && realpathSync(entry) === fileURLToPath(import.meta.url);
 }
