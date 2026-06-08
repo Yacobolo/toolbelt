@@ -9,6 +9,7 @@
   "scripts": {
     "prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "tsc -p tsconfig.json",
+    "postbuild": "chmod +x dist/mcp.js",
     "check": "tsc -p tsconfig.json --noEmit",
     "link:global": "npm run build && env -u npm_config_prefix npm link",
     "test": "npm run build && node --test test/*.test.mjs",

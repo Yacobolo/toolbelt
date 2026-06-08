@@ -43,17 +43,17 @@ prints nothing when started by hand. Stop it with `Ctrl-C`.
 
 ## Codex MCP Config
 
-Register one STDIO MCP server per active worktree:
+Register the STDIO MCP server in your user Codex config, not in project git:
 
 ```toml
 [mcp_servers.pi_workers]
-command = "node"
-args = ["pi-workers/dist/mcp.js"]
-cwd = "/absolute/path/to/worktree"
+command = "pi-workers-mcp"
 tool_timeout_sec = 1800
 ```
 
-If `pi-workers-mcp` is on `PATH`, you can register the package bin instead:
+Do not set `cwd` for normal use. Codex should launch the MCP server from the
+active session workspace, which lets the same user config work across multiple
+worktrees. Only set `cwd` when you intentionally want a fixed workspace:
 
 ```toml
 [mcp_servers.pi_workers]
