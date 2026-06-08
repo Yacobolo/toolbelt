@@ -26,6 +26,21 @@ npm --prefix pi-workers install
 npm --prefix pi-workers run build
 ```
 
+For local development, link the `pi-workers-mcp` bin onto your `PATH`:
+
+```bash
+npm --prefix pi-workers run link:global
+```
+
+Then verify the linked bin:
+
+```bash
+pi-workers-mcp
+```
+
+The command is a STDIO MCP server, so it normally waits for an MCP client and
+prints nothing when started by hand. Stop it with `Ctrl-C`.
+
 ## Codex MCP Config
 
 Register one STDIO MCP server per active worktree:

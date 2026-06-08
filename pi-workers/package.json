@@ -10,6 +10,7 @@
     "prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
+    "link:global": "npm run build && env -u npm_config_prefix npm link",
     "test": "npm run build && node --test test/*.test.mjs",
     "smoke": "npm run build && PI_WORKERS_SMOKE=1 node --test test/smoke.test.mjs"
   },
