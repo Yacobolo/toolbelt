@@ -4,7 +4,6 @@
   "private": true,
   "type": "module",
   "bin": {
-    "pi-workers": "./dist/cli.js",
     "pi-workers-mcp": "./dist/mcp.js"
   },
   "scripts": {
@@ -17,7 +16,6 @@
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.78.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "commander": "^15.0.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

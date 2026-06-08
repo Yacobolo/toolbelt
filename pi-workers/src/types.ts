@@ -2,7 +2,7 @@ import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext, ToolDe
 
 export type OutputMode = "inline" | "file-only";
 
-export interface SubagentTask {
+export interface SpawnOptions {
   agent: string;
   task: string;
   label?: string;
@@ -16,36 +16,8 @@ export interface SubagentTask {
   skill?: string[] | string | boolean;
   acceptance?: unknown;
   outputSchema?: unknown;
-}
-
-export interface SpawnOptions extends SubagentTask {
   async?: boolean;
   foreground?: boolean;
-}
-
-export interface ParallelOptions {
-  tasks: SubagentTask[];
-  async?: boolean;
-  foreground?: boolean;
-  concurrency?: number;
-  cwd?: string;
-  worktree?: boolean;
-  acceptance?: unknown;
-  control?: unknown;
-}
-
-export type ChainStep = Record<string, unknown>;
-
-export interface ChainOptions {
-  chain: ChainStep[];
-  task?: string;
-  async?: boolean;
-  foreground?: boolean;
-  cwd?: string;
-  chainDir?: string;
-  concurrency?: number;
-  acceptance?: unknown;
-  control?: unknown;
 }
 
 export interface StatusOptions {
@@ -61,26 +33,6 @@ export interface ResumeOptions {
   message: string;
   index?: number;
 }
-
-export interface WaitOptions {
-  id: string;
-  timeoutMs?: number;
-  progress?: boolean;
-}
-
-export type ManagementTarget =
-  | { agent: string; chainName?: never }
-  | { agent?: never; chainName: string };
-
-export type GetOptions = ManagementTarget;
-
-export interface CreateOptions {
-  config: unknown;
-}
-
-export type UpdateOptions = ManagementTarget & { config: unknown };
-
-export type DeleteOptions = ManagementTarget;
 
 export type SubagentParams = Record<string, unknown>;
 export type SubagentToolResult = AgentToolResult<unknown>;

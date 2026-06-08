@@ -360,7 +360,6 @@ async function connectMcp(piClient) {
 function fakePiClient(overrides = {}) {
   const calls = overrides.calls ?? [];
   return {
-    doctor: overrides.doctor ?? (async () => textResult("Doctor ok")),
     spawn: overrides.spawn ?? (async (input) => {
       calls.push({ method: "spawn", input });
       return textResult("Async run", { runId: "run-1" });

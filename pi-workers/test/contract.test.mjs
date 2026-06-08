@@ -9,7 +9,7 @@ import { PiSubagentClient } from "../dist/client.js";
 const contractEnabled = process.env.PI_WORKERS_CONTRACT === "1";
 const runContractEnabled = process.env.PI_WORKERS_CONTRACT_RUN === "1";
 
-test("real Pi doctor parent-visible content matches direct tool execution", { skip: !contractEnabled }, async () => {
+test("real Pi execute parent-visible content matches direct tool execution", { skip: !contractEnabled }, async () => {
   const cwd = mkdtempSync(join(tmpdir(), "pi-workers-contract-"));
   const { session } = await createAgentSession({
     cwd,
@@ -23,7 +23,7 @@ test("real Pi doctor parent-visible content matches direct tool execution", { sk
 
   try {
     const direct = await executeDirect(session, "piw-doctor", { action: "doctor" });
-    const viaClient = await client.doctor();
+    const viaClient = await client.execute({ action: "doctor" });
     assert.equal(viaClient.text, textOf(direct));
   } finally {
     await client.close();

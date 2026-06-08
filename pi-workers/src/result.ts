@@ -32,26 +32,3 @@ export function extractState(text: string): string | undefined {
   const match = text.match(/^State:\s*([A-Za-z_-]+)/m);
   return match?.[1];
 }
-
-export function summarizeProgress(raw: SubagentToolResult): string[] {
-  const details = raw.details;
-  if (!details || typeof details !== "object" || !("progress" in details) || !Array.isArray(details.progress)) {
-    return [];
-  }
-  const lines: string[] = [];
-  for (const item of details.progress) {
-    if (!item || typeof item !== "object") continue;
-    const record = item as Record<string, unknown>;
-    const agent = stringValue(record.agent) ?? "subagent";
-    const status = stringValue(record.status) ?? "running";
-    const currentTool = stringValue(record.currentTool);
-    const currentPath = stringValue(record.currentPath);
-    const toolText = currentTool ? ` tool=${currentTool}${currentPath ? ` path=${currentPath}` : ""}` : "";
-    lines.push(`${agent} ${status}${toolText}`);
-  }
-  return lines;
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value : undefined;
-}

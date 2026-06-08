@@ -2,22 +2,15 @@ import { randomUUID } from "node:crypto";
 import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
 import { normalizeResult } from "./result.js";
 import type {
-  ChainOptions,
   CommandResult,
   CreateClientOptions,
-  CreateOptions,
-  DeleteOptions,
   ExecuteOptions,
-  GetOptions,
   InterruptOptions,
-  ParallelOptions,
   PiWorkersSession,
   ResumeOptions,
   SpawnOptions,
   StatusOptions,
   SubagentParams,
-  SubagentTask,
-  UpdateOptions,
 } from "./types.js";
 
 const missingSubagentMessage = [
@@ -54,35 +47,6 @@ export class PiSubagentClient {
     return normalizeResult(callId, params, raw);
   }
 
-  async doctor(options: ExecuteOptions = {}): Promise<CommandResult> {
-    return this.execute({ action: "doctor" }, options);
-  }
-
-  async list(options: ExecuteOptions = {}): Promise<CommandResult> {
-    return this.execute({ action: "list" }, options);
-  }
-
-  async get(input: GetOptions, options: ExecuteOptions = {}): Promise<CommandResult> {
-    return this.execute(cleanParams({ action: "get", agent: input.agent, chainName: input.chainName }), options);
-  }
-
-  async create(input: CreateOptions, options: ExecuteOptions = {}): Promise<CommandResult> {
-    return this.execute({ action: "create", config: input.config }, options);
-  }
-
-  async update(input: UpdateOptions, options: ExecuteOptions = {}): Promise<CommandResult> {
-    return this.execute(cleanParams({
-      action: "update",
-      agent: input.agent,
-      chainName: input.chainName,
-      config: input.config,
-    }), options);
-  }
-
-  async delete(input: DeleteOptions, options: ExecuteOptions = {}): Promise<CommandResult> {
-    return this.execute(cleanParams({ action: "delete", agent: input.agent, chainName: input.chainName }), options);
-  }
-
   async spawn(input: SpawnOptions, options: ExecuteOptions = {}): Promise<CommandResult> {
     return this.execute(cleanParams({
       agent: input.agent,
@@ -100,33 +64,6 @@ export class PiSubagentClient {
       skill: input.skill,
       acceptance: input.acceptance,
       outputSchema: input.outputSchema,
-    }), options);
-  }
-
-  async parallel(input: ParallelOptions, options: ExecuteOptions = {}): Promise<CommandResult> {
-    return this.execute(cleanParams({
-      tasks: input.tasks.map(taskParams),
-      async: asyncOption(input),
-      context: "fresh",
-      concurrency: input.concurrency,
-      cwd: input.cwd,
-      worktree: input.worktree,
-      acceptance: input.acceptance,
-      control: input.control,
-    }), options);
-  }
-
-  async chain(input: ChainOptions, options: ExecuteOptions = {}): Promise<CommandResult> {
-    return this.execute(cleanParams({
-      chain: input.chain,
-      task: input.task,
-      async: asyncOption(input),
-      context: "fresh",
-      cwd: input.cwd,
-      chainDir: input.chainDir,
-      concurrency: input.concurrency,
-      acceptance: input.acceptance,
-      control: input.control,
     }), options);
   }
 
@@ -164,24 +101,6 @@ async function createDefaultSession(cwd: string): Promise<PiWorkersSession> {
     sessionManager: SessionManager.inMemory(),
   });
   return session;
-}
-
-function taskParams(task: SubagentTask): SubagentParams {
-  return cleanParams({
-    agent: task.agent,
-    task: task.task,
-    label: task.label,
-    cwd: task.cwd,
-    count: task.count,
-    output: task.output,
-    outputMode: task.outputMode,
-    model: task.model,
-    progress: task.progress,
-    reads: task.reads,
-    skill: task.skill,
-    acceptance: task.acceptance,
-    outputSchema: task.outputSchema,
-  });
 }
 
 function cleanParams(input: Record<string, unknown>): SubagentParams {
