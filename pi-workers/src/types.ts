@@ -6,18 +6,10 @@ export interface SpawnOptions {
   agent: string;
   task: string;
   label?: string;
-  cwd?: string;
-  count?: number;
-  output?: string | false;
+  output?: string;
   outputMode?: OutputMode;
-  model?: string;
   progress?: boolean;
-  reads?: string[] | false;
-  skill?: string[] | string | boolean;
-  acceptance?: unknown;
-  outputSchema?: unknown;
   async?: boolean;
-  foreground?: boolean;
 }
 
 export interface StatusOptions {
@@ -56,7 +48,7 @@ export interface CommandResult {
   state?: string;
   terminal: boolean;
   details?: unknown;
-  raw: SubagentToolResult;
+  raw?: SubagentToolResult;
 }
 
 export interface CreateClientOptions {

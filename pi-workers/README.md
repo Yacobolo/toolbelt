@@ -91,7 +91,8 @@ Spawns always apply these defaults:
 
 Spawn multiple workers with multiple `pi_workers_spawn_agent` calls. The MCP
 server keeps an in-memory live-agent registry for workers spawned through that
-server process.
+server process. `task_name` is the local handle, so an active task name cannot
+be reused until that worker reaches a terminal state or is closed.
 
 `pi_workers_wait_agent` accepts optional `timeout_ms` only. It waits for the
 next live-agent mailbox update and returns one result. The default is `30000`,

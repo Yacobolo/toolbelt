@@ -212,6 +212,31 @@ test("mcp rejects empty task names", async () => {
   }
 });
 
+test("mcp rejects duplicate live task names", async () => {
+  const calls = [];
+  const { client, server } = await connectMcp(fakePiClient({
+    calls,
+    status: async (id) => textResult(`Run: ${id}\nState: running`),
+  }));
+  try {
+    await client.callTool({
+      name: "pi_workers_spawn_agent",
+      arguments: { agent_type: "reviewer", message: "Review diff", task_name: "diff" },
+    });
+    const result = await client.callTool({
+      name: "pi_workers_spawn_agent",
+      arguments: { agent_type: "reviewer", message: "Review again", task_name: "diff" },
+    });
+
+    assert.equal(result.isError, true);
+    assert.match(text(result), /task_name already exists/);
+    assert.equal(calls.filter((call) => call.method === "spawn").length, 1);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
 test("mcp wait waits for any live agent update", async () => {
   const calls = [];
   const { client, server } = await connectMcp(fakePiClient({

@@ -37,9 +37,6 @@ test("lifecycle helpers forward only the params used by the MCP server", async (
     async: true,
     output: "review.md",
     outputMode: "file-only",
-    reads: ["a.ts"],
-    skill: ["audit"],
-    acceptance: { level: "checked" },
   });
   await client.status({ id: "abc" });
   await client.interrupt({});
@@ -54,9 +51,6 @@ test("lifecycle helpers forward only the params used by the MCP server", async (
       context: "fresh",
       output: "review.md",
       outputMode: "file-only",
-      reads: ["a.ts"],
-      skill: ["audit"],
-      acceptance: { level: "checked" },
     },
     { action: "status", id: "abc" },
     { action: "interrupt" },

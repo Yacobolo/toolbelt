@@ -32,3 +32,20 @@ export function extractState(text: string): string | undefined {
   const match = text.match(/^State:\s*([A-Za-z_-]+)/m);
   return match?.[1];
 }
+
+export function resultRunId(result: CommandResult): string | undefined {
+  return lineValue(result.text, "Run") ?? detailsRunId(result.details);
+}
+
+export function lineValue(text: string, label: string): string | undefined {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = text.match(new RegExp(`^${escaped}:\\s*(.+)$`, "m"));
+  return match?.[1]?.trim() || undefined;
+}
+
+function detailsRunId(details: unknown): string | undefined {
+  if (!details || typeof details !== "object" || Array.isArray(details)) return undefined;
+  const record = details as Record<string, unknown>;
+  const value = record.runId ?? record.asyncId;
+  return typeof value === "string" && value.trim() ? value : undefined;
+}

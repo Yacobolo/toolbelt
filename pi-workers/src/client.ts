@@ -52,18 +52,11 @@ export class PiSubagentClient {
       agent: input.agent,
       task: input.task,
       label: input.label,
-      async: asyncOption(input),
+      async: input.async,
       context: "fresh",
-      cwd: input.cwd,
-      count: input.count,
       output: input.output,
       outputMode: input.outputMode,
-      model: input.model,
       progress: input.progress,
-      reads: input.reads,
-      skill: input.skill,
-      acceptance: input.acceptance,
-      outputSchema: input.outputSchema,
     }), options);
   }
 
@@ -109,11 +102,6 @@ function cleanParams(input: Record<string, unknown>): SubagentParams {
     if (value !== undefined) output[key] = value;
   }
   return output;
-}
-
-function asyncOption(input: { async?: boolean; foreground?: boolean }): boolean | undefined {
-  if (input.foreground) return false;
-  return input.async;
 }
 
 function defaultID(): string {
