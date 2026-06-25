@@ -11,6 +11,18 @@ func jsonContent(ref ir.SchemaRef) []ir.BodyContent {
 	return []ir.BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &ref}}
 }
 
+func binaryContent() []ir.BodyContent {
+	return []ir.BodyContent{{ContentType: "application/octet-stream", BodyKind: "binary", Schema: &ir.SchemaRef{Type: "string", Format: "binary"}}}
+}
+
+func textContent() []ir.BodyContent {
+	return []ir.BodyContent{{ContentType: "text/plain", BodyKind: "text", Schema: &ir.SchemaRef{Type: "string"}}}
+}
+
+func fileContent() []ir.BodyContent {
+	return []ir.BodyContent{{ContentType: "application/octet-stream", BodyKind: "file", Schema: &ir.SchemaRef{Type: "string", Format: "binary"}}}
+}
+
 func TestEmit_AliasesRequestRoots(t *testing.T) {
 	t.Helper()
 
@@ -39,6 +51,57 @@ func TestEmit_AliasesNonStructRequestRoots(t *testing.T) {
 	b, err := Emit(doc, Options{})
 	require.NoError(t, err)
 	require.Contains(t, string(b), "type GenSchemaSetDefaultCatalogRequest = SetDefaultCatalogRequest")
+}
+
+func TestEmit_SkipsInlineScalarTransportRequestBodies(t *testing.T) {
+	t.Helper()
+
+	doc := ir.Document{
+		Schemas: map[string]ir.Schema{
+			"Artifact": {Type: "object"},
+		},
+		Endpoints: []ir.Endpoint{
+			{OperationID: "uploadArtifact", RequestBody: &ir.RequestBody{Required: true, Contents: binaryContent()}},
+			{OperationID: "replaceDescription", RequestBody: &ir.RequestBody{Required: true, Contents: textContent()}},
+			{OperationID: "uploadFile", RequestBody: &ir.RequestBody{Required: true, Contents: fileContent()}},
+			{OperationID: "getArtifact", Responses: []ir.Response{{StatusCode: 200, Contents: jsonContent(ir.SchemaRef{Ref: "Artifact"})}}},
+		},
+	}
+
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	content := string(b)
+
+	require.Contains(t, content, "type Artifact struct")
+	require.Contains(t, content, "type GenSchemaArtifact = Artifact")
+	require.NotContains(t, content, "UploadArtifactRequest")
+	require.NotContains(t, content, "ReplaceDescriptionRequest")
+	require.NotContains(t, content, "UploadFileRequest")
+}
+
+func TestEmit_CollectsMultipartPartSchemaRoots(t *testing.T) {
+	t.Helper()
+
+	doc := ir.Document{
+		Schemas: map[string]ir.Schema{
+			"Metadata": {Type: "object"},
+		},
+		Endpoints: []ir.Endpoint{{
+			OperationID: "uploadArtifact",
+			RequestBody: &ir.RequestBody{Required: true, Contents: []ir.BodyContent{{
+				ContentType: "multipart/form-data",
+				BodyKind:    "multipart",
+				Parts: []ir.MultipartPart{
+					{Name: "metadata", WireName: "metadata", PartKind: "model", Required: true, ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Ref: "Metadata"}},
+					{Name: "blob", WireName: "blob", PartKind: "model", Required: true, ContentType: "application/octet-stream", BodyKind: "file", Schema: &ir.SchemaRef{Type: "string", Format: "binary"}},
+				},
+			}}},
+		}},
+	}
+
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	require.Contains(t, string(b), "type GenSchemaMetadata = Metadata")
 }
 
 func TestEmit_AliasesSafeDirectResponseSchemas(t *testing.T) {

@@ -153,6 +153,11 @@ func schemaType(doc ir.Document, schemaRef ir.SchemaRef) string {
 }
 
 func schemaEnum(doc ir.Document, schemaRef ir.SchemaRef) []string {
+	if len(schemaRef.Enum) > 0 {
+		values := make([]string, len(schemaRef.Enum))
+		copy(values, schemaRef.Enum)
+		return values
+	}
 	if schema, ok := ir.ResolveSchema(doc, schemaRef); ok && len(schema.Enum) > 0 {
 		values := make([]string, len(schema.Enum))
 		copy(values, schema.Enum)

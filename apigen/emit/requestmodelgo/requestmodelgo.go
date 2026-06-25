@@ -398,11 +398,9 @@ func requestSchemaRoots(doc ir.Document) ([]string, error) {
 		if endpoint.RequestBody == nil {
 			continue
 		}
-		if schemaName, ok := resolveRequestSchemaName(doc, endpoint); ok {
-			seen[schemaName] = struct{}{}
-			continue
+		if err := collectRequestSchemaRoots(doc, endpoint, seen); err != nil {
+			return nil, err
 		}
-		return nil, fmt.Errorf("request body generation for %s requires a named IR schema", endpoint.OperationID)
 	}
 
 	rootNames := make([]string, 0, len(seen))
@@ -411,6 +409,41 @@ func requestSchemaRoots(doc ir.Document) ([]string, error) {
 	}
 	sort.Strings(rootNames)
 	return rootNames, nil
+}
+
+func collectRequestSchemaRoots(doc ir.Document, endpoint ir.Endpoint, seen map[string]struct{}) error {
+	content, ok := ir.PrimaryRequestBodyContent(endpoint)
+	if !ok {
+		return fmt.Errorf("request body generation for %s requires content", endpoint.OperationID)
+	}
+
+	switch content.BodyKind {
+	case "text", "binary", "file":
+		return nil
+	case "multipart":
+		for _, part := range content.Parts {
+			if part.Schema == nil {
+				continue
+			}
+			if schemaName, ok := normalizedSchemaRefName(*part.Schema); ok {
+				seen[schemaName] = struct{}{}
+				continue
+			}
+			if strings.EqualFold(part.Schema.Type, "object") {
+				return fmt.Errorf("request body generation for %s multipart part %q requires a named IR schema", endpoint.OperationID, part.Name)
+			}
+		}
+		return nil
+	default:
+		if schemaName, ok := resolveRequestSchemaName(doc, endpoint); ok {
+			seen[schemaName] = struct{}{}
+			return nil
+		}
+		if content.Schema != nil && !strings.EqualFold(content.Schema.Type, "object") {
+			return nil
+		}
+		return fmt.Errorf("request body generation for %s requires a named IR schema", endpoint.OperationID)
+	}
 }
 
 func safeResponseSchemaRoots(doc ir.Document) []string {
