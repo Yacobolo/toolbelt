@@ -9,10 +9,9 @@ Module path: `github.com/Yacobolo/toolbelt/apigen`
 APIGen has two contract layers:
 
 - TypeSpec authoring input for humans
-- legacy CUE authoring input during the migration window
 - JSON IR `v1` for generators
 
-Canonical OpenAPI is the published API artifact. JSON IR is the compatibility boundary between source-language compilers and the Go emitters. Repo-owned OpenAPI extensions such as `x-authz` are preserved there.
+Canonical OpenAPI is the published API artifact. JSON IR is the compatibility boundary between TypeSpec and the Go emitters. Repo-owned OpenAPI extensions such as `x-authz` are preserved there.
 
 ## CLI
 
@@ -24,9 +23,7 @@ go run ./cmd/apigen --help
 
 Commands:
 
-- `cue-compile`: CUE -> JSON IR + OpenAPI
 - `typespec-compile`: TypeSpec -> JSON IR + OpenAPI
-- `cue-bootstrap`: JSON IR -> starter CUE files
 - `openapi`: JSON IR -> OpenAPI
 - `server`: JSON IR -> server + request models
 - `cli`: JSON IR -> Cobra registry
@@ -51,7 +48,6 @@ targets:
 Manifest target fields:
 
 - `typespec_dir`
-- `cue_dir` (legacy CUE compiler)
 - `ir_out`
 - `openapi_out`
 - `go_out.dir`
@@ -76,7 +72,6 @@ Supported packages:
 
 Package roles:
 
-- `cuegen`: compile and bootstrap CUE
 - `typespec`: TypeSpec emitter package used by `typespec-compile`
 - `ir`: versioned generator contract
 - `emit/*`: OpenAPI, server, request-model, and CLI emitters
@@ -94,7 +89,7 @@ Recommended TypeSpec flow:
 3. Run `all` to generate server, request-model, and CLI outputs.
 4. Build your service against `runtime/chi` and your CLI against `runtime/cobra`.
 
-The runnable reference showcase lives in `example/`. It is a small todo app with checked-in `json-ir`, OpenAPI, server transport, request-model aliases, CLI registry metadata, handwritten strict handlers, and a generated Cobra CLI. The legacy CUE compiler remains available while TypeSpec migration coverage expands.
+The runnable reference showcase lives in `example/`. It is a small todo app with checked-in `json-ir`, OpenAPI, server transport, request-model aliases, CLI registry metadata, handwritten strict handlers, and a generated Cobra CLI.
 
 The in-repo TypeSpec emitter lives in `typespec/` with a checked-in `package-lock.json`. Use `npm ci` there for reproducible local TypeSpec development; `typespec-compile` also bootstraps that pinned toolchain when needed.
 
