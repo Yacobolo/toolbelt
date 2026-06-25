@@ -1,6 +1,6 @@
 import { emitFile, getAllTags, getDoc, getService, getSummary, isArrayModelType, isRecordModelType, walkPropertiesInherited, } from "@typespec/compiler";
 import { getAllHttpServices, getServers, resolveAuthentication, } from "@typespec/http";
-import { getOperationId, getTagsMetadata, resolveInfo, resolveOperationId } from "@typespec/openapi";
+import { getExtensions, getOperationId, getTagsMetadata, resolveInfo, resolveOperationId } from "@typespec/openapi";
 import { getAuthz, getCLI, getResponseShape, isManual } from "./decorators.js";
 import { reportDiagnostic } from "./lib.js";
 class IRBuilder {
@@ -83,6 +83,15 @@ class IRBuilder {
     }
     unsupportedResponseStatus(response) {
         this.report("unsupported-response-status", { status: JSON.stringify(response.statusCodes), operation: response.type.kind }, response.type);
+    }
+    reservedExtension(key, target) {
+        this.report("reserved-extension", { key }, target);
+    }
+    invalidExtensionKey(key, target) {
+        this.report("invalid-extension-key", { key }, target);
+    }
+    invalidExtensionValue(key, path, target) {
+        this.report("invalid-extension-value", { key, path }, target);
     }
     emitSchemas() {
         const output = {};
@@ -236,6 +245,9 @@ function buildDocument(program, builder, service, options) {
 }
 function endpoint(program, builder, operation, operationAuth, defaultSecurity) {
     const extensions = {};
+    for (const [key, value] of operationVendorExtensions(program, builder, operation.operation)) {
+        extensions[key] = value;
+    }
     const authz = getAuthz({ program }, operation.operation);
     if (authz !== undefined) {
         extensions["x-authz"] = authz;
@@ -257,6 +269,49 @@ function endpoint(program, builder, operation, operationAuth, defaultSecurity) {
         security: operationSecurity(builder, operation, operationAuth, defaultSecurity),
         extensions: Object.keys(extensions).length > 0 ? extensions : undefined,
     });
+}
+function operationVendorExtensions(program, builder, operation) {
+    const entries = [...getExtensions(program, operation).entries()];
+    entries.sort(([left], [right]) => left.localeCompare(right));
+    const output = [];
+    for (const [key, value] of entries) {
+        if (!key.startsWith("x-")) {
+            builder.invalidExtensionKey(key, operation);
+            continue;
+        }
+        if (isReservedExtensionKey(key)) {
+            builder.reservedExtension(key, operation);
+            continue;
+        }
+        if (!isJSONCompatible(value)) {
+            builder.invalidExtensionValue(key, key, operation);
+            continue;
+        }
+        output.push([key, value]);
+    }
+    return output;
+}
+function isReservedExtensionKey(key) {
+    return key === "x-authz" || key.startsWith("x-apigen-");
+}
+function isJSONCompatible(value) {
+    if (value === null) {
+        return true;
+    }
+    switch (typeof value) {
+        case "string":
+        case "boolean":
+            return true;
+        case "number":
+            return Number.isFinite(value);
+        case "object":
+            if (Array.isArray(value)) {
+                return value.every((item) => isJSONCompatible(item));
+            }
+            return Object.values(value).every((item) => isJSONCompatible(item));
+        default:
+            return false;
+    }
 }
 function cliMetadata(program, operation) {
     const cli = getCLI({ program }, operation.operation);

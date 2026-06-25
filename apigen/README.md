@@ -101,7 +101,7 @@ go get github.com/Yacobolo/toolbelt/apigen
 
 ## Contract Notes
 
-JSON IR currently supports schema version `v1`. Required root fields are `schema_version`, `info.title`, `info.version`, and at least one endpoint. Supported endpoint extensions include `x-authz` and `x-apigen-manual`; supported response extensions include `x-apigen-response-shape`.
+JSON IR currently supports schema version `v1`. Required root fields are `schema_version`, `info.title`, `info.version`, and at least one endpoint. Endpoint extensions preserve operation-level `x-*` vendor metadata; APIGen-owned endpoint extensions include `x-authz` and `x-apigen-manual`. Supported response extensions include `x-apigen-response-shape`.
 
 Generated request bodies are contract-first:
 

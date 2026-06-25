@@ -32,7 +32,7 @@ import {
   type HttpPayloadBody,
   type HttpService,
 } from "@typespec/http";
-import { getOperationId, getTagsMetadata, resolveInfo, resolveOperationId } from "@typespec/openapi";
+import { getExtensions, getOperationId, getTagsMetadata, resolveInfo, resolveOperationId } from "@typespec/openapi";
 import { getAuthz, getCLI, getResponseShape, isManual } from "./decorators.js";
 import { type EmitterOptions, reportDiagnostic } from "./lib.js";
 
@@ -230,6 +230,18 @@ class IRBuilder {
     );
   }
 
+  reservedExtension(key: string, target: Operation) {
+    this.report("reserved-extension", { key }, target);
+  }
+
+  invalidExtensionKey(key: string, target: Operation) {
+    this.report("invalid-extension-key", { key }, target);
+  }
+
+  invalidExtensionValue(key: string, path: string, target: Operation) {
+    this.report("invalid-extension-value", { key, path }, target);
+  }
+
   emitSchemas(): Record<string, Schema> | undefined {
     const output: Record<string, Schema> = {};
     while (true) {
@@ -407,6 +419,9 @@ function endpoint(
   defaultSecurity: Record<string, string[]>[] | undefined,
 ): Endpoint {
   const extensions: Record<string, unknown> = {};
+  for (const [key, value] of operationVendorExtensions(program, builder, operation.operation)) {
+    extensions[key] = value;
+  }
   const authz = getAuthz({ program }, operation.operation);
   if (authz !== undefined) {
     extensions["x-authz"] = authz;
@@ -429,6 +444,56 @@ function endpoint(
     security: operationSecurity(builder, operation, operationAuth, defaultSecurity),
     extensions: Object.keys(extensions).length > 0 ? extensions : undefined,
   }) as Endpoint;
+}
+
+function operationVendorExtensions(
+  program: Program,
+  builder: IRBuilder,
+  operation: Operation,
+): [string, unknown][] {
+  const entries = [...getExtensions(program, operation).entries()];
+  entries.sort(([left], [right]) => left.localeCompare(right));
+  const output: [string, unknown][] = [];
+  for (const [key, value] of entries) {
+    if (!key.startsWith("x-")) {
+      builder.invalidExtensionKey(key, operation);
+      continue;
+    }
+    if (isReservedExtensionKey(key)) {
+      builder.reservedExtension(key, operation);
+      continue;
+    }
+    if (!isJSONCompatible(value)) {
+      builder.invalidExtensionValue(key, key, operation);
+      continue;
+    }
+    output.push([key, value]);
+  }
+  return output;
+}
+
+function isReservedExtensionKey(key: string): boolean {
+  return key === "x-authz" || key.startsWith("x-apigen-");
+}
+
+function isJSONCompatible(value: unknown): boolean {
+  if (value === null) {
+    return true;
+  }
+  switch (typeof value) {
+    case "string":
+    case "boolean":
+      return true;
+    case "number":
+      return Number.isFinite(value);
+    case "object":
+      if (Array.isArray(value)) {
+        return value.every((item) => isJSONCompatible(item));
+      }
+      return Object.values(value as Record<string, unknown>).every((item) => isJSONCompatible(item));
+    default:
+      return false;
+  }
 }
 
 function cliMetadata(program: Program, operation: HttpOperation): unknown {

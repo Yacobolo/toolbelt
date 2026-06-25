@@ -67,6 +67,12 @@ model DeleteTodoNoContent {
 @summary("List todos")
 @route("/todos")
 @get
+@extension("x-agent", #{
+  enabled: true,
+  name: "list_todos",
+  risk: "read",
+  tags: #["todos", "read"],
+})
 @apigen.cli(#{
   command: #["todos", "list"],
   output: #{ mode: "collection", tableColumns: #["id", "title", "status"], quietFields: #["id"] }

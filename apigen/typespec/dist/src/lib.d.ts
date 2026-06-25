@@ -14,6 +14,15 @@ export declare const $lib: import("@typespec/compiler").TypeSpecLibrary<{
     "multiple-services": {
         readonly default: import("@typespec/compiler").CallableMessage<["count"]>;
     };
+    "reserved-extension": {
+        readonly default: import("@typespec/compiler").CallableMessage<["key"]>;
+    };
+    "invalid-extension-key": {
+        readonly default: import("@typespec/compiler").CallableMessage<["key"]>;
+    };
+    "invalid-extension-value": {
+        readonly default: import("@typespec/compiler").CallableMessage<["key", "path"]>;
+    };
     "unnamed-schema": {
         readonly default: import("@typespec/compiler").CallableMessage<["context"]>;
     };
@@ -21,7 +30,7 @@ export declare const $lib: import("@typespec/compiler").TypeSpecLibrary<{
         readonly default: "The APIGen emitter option 'output-file' is required.";
     };
 }, Record<string, any>, never>;
-export declare const reportDiagnostic: <C extends "unsupported-type" | "unsupported-response-status" | "unsupported-inline-enum" | "unsupported-auth" | "multiple-services" | "unnamed-schema" | "missing-output-file", M extends keyof {
+export declare const reportDiagnostic: <C extends "unsupported-type" | "unsupported-response-status" | "unsupported-inline-enum" | "unsupported-auth" | "multiple-services" | "reserved-extension" | "invalid-extension-key" | "invalid-extension-value" | "unnamed-schema" | "missing-output-file", M extends keyof {
     "unsupported-type": {
         readonly default: import("@typespec/compiler").CallableMessage<["kind", "context"]>;
     };
@@ -36,6 +45,15 @@ export declare const reportDiagnostic: <C extends "unsupported-type" | "unsuppor
     };
     "multiple-services": {
         readonly default: import("@typespec/compiler").CallableMessage<["count"]>;
+    };
+    "reserved-extension": {
+        readonly default: import("@typespec/compiler").CallableMessage<["key"]>;
+    };
+    "invalid-extension-key": {
+        readonly default: import("@typespec/compiler").CallableMessage<["key"]>;
+    };
+    "invalid-extension-value": {
+        readonly default: import("@typespec/compiler").CallableMessage<["key", "path"]>;
     };
     "unnamed-schema": {
         readonly default: import("@typespec/compiler").CallableMessage<["context"]>;
@@ -58,6 +76,15 @@ export declare const reportDiagnostic: <C extends "unsupported-type" | "unsuppor
     };
     "multiple-services": {
         readonly default: import("@typespec/compiler").CallableMessage<["count"]>;
+    };
+    "reserved-extension": {
+        readonly default: import("@typespec/compiler").CallableMessage<["key"]>;
+    };
+    "invalid-extension-key": {
+        readonly default: import("@typespec/compiler").CallableMessage<["key"]>;
+    };
+    "invalid-extension-value": {
+        readonly default: import("@typespec/compiler").CallableMessage<["key", "path"]>;
     };
     "unnamed-schema": {
         readonly default: import("@typespec/compiler").CallableMessage<["context"]>;

@@ -43,6 +43,13 @@ paths:
                 message: example
       tags:
         - Todos
+      x-agent:
+        enabled: true
+        name: list_todos
+        risk: read
+        tags:
+          - todos
+          - read
     post:
       operationId: createTodo
       summary: Create todo

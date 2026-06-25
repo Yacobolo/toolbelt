@@ -33,6 +33,24 @@ export const $lib = createTypeSpecLibrary({
         default: paramMessage`APIGen TypeSpec emitter requires exactly one TypeSpec service, found ${"count"}.`,
       },
     },
+    "reserved-extension": {
+      severity: "error",
+      messages: {
+        default: paramMessage`Operation extension '${"key"}' is reserved for APIGen-owned metadata. Use the matching APIGen decorator instead.`,
+      },
+    },
+    "invalid-extension-key": {
+      severity: "error",
+      messages: {
+        default: paramMessage`Operation extension '${"key"}' must start with 'x-'.`,
+      },
+    },
+    "invalid-extension-value": {
+      severity: "error",
+      messages: {
+        default: paramMessage`Operation extension '${"key"}' contains a non-JSON-compatible value at ${"path"}.`,
+      },
+    },
     "unnamed-schema": {
       severity: "error",
       messages: {

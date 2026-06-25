@@ -172,6 +172,121 @@ describe("APIGen TypeSpec emitter", () => {
     expect(doc.endpoints[1].security).toEqual([{ BearerAuth: [], ApiKeyAuth: [] }]);
   });
 
+  it("emits operation vendor extensions from TypeSpec OpenAPI decorators", async () => {
+    const doc = await compileSource(`
+      using Http;
+      using TypeSpec.OpenAPI;
+
+      @service(#{ title: "Extensions API" })
+      namespace ExtensionsAPI;
+
+      model Workspace {
+        id: string;
+      }
+
+      @extension("x-agent", #{
+        enabled: true,
+        name: "list_workspace_assets",
+        risk: "read",
+        score: 1.5,
+        tags: #["workspace", "lineage"],
+        nested: #{ nullable: null, count: 3 },
+      })
+      @route("/workspaces")
+      @get
+      op listWorkspaces(): Workspace[];
+    `);
+
+    expect(doc.endpoints[0].extensions).toEqual({
+      "x-agent": {
+        enabled: true,
+        name: "list_workspace_assets",
+        risk: "read",
+        score: 1.5,
+        tags: ["workspace", "lineage"],
+        nested: { nullable: null, count: 3 },
+      },
+    });
+  });
+
+  it("fails without writing IR for APIGen-reserved generic operation extensions", async () => {
+    const outDir = await mkdtemp(join(tmpdir(), "apigen-typespec-"));
+    const irPath = join(outDir, "json-ir.json");
+
+    await expect(
+      compileSource(
+        `
+          using Http;
+          using TypeSpec.OpenAPI;
+
+          @service(#{ title: "Reserved Extension API" })
+          namespace ReservedExtensionAPI;
+
+          @extension("x-authz", #{ mode: "none" })
+          @route("/widgets")
+          @get
+          op list(): string;
+        `,
+        irPath,
+      ),
+    ).rejects.toSatisfy((error: any) =>
+      `${error.stdout}\n${error.stderr}`.includes("reserved for APIGen-owned metadata"),
+    );
+    await expect(stat(irPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("fails without writing IR for non-vendor operation extensions", async () => {
+    const outDir = await mkdtemp(join(tmpdir(), "apigen-typespec-"));
+    const irPath = join(outDir, "json-ir.json");
+
+    await expect(
+      compileSource(
+        `
+          using Http;
+          using TypeSpec.OpenAPI;
+
+          @service(#{ title: "Invalid Extension API" })
+          namespace InvalidExtensionAPI;
+
+          @extension("agent", true)
+          @route("/widgets")
+          @get
+          op list(): string;
+        `,
+        irPath,
+      ),
+    ).rejects.toSatisfy((error: any) =>
+      `${error.stdout}\n${error.stderr}`.includes("must start with 'x-'"),
+    );
+    await expect(stat(irPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("fails without writing IR for x-apigen generic operation extensions", async () => {
+    const outDir = await mkdtemp(join(tmpdir(), "apigen-typespec-"));
+    const irPath = join(outDir, "json-ir.json");
+
+    await expect(
+      compileSource(
+        `
+          using Http;
+          using TypeSpec.OpenAPI;
+
+          @service(#{ title: "Reserved Extension API" })
+          namespace ReservedExtensionAPI;
+
+          @extension("x-apigen-tool", true)
+          @route("/widgets")
+          @get
+          op list(): string;
+        `,
+        irPath,
+      ),
+    ).rejects.toSatisfy((error: any) =>
+      `${error.stdout}\n${error.stderr}`.includes("reserved for APIGen-owned metadata"),
+    );
+    await expect(stat(irPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("fails for no-auth operation overrides on secured services", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "apigen-typespec-"));
     const irPath = join(outDir, "json-ir.json");

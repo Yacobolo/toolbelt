@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	openapiemit "github.com/Yacobolo/toolbelt/apigen/emit/openapi"
@@ -87,10 +88,11 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("\tAuthzMode string\n")
 	b.WriteString("\tProtected bool\n")
 	b.WriteString("\tManual bool\n")
+	b.WriteString("\tExtensions map[string]any\n")
 	b.WriteString("}\n\n")
 	b.WriteString("var genOperationContracts = map[string]GenOperationContract{\n")
 	for _, endpoint := range doc.Endpoints {
-		fmt.Fprintf(&b, "\t%q: {OperationID: %q, Method: %q, Path: %q, Tags: %s, DocumentedStatusCodes: %s, RequestBodyRequired: %t, AuthzMode: %q, Protected: %t, Manual: %t},\n",
+		fmt.Fprintf(&b, "\t%q: {OperationID: %q, Method: %q, Path: %q, Tags: %s, DocumentedStatusCodes: %s, RequestBodyRequired: %t, AuthzMode: %q, Protected: %t, Manual: %t, Extensions: %s},\n",
 			endpoint.OperationID,
 			endpoint.OperationID,
 			strings.ToUpper(endpoint.Method),
@@ -101,6 +103,7 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 			endpointAuthzMode(endpoint),
 			endpointProtected(endpoint),
 			endpointManual(endpoint),
+			renderGoAnyMap(endpoint.Extensions),
 		)
 	}
 	b.WriteString("}\n\n")
@@ -137,7 +140,32 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("func cloneAPIGenOperationContract(contract GenOperationContract) GenOperationContract {\n")
 	b.WriteString("\tcontract.Tags = append([]string(nil), contract.Tags...)\n")
 	b.WriteString("\tcontract.DocumentedStatusCodes = append([]int(nil), contract.DocumentedStatusCodes...)\n")
+	b.WriteString("\tcontract.Extensions = cloneAPIGenAnyMap(contract.Extensions)\n")
 	b.WriteString("\treturn contract\n")
+	b.WriteString("}\n\n")
+	b.WriteString("func cloneAPIGenAnyMap(in map[string]any) map[string]any {\n")
+	b.WriteString("\tif in == nil {\n")
+	b.WriteString("\t\treturn nil\n")
+	b.WriteString("\t}\n")
+	b.WriteString("\tout := make(map[string]any, len(in))\n")
+	b.WriteString("\tfor key, value := range in {\n")
+	b.WriteString("\t\tout[key] = cloneAPIGenAny(value)\n")
+	b.WriteString("\t}\n")
+	b.WriteString("\treturn out\n")
+	b.WriteString("}\n\n")
+	b.WriteString("func cloneAPIGenAny(value any) any {\n")
+	b.WriteString("\tswitch typed := value.(type) {\n")
+	b.WriteString("\tcase map[string]any:\n")
+	b.WriteString("\t\treturn cloneAPIGenAnyMap(typed)\n")
+	b.WriteString("\tcase []any:\n")
+	b.WriteString("\t\tout := make([]any, len(typed))\n")
+	b.WriteString("\t\tfor i, item := range typed {\n")
+	b.WriteString("\t\t\tout[i] = cloneAPIGenAny(item)\n")
+	b.WriteString("\t\t}\n")
+	b.WriteString("\t\treturn out\n")
+	b.WriteString("\tdefault:\n")
+	b.WriteString("\t\treturn typed\n")
+	b.WriteString("\t}\n")
 	b.WriteString("}\n\n")
 	b.WriteString("// GenServerInterface dispatches generated operations.\n")
 	b.WriteString("type GenServerInterface interface {\n")
@@ -607,6 +635,90 @@ func renderGoIntSlice(values []int) string {
 			b.WriteString(", ")
 		}
 		fmt.Fprintf(&b, "%d", value)
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func renderGoAnyMap(values map[string]any) string {
+	if len(values) == 0 {
+		return "nil"
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString("map[string]any{")
+	for i, key := range keys {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%q: %s", key, renderGoAny(values[key]))
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func renderGoAny(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return "nil"
+	case string:
+		return strconv.Quote(typed)
+	case bool:
+		if typed {
+			return "true"
+		}
+		return "false"
+	case int:
+		return strconv.Itoa(typed)
+	case int8:
+		return strconv.FormatInt(int64(typed), 10)
+	case int16:
+		return strconv.FormatInt(int64(typed), 10)
+	case int32:
+		return strconv.FormatInt(int64(typed), 10)
+	case int64:
+		return strconv.FormatInt(typed, 10)
+	case uint:
+		return strconv.FormatUint(uint64(typed), 10)
+	case uint8:
+		return strconv.FormatUint(uint64(typed), 10)
+	case uint16:
+		return strconv.FormatUint(uint64(typed), 10)
+	case uint32:
+		return strconv.FormatUint(uint64(typed), 10)
+	case uint64:
+		return strconv.FormatUint(typed, 10)
+	case float32:
+		return strconv.FormatFloat(float64(typed), 'g', -1, 32)
+	case float64:
+		return strconv.FormatFloat(typed, 'g', -1, 64)
+	case []any:
+		return renderGoAnySlice(typed)
+	case []string:
+		values := make([]any, 0, len(typed))
+		for _, item := range typed {
+			values = append(values, item)
+		}
+		return renderGoAnySlice(values)
+	case map[string]any:
+		return renderGoAnyMap(typed)
+	default:
+		return strconv.Quote(fmt.Sprint(typed))
+	}
+}
+
+func renderGoAnySlice(values []any) string {
+	var b strings.Builder
+	b.WriteString("[]any{")
+	for i, value := range values {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(renderGoAny(value))
 	}
 	b.WriteString("}")
 	return b.String()

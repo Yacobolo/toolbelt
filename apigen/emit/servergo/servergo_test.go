@@ -1,6 +1,9 @@
 package servergo
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/Yacobolo/toolbelt/apigen/ir"
@@ -171,6 +174,94 @@ func TestEmit_OperationContractsIncludeManualAndBodyMetadata(t *testing.T) {
 	require.Contains(t, content, `AuthzMode: "none"`)
 	require.Contains(t, content, `Protected: true`)
 	require.Contains(t, content, `Manual: true`)
+}
+
+func TestEmit_OperationContractsIncludeExtensionDefensiveCopies(t *testing.T) {
+	t.Helper()
+
+	doc := ir.Document{
+		SchemaVersion: "v1",
+		Info:          ir.Info{Title: "t", Version: "1"},
+		Endpoints: []ir.Endpoint{
+			{
+				Method:      "get",
+				Path:        "/widgets",
+				OperationID: "listWidgets",
+				Tags:        []string{"Widgets"},
+				Responses:   []ir.Response{{StatusCode: 200, Description: "ok"}},
+				Extensions: map[string]any{
+					"x-agent": map[string]any{
+						"enabled": true,
+						"name":    "list_workspace_assets",
+						"risk":    "read",
+						"score":   1.5,
+						"tags":    []any{"workspace", "lineage"},
+						"nested":  map[string]any{"nullable": nil, "count": 3},
+					},
+				},
+			},
+		},
+	}
+
+	b, err := Emit(doc, Options{PackageName: "gen"})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, "Extensions map[string]any")
+	require.Contains(t, content, `Extensions: map[string]any{"x-agent": map[string]any{`)
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(`module generatedtest
+
+go 1.25.8
+
+require github.com/Yacobolo/toolbelt/apigen v0.0.0
+
+replace github.com/Yacobolo/toolbelt/apigen => `+apigenModuleRoot(t)+`
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "server.apigen.gen.go"), b, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "server_test.go"), []byte(`package gen
+
+import "testing"
+
+type Error struct {
+	Code int32
+	Message string
+}
+
+func TestExtensionDefensiveCopies(t *testing.T) {
+	contracts := GetAPIGenOperationContracts()
+	agent := contracts["listWidgets"].Extensions["x-agent"].(map[string]any)
+	agent["enabled"] = false
+	agent["tags"].([]any)[0] = "mutated"
+	agent["nested"].(map[string]any)["count"] = 99
+
+	first, ok := GetAPIGenOperationContract("listWidgets")
+	if !ok {
+		t.Fatal("missing operation")
+	}
+	firstAgent := first.Extensions["x-agent"].(map[string]any)
+	if firstAgent["enabled"] != true {
+		t.Fatalf("enabled mutated: %#v", firstAgent["enabled"])
+	}
+	if firstAgent["tags"].([]any)[0] != "workspace" {
+		t.Fatalf("tags mutated: %#v", firstAgent["tags"])
+	}
+	if firstAgent["nested"].(map[string]any)["count"] != 3 {
+		t.Fatalf("nested mutated: %#v", firstAgent["nested"])
+	}
+
+	firstAgent["enabled"] = false
+	second, _ := GetAPIGenOperationContract("listWidgets")
+	if second.Extensions["x-agent"].(map[string]any)["enabled"] != true {
+		t.Fatal("single-operation accessor returned mutable global state")
+	}
+}
+`), 0o644))
+
+	cmd := exec.Command("go", "test", "-mod=mod", "./...")
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
 }
 
 func TestEmit_GeneratesPathAndQueryBinding(t *testing.T) {
@@ -518,4 +609,14 @@ func TestPathParamTypeName(t *testing.T) {
 			require.Equal(t, tc.expected, pathParamTypeName(tc.param))
 		})
 	}
+}
+
+func apigenModuleRoot(t *testing.T) string {
+	t.Helper()
+
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	root, err := filepath.Abs(filepath.Join(wd, "..", ".."))
+	require.NoError(t, err)
+	return root
 }

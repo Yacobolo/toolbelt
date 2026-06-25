@@ -195,6 +195,17 @@
         "pagination": {
           "items_field": "data"
         }
+      },
+      "extensions": {
+        "x-agent": {
+          "enabled": true,
+          "name": "list_todos",
+          "risk": "read",
+          "tags": [
+            "todos",
+            "read"
+          ]
+        }
       }
     },
     {
