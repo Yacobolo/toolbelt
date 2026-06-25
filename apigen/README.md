@@ -93,6 +93,41 @@ The runnable reference showcase lives in `example/`. It is a small todo app with
 
 The in-repo TypeSpec emitter lives in `typespec/` with a checked-in `package-lock.json`. Use `npm ci` there for reproducible local TypeSpec development; `typespec-compile` also bootstraps that pinned toolchain when needed.
 
+## Operation Vendor Extensions
+
+Use TypeSpec's native OpenAPI extension decorator to attach downstream-owned operation metadata:
+
+```typespec
+using TypeSpec.OpenAPI;
+
+@extension("x-agent", #{
+  enabled: true,
+  name: "list_workspace_assets",
+  risk: "read",
+  tags: #["workspace", "lineage"],
+})
+@route("/workspaces")
+@get
+op listWorkspaces(): Workspace[];
+```
+
+APIGen preserves operation-level `x-*` extensions through TypeSpec -> JSON IR -> canonical OpenAPI -> generated Go operation contracts. Extension values must be JSON-compatible: `null`, strings, booleans, finite numbers, arrays, and objects.
+
+Generated server packages expose extensions through `GenOperationContract.Extensions`:
+
+```go
+contract, ok := gen.GetAPIGenOperationContract("listWorkspaces")
+if ok {
+	agent, _ := contract.Extensions["x-agent"].(map[string]any)
+	enabled, _ := agent["enabled"].(bool)
+	_ = enabled
+}
+```
+
+Accessors return defensive copies, so callers may filter or reshape extension metadata without mutating generated global state. APIGen does not interpret downstream extension semantics; policy such as agent allowlists, risk handling, auth checks, and workspace scoping belongs in the consuming application.
+
+APIGen-owned extension keys are reserved. Use APIGen decorators for `x-authz` and `x-apigen-*` metadata instead of generic `@extension`.
+
 Install as a dependency with:
 
 ```bash
