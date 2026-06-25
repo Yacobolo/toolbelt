@@ -240,6 +240,231 @@ describe("APIGen TypeSpec emitter", () => {
     ]);
   });
 
+  it("coalesces shared-route content variants and literal accept headers", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Shared Route API" })
+      namespace SharedRouteAPI;
+
+      model Artifact {
+        id: string;
+      }
+
+      model JsonArtifact {
+        ...OkResponse;
+        ...Body<Artifact>;
+      }
+
+      model BinaryArtifact {
+        ...OkResponse;
+        @header contentType: "application/octet-stream";
+        @body body: bytes;
+      }
+
+      @route("/artifacts/{id}")
+      @sharedRoute
+      @get
+      op getArtifactJson(@path id: string, @header accept: "application/json"): JsonArtifact;
+
+      @route("/artifacts/{id}")
+      @sharedRoute
+      @get
+      op getArtifactBinary(@path id: string, @header accept: "application/octet-stream"): BinaryArtifact;
+    `);
+
+    expect(doc.endpoints).toHaveLength(1);
+    expect(doc.endpoints[0]).toMatchObject({
+      method: "get",
+      path: "/artifacts/{id}",
+      operation_id: "getArtifactJson",
+    });
+    expect(doc.endpoints[0].parameters).toEqual([
+      { name: "id", in: "path", required: true, schema: { type: "string" } },
+      {
+        name: "accept",
+        in: "header",
+        required: true,
+        schema: { type: "string", enum: ["application/json", "application/octet-stream"] },
+      },
+    ]);
+    expect(doc.endpoints[0].responses).toHaveLength(1);
+    expect(doc.endpoints[0].responses[0].contents).toEqual([
+      { content_type: "application/json", body_kind: "json", schema: { ref: "Artifact" } },
+      {
+        content_type: "application/octet-stream",
+        body_kind: "binary",
+        schema: { type: "string", format: "binary" },
+      },
+    ]);
+  });
+
+  it("coalesces overload content variants into the overload base operation", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Overload API" })
+      namespace OverloadAPI;
+
+      model Artifact {
+        id: string;
+      }
+
+      model JsonArtifact {
+        ...OkResponse;
+        ...Body<Artifact>;
+      }
+
+      model BinaryArtifact {
+        ...OkResponse;
+        @header contentType: "application/octet-stream";
+        @body body: bytes;
+      }
+
+      @route("/artifacts/{id}")
+      @get
+      op getArtifact(@path id: string, @header accept: "application/json" | "application/octet-stream"): JsonArtifact | BinaryArtifact;
+
+      @overload(getArtifact)
+      op getArtifactJson(@path id: string, @header accept: "application/json"): JsonArtifact;
+
+      @overload(getArtifact)
+      op getArtifactBinary(@path id: string, @header accept: "application/octet-stream"): BinaryArtifact;
+    `);
+
+    expect(doc.endpoints).toHaveLength(1);
+    expect(doc.endpoints[0].operation_id).toBe("getArtifact");
+    expect(doc.endpoints[0].parameters[1].schema).toEqual({
+      type: "string",
+      enum: ["application/json", "application/octet-stream"],
+    });
+    expect(doc.endpoints[0].responses[0].contents.map((x: any) => x.content_type)).toEqual([
+      "application/json",
+      "application/octet-stream",
+    ]);
+  });
+
+  it("emits TypeSpec-native file and multipart metadata", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Multipart API" })
+      namespace MultipartAPI;
+
+      model Metadata {
+        name: string;
+      }
+
+      model OkJson<T> {
+        ...OkResponse;
+        ...Body<T>;
+      }
+
+      model Artifact {
+        id: string;
+      }
+
+      @route("/blob")
+      @put
+      op uploadBlob(@body body: bytes): OkJson<Artifact>;
+
+      @route("/file")
+      @put
+      op uploadFile(@bodyRoot body: File<"application/octet-stream", bytes>): OkJson<Artifact>;
+
+      @route("/multipart")
+      @post
+      op uploadMultipart(@multipartBody body: {
+        metadata: HttpPart<Metadata>;
+        displayName?: HttpPart<string, #{ name: "display-name" }>;
+        attachments: HttpPart<File<"application/octet-stream", bytes>>[];
+        samples: HttpPart<string[]>;
+      }): OkJson<Artifact>;
+
+      @route("/mixed")
+      @post
+      op uploadMixed(@header contentType: "multipart/mixed", @multipartBody body: [
+        HttpPart<string>,
+        HttpPart<File<"application/octet-stream", bytes>, #{ name: "payload" }>,
+      ]): OkJson<Artifact>;
+    `);
+
+    expect(doc.endpoints[0].request_body.contents[0]).toMatchObject({
+      content_type: "application/octet-stream",
+      body_kind: "binary",
+      schema: { type: "string", format: "binary" },
+    });
+    expect(doc.endpoints[1].request_body.contents[0]).toMatchObject({
+      content_type: "application/octet-stream",
+      body_kind: "file",
+      schema: { type: "string", format: "binary" },
+    });
+    expect(doc.endpoints[2].request_body.contents[0].parts).toEqual([
+      {
+        name: "metadata",
+        wire_name: "metadata",
+        part_kind: "model",
+        required: true,
+        content_type: "application/json",
+        body_kind: "json",
+        schema: { ref: "Metadata" },
+      },
+      {
+        name: "displayName",
+        wire_name: "display-name",
+        part_kind: "model",
+        required: false,
+        content_type: "text/plain",
+        body_kind: "text",
+        schema: { type: "string" },
+      },
+      {
+        name: "attachments",
+        wire_name: "attachments",
+        part_kind: "model",
+        repeated: true,
+        required: true,
+        content_type: "application/octet-stream",
+        body_kind: "file",
+        filename: true,
+        schema: { type: "string", format: "binary" },
+      },
+      {
+        name: "samples",
+        wire_name: "samples",
+        part_kind: "model",
+        required: true,
+        content_type: "application/json",
+        body_kind: "json",
+        schema: { type: "array", items: { type: "string" } },
+      },
+    ]);
+    expect(doc.endpoints[3].request_body.contents[0]).toMatchObject({
+      content_type: "multipart/mixed",
+      body_kind: "multipart",
+    });
+    expect(doc.endpoints[3].request_body.contents[0].parts).toEqual([
+      {
+        name: "part1",
+        part_kind: "tuple",
+        required: true,
+        content_type: "text/plain",
+        body_kind: "text",
+        schema: { type: "string" },
+      },
+      {
+        name: "part2",
+        wire_name: "payload",
+        part_kind: "tuple",
+        required: true,
+        content_type: "application/octet-stream",
+        body_kind: "file",
+        filename: true,
+        schema: { type: "string", format: "binary" },
+      },
+    ]);
+  });
+
   it("fails without writing IR for inline string literal unions", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "apigen-typespec-"));
     const irPath = join(outDir, "json-ir.json");

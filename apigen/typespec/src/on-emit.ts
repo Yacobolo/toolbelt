@@ -2,6 +2,8 @@ import {
   emitFile,
   getAllTags,
   getDoc,
+  getOverloadedOperation,
+  getOverloads,
   getService,
   getSummary,
   isArrayModelType,
@@ -21,6 +23,8 @@ import {
 import {
   getAllHttpServices,
   getServers,
+  isOverloadSameEndpoint,
+  isSharedRoute,
   resolveAuthentication,
   type AuthenticationReference,
   type HttpAuth,
@@ -149,10 +153,14 @@ interface BodyContent {
 
 interface MultipartPart {
   name: string;
+  wire_name?: string;
+  part_kind?: "model" | "tuple";
+  repeated?: boolean;
   required?: boolean;
   description?: string;
   content_type?: string;
   body_kind?: "json" | "text" | "binary" | "file";
+  filename?: boolean;
   schema?: SchemaRef;
 }
 
@@ -183,6 +191,7 @@ interface SchemaRef {
   ref?: string;
   type?: string;
   format?: string;
+  enum?: string[];
   items?: SchemaRef;
   additional_properties?: { any?: boolean; schema?: SchemaRef };
 }
@@ -267,6 +276,10 @@ class IRBuilder {
 
   unsupportedAuth(context: string, reason: string, target: Type | Operation | Namespace) {
     this.report("unsupported-auth", { context, reason }, target);
+  }
+
+  unsupportedSharedRoute(operation: Operation, reason: string) {
+    this.unsupported(operation, `shared route ${reason}`);
   }
 
   unsupportedResponseStatus(response: HttpOperationResponse) {
@@ -434,9 +447,7 @@ function buildDocument(
   const authentication = resolveAuthentication(service);
   const defaultSecurity = authRequirements(builder, authentication.defaultAuth, namespace, "service authentication", true);
   const securitySchemes = collectSecuritySchemes(authentication.schemes);
-  const endpoints = service.operations.map((operation) =>
-    endpoint(program, builder, operation, authentication.operationsAuth.get(operation.operation), defaultSecurity),
-  );
+  const endpoints = mergedEndpoints(program, builder, service.operations, authentication.operationsAuth, defaultSecurity);
 
   return prune({
     schema_version: "v2",
@@ -458,13 +469,79 @@ function buildDocument(
   }) as Document;
 }
 
+function mergedEndpoints(
+  program: Program,
+  builder: IRBuilder,
+  operations: HttpOperation[],
+  operationsAuth: Map<Operation, AuthenticationReference>,
+  defaultSecurity: Record<string, string[]>[] | undefined,
+): Endpoint[] {
+  const groups = operationGroups(program, operations);
+  return groups.map((group) => endpoint(program, builder, group, operationsAuth, defaultSecurity));
+}
+
+interface OperationGroup {
+  operations: HttpOperation[];
+  canonical: HttpOperation;
+}
+
+function operationGroups(program: Program, operations: HttpOperation[]): OperationGroup[] {
+  const byRoute = new Map<string, HttpOperation[]>();
+  const order: string[] = [];
+  for (const operation of operations) {
+    const key = `${operation.verb.toLowerCase()} ${operation.path}`;
+    if (!byRoute.has(key)) {
+      byRoute.set(key, []);
+      order.push(key);
+    }
+    byRoute.get(key)!.push(operation);
+  }
+
+  const groups: OperationGroup[] = [];
+  for (const key of order) {
+    const routeOperations = byRoute.get(key)!;
+    if (routeOperations.length === 1) {
+      groups.push({ operations: routeOperations, canonical: routeOperations[0] });
+      continue;
+    }
+
+    const coalescable = routeOperations.some((operation) => isSharedRoute(program, operation.operation)) ||
+      routeOperations.some((operation) => operation.overloading && isOverloadSameEndpoint(operation as HttpOperation & { overloading: HttpOperation }));
+    if (!coalescable) {
+      groups.push(...routeOperations.map((operation) => ({ operations: [operation], canonical: operation })));
+      continue;
+    }
+
+    groups.push({
+      operations: routeOperations,
+      canonical: canonicalOperation(program, routeOperations),
+    });
+  }
+  return groups;
+}
+
+function canonicalOperation(program: Program, operations: HttpOperation[]): HttpOperation {
+  for (const operation of operations) {
+    if (getOverloads(program, operation.operation)?.length) {
+      return operation;
+    }
+  }
+  for (const operation of operations) {
+    if (getOverloadedOperation(program, operation.operation) === undefined) {
+      return operation;
+    }
+  }
+  return operations[0];
+}
+
 function endpoint(
   program: Program,
   builder: IRBuilder,
-  operation: HttpOperation,
-  operationAuth: AuthenticationReference | undefined,
+  group: OperationGroup,
+  operationsAuth: Map<Operation, AuthenticationReference>,
   defaultSecurity: Record<string, string[]>[] | undefined,
 ): Endpoint {
+  const operation = group.canonical;
   const extensions: Record<string, unknown> = {};
   for (const [key, value] of operationVendorExtensions(program, builder, operation.operation)) {
     extensions[key] = value;
@@ -484,11 +561,11 @@ function endpoint(
     summary: getSummary(program, operation.operation),
     description: getDoc(program, operation.operation),
     tags: getAllTags(program, operation.operation),
-    parameters: operation.parameters.parameters.map((parameter) => endpointParameter(program, builder, parameter)),
-    request_body: requestBody(builder, operation.parameters.body),
-    responses: endpointResponses(program, builder, operation.responses),
+    parameters: mergedParameters(program, builder, group.operations),
+    request_body: mergedRequestBody(builder, group.operations),
+    responses: endpointResponses(program, builder, group.operations.flatMap((item) => item.responses)),
     cli: cliMetadata(program, operation),
-    security: operationSecurity(builder, operation, operationAuth, defaultSecurity),
+    security: mergedOperationSecurity(builder, group.operations, operationsAuth, defaultSecurity),
   }) as Endpoint;
   if (Object.keys(extensions).length > 0) {
     output.extensions = extensions;
@@ -678,8 +755,81 @@ function endpointParameter(
     required: parameter.type === "path" ? true : !param.optional,
     description: getDoc(program, param),
     explode: shouldEmitExplode(builder, param.type, parameter) ? parameter.explode : undefined,
-    schema: builder.schemaRef(param.type, `parameter ${param.name}`),
+    schema: parameterSchemaRef(builder, param.type, `parameter ${param.name}`),
   }) as Parameter;
+}
+
+function mergedParameters(
+  program: Program,
+  builder: IRBuilder,
+  operations: HttpOperation[],
+): Parameter[] | undefined {
+  const output: Parameter[] = [];
+  const byKey = new Map<string, Parameter>();
+  for (const operation of operations) {
+    for (const parameter of operation.parameters.parameters) {
+      const next = endpointParameter(program, builder, parameter);
+      const key = `${next.in.toLowerCase()}:${next.name.toLowerCase()}`;
+      const existing = byKey.get(key);
+      if (!existing) {
+        byKey.set(key, next);
+        output.push(next);
+        continue;
+      }
+      const merged = mergeParameter(builder, existing, next, operation.operation);
+      Object.assign(existing, merged);
+    }
+  }
+  return output.length > 0 ? output : undefined;
+}
+
+function mergeParameter(builder: IRBuilder, left: Parameter, right: Parameter, operation: Operation): Parameter {
+  if (left.in !== right.in || left.required !== right.required || left.explode !== right.explode) {
+    builder.unsupportedSharedRoute(operation, `incompatible parameter ${left.name}`);
+    return left;
+  }
+  const schema = mergeParameterSchemas(left.schema, right.schema);
+  if (!schema) {
+    builder.unsupportedSharedRoute(operation, `incompatible parameter schema ${left.name}`);
+    return left;
+  }
+  return prune({
+    ...left,
+    description: left.description ?? right.description,
+    schema,
+  }) as Parameter;
+}
+
+function mergeParameterSchemas(left: SchemaRef, right: SchemaRef): SchemaRef | undefined {
+  if (JSON.stringify(left) === JSON.stringify(right)) {
+    return left;
+  }
+  const leftValues = literalSchemaEnumValues(left);
+  const rightValues = literalSchemaEnumValues(right);
+  if (leftValues && rightValues) {
+    return { type: "string", enum: uniqueStrings([...leftValues, ...rightValues]) };
+  }
+  return undefined;
+}
+
+function literalSchemaEnumValues(schema: SchemaRef): string[] | undefined {
+  if (schema.type !== "string" || schema.ref || schema.format || schema.items || schema.additional_properties) {
+    return undefined;
+  }
+  return schema.enum ? schema.enum : [];
+}
+
+function parameterSchemaRef(builder: IRBuilder, type: Type, context: string): SchemaRef {
+  if (type.kind === "String") {
+    return { type: "string", enum: [type.value] };
+  }
+  if (type.kind === "Union") {
+    const enumValues = stringLiteralUnionValues(type);
+    if (enumValues) {
+      return { type: "string", enum: enumValues };
+    }
+  }
+  return builder.schemaRef(type, context);
 }
 
 function shouldEmitExplode(
@@ -693,7 +843,7 @@ function shouldEmitExplode(
   if (parameter.type !== "query" && parameter.type !== "header") {
     return false;
   }
-  const schema = builder.schemaRef(type, `parameter ${parameter.param.name}`);
+  const schema = parameterSchemaRef(builder, type, `parameter ${parameter.param.name}`);
   return schema.type === "array" || parameter.explode === true;
 }
 
@@ -705,6 +855,24 @@ function requestBody(builder: IRBuilder, body: HttpPayloadBody | undefined): Req
     required: body.property ? !body.property.optional : true,
     contents: bodyContents(builder, body, "request body"),
   }) as RequestBody;
+}
+
+function mergedRequestBody(builder: IRBuilder, operations: HttpOperation[]): RequestBody | undefined {
+  let output: RequestBody | undefined;
+  for (const operation of operations) {
+    const next = requestBody(builder, operation.parameters.body);
+    if (!next) {
+      continue;
+    }
+    if (!output) {
+      output = next;
+      continue;
+    }
+    if (JSON.stringify(output) !== JSON.stringify(next)) {
+      builder.unsupportedSharedRoute(operation.operation, "incompatible request bodies");
+    }
+  }
+  return output;
 }
 
 function endpointResponses(
@@ -790,6 +958,9 @@ function mergeContents(left: BodyContent[] | undefined, right: BodyContent[] | u
   }
   const output = [...left];
   for (const content of right) {
+    if (output.some((existing) => JSON.stringify(existing) === JSON.stringify(content))) {
+      continue;
+    }
     output.push(content);
   }
   return output;
@@ -855,11 +1026,15 @@ function multipartPart(builder: IRBuilder, part: HttpOperationPart, idx: number)
       ? fileSchemaRef(part.body.isText)
       : schemaRefForContent(builder, part.body.type, part.body.contentTypes[0] ?? "application/json", `multipart part ${part.name ?? idx}`);
   return prune({
-    name: part.name ?? `part${idx + 1}`,
+    name: part.partKind === "model" ? part.property.name : `part${idx + 1}`,
+    wire_name: part.name,
+    part_kind: part.partKind,
+    repeated: part.multi ? true : undefined,
     required: !part.optional,
     description: "property" in part && part.property ? getDoc(builder.program, part.property) : undefined,
     content_type: part.body.contentTypes[0],
     body_kind: bodyKind,
+    filename: part.filename !== undefined ? true : undefined,
     schema,
   }) as MultipartPart;
 }
@@ -940,6 +1115,26 @@ function operationSecurity(
     return undefined;
   }
   return security;
+}
+
+function mergedOperationSecurity(
+  builder: IRBuilder,
+  operations: HttpOperation[],
+  operationsAuth: Map<Operation, AuthenticationReference>,
+  defaultSecurity: Record<string, string[]>[] | undefined,
+): Record<string, string[]>[] | undefined {
+  let output: Record<string, string[]>[] | undefined;
+  for (const operation of operations) {
+    const security = operationSecurity(builder, operation, operationsAuth.get(operation.operation), defaultSecurity);
+    if (output === undefined) {
+      output = security;
+      continue;
+    }
+    if (!sameSecurity(output, security)) {
+      builder.unsupportedSharedRoute(operation.operation, "incompatible authentication");
+    }
+  }
+  return output;
 }
 
 function authRequirements(
@@ -1055,6 +1250,19 @@ function stringLiteralUnionValues(type: Union): string[] | undefined {
     values.push(variant.type.value);
   }
   return values;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const output: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    output.push(value);
+  }
+  return output;
 }
 
 function isNamedUserModel(type: Model): boolean {

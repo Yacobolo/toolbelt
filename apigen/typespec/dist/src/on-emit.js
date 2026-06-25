@@ -1,5 +1,5 @@
-import { emitFile, getAllTags, getDoc, getService, getSummary, isArrayModelType, isRecordModelType, walkPropertiesInherited, } from "@typespec/compiler";
-import { getAllHttpServices, getServers, resolveAuthentication, } from "@typespec/http";
+import { emitFile, getAllTags, getDoc, getOverloadedOperation, getOverloads, getService, getSummary, isArrayModelType, isRecordModelType, walkPropertiesInherited, } from "@typespec/compiler";
+import { getAllHttpServices, getServers, isOverloadSameEndpoint, isSharedRoute, resolveAuthentication, } from "@typespec/http";
 import { getExtensions, getOperationId, getTagsMetadata, resolveInfo, resolveOperationId } from "@typespec/openapi";
 import { getAuthz, getCLI, getResponseShape, isManual } from "./decorators.js";
 import { reportDiagnostic } from "./lib.js";
@@ -80,6 +80,9 @@ class IRBuilder {
     }
     unsupportedAuth(context, reason, target) {
         this.report("unsupported-auth", { context, reason }, target);
+    }
+    unsupportedSharedRoute(operation, reason) {
+        this.unsupported(operation, `shared route ${reason}`);
     }
     unsupportedResponseStatus(response) {
         this.report("unsupported-response-status", { status: JSON.stringify(response.statusCodes), operation: response.type.kind }, response.type);
@@ -223,7 +226,7 @@ function buildDocument(program, builder, service, options) {
     const authentication = resolveAuthentication(service);
     const defaultSecurity = authRequirements(builder, authentication.defaultAuth, namespace, "service authentication", true);
     const securitySchemes = collectSecuritySchemes(authentication.schemes);
-    const endpoints = service.operations.map((operation) => endpoint(program, builder, operation, authentication.operationsAuth.get(operation.operation), defaultSecurity));
+    const endpoints = mergedEndpoints(program, builder, service.operations, authentication.operationsAuth, defaultSecurity);
     return prune({
         schema_version: "v2",
         api: { base_path: options["base-path"] ?? "/" },
@@ -243,7 +246,56 @@ function buildDocument(program, builder, service, options) {
         endpoints,
     });
 }
-function endpoint(program, builder, operation, operationAuth, defaultSecurity) {
+function mergedEndpoints(program, builder, operations, operationsAuth, defaultSecurity) {
+    const groups = operationGroups(program, operations);
+    return groups.map((group) => endpoint(program, builder, group, operationsAuth, defaultSecurity));
+}
+function operationGroups(program, operations) {
+    const byRoute = new Map();
+    const order = [];
+    for (const operation of operations) {
+        const key = `${operation.verb.toLowerCase()} ${operation.path}`;
+        if (!byRoute.has(key)) {
+            byRoute.set(key, []);
+            order.push(key);
+        }
+        byRoute.get(key).push(operation);
+    }
+    const groups = [];
+    for (const key of order) {
+        const routeOperations = byRoute.get(key);
+        if (routeOperations.length === 1) {
+            groups.push({ operations: routeOperations, canonical: routeOperations[0] });
+            continue;
+        }
+        const coalescable = routeOperations.some((operation) => isSharedRoute(program, operation.operation)) ||
+            routeOperations.some((operation) => operation.overloading && isOverloadSameEndpoint(operation));
+        if (!coalescable) {
+            groups.push(...routeOperations.map((operation) => ({ operations: [operation], canonical: operation })));
+            continue;
+        }
+        groups.push({
+            operations: routeOperations,
+            canonical: canonicalOperation(program, routeOperations),
+        });
+    }
+    return groups;
+}
+function canonicalOperation(program, operations) {
+    for (const operation of operations) {
+        if (getOverloads(program, operation.operation)?.length) {
+            return operation;
+        }
+    }
+    for (const operation of operations) {
+        if (getOverloadedOperation(program, operation.operation) === undefined) {
+            return operation;
+        }
+    }
+    return operations[0];
+}
+function endpoint(program, builder, group, operationsAuth, defaultSecurity) {
+    const operation = group.canonical;
     const extensions = {};
     for (const [key, value] of operationVendorExtensions(program, builder, operation.operation)) {
         extensions[key] = value;
@@ -262,11 +314,11 @@ function endpoint(program, builder, operation, operationAuth, defaultSecurity) {
         summary: getSummary(program, operation.operation),
         description: getDoc(program, operation.operation),
         tags: getAllTags(program, operation.operation),
-        parameters: operation.parameters.parameters.map((parameter) => endpointParameter(program, builder, parameter)),
-        request_body: requestBody(builder, operation.parameters.body),
-        responses: endpointResponses(program, builder, operation.responses),
+        parameters: mergedParameters(program, builder, group.operations),
+        request_body: mergedRequestBody(builder, group.operations),
+        responses: endpointResponses(program, builder, group.operations.flatMap((item) => item.responses)),
         cli: cliMetadata(program, operation),
-        security: operationSecurity(builder, operation, operationAuth, defaultSecurity),
+        security: mergedOperationSecurity(builder, group.operations, operationsAuth, defaultSecurity),
     });
     if (Object.keys(extensions).length > 0) {
         output.extensions = extensions;
@@ -432,8 +484,72 @@ function endpointParameter(program, builder, parameter) {
         required: parameter.type === "path" ? true : !param.optional,
         description: getDoc(program, param),
         explode: shouldEmitExplode(builder, param.type, parameter) ? parameter.explode : undefined,
-        schema: builder.schemaRef(param.type, `parameter ${param.name}`),
+        schema: parameterSchemaRef(builder, param.type, `parameter ${param.name}`),
     });
+}
+function mergedParameters(program, builder, operations) {
+    const output = [];
+    const byKey = new Map();
+    for (const operation of operations) {
+        for (const parameter of operation.parameters.parameters) {
+            const next = endpointParameter(program, builder, parameter);
+            const key = `${next.in.toLowerCase()}:${next.name.toLowerCase()}`;
+            const existing = byKey.get(key);
+            if (!existing) {
+                byKey.set(key, next);
+                output.push(next);
+                continue;
+            }
+            const merged = mergeParameter(builder, existing, next, operation.operation);
+            Object.assign(existing, merged);
+        }
+    }
+    return output.length > 0 ? output : undefined;
+}
+function mergeParameter(builder, left, right, operation) {
+    if (left.in !== right.in || left.required !== right.required || left.explode !== right.explode) {
+        builder.unsupportedSharedRoute(operation, `incompatible parameter ${left.name}`);
+        return left;
+    }
+    const schema = mergeParameterSchemas(left.schema, right.schema);
+    if (!schema) {
+        builder.unsupportedSharedRoute(operation, `incompatible parameter schema ${left.name}`);
+        return left;
+    }
+    return prune({
+        ...left,
+        description: left.description ?? right.description,
+        schema,
+    });
+}
+function mergeParameterSchemas(left, right) {
+    if (JSON.stringify(left) === JSON.stringify(right)) {
+        return left;
+    }
+    const leftValues = literalSchemaEnumValues(left);
+    const rightValues = literalSchemaEnumValues(right);
+    if (leftValues && rightValues) {
+        return { type: "string", enum: uniqueStrings([...leftValues, ...rightValues]) };
+    }
+    return undefined;
+}
+function literalSchemaEnumValues(schema) {
+    if (schema.type !== "string" || schema.ref || schema.format || schema.items || schema.additional_properties) {
+        return undefined;
+    }
+    return schema.enum ? schema.enum : [];
+}
+function parameterSchemaRef(builder, type, context) {
+    if (type.kind === "String") {
+        return { type: "string", enum: [type.value] };
+    }
+    if (type.kind === "Union") {
+        const enumValues = stringLiteralUnionValues(type);
+        if (enumValues) {
+            return { type: "string", enum: enumValues };
+        }
+    }
+    return builder.schemaRef(type, context);
 }
 function shouldEmitExplode(builder, type, parameter) {
     if (!("explode" in parameter) || parameter.explode === undefined) {
@@ -442,7 +558,7 @@ function shouldEmitExplode(builder, type, parameter) {
     if (parameter.type !== "query" && parameter.type !== "header") {
         return false;
     }
-    const schema = builder.schemaRef(type, `parameter ${parameter.param.name}`);
+    const schema = parameterSchemaRef(builder, type, `parameter ${parameter.param.name}`);
     return schema.type === "array" || parameter.explode === true;
 }
 function requestBody(builder, body) {
@@ -453,6 +569,23 @@ function requestBody(builder, body) {
         required: body.property ? !body.property.optional : true,
         contents: bodyContents(builder, body, "request body"),
     });
+}
+function mergedRequestBody(builder, operations) {
+    let output;
+    for (const operation of operations) {
+        const next = requestBody(builder, operation.parameters.body);
+        if (!next) {
+            continue;
+        }
+        if (!output) {
+            output = next;
+            continue;
+        }
+        if (JSON.stringify(output) !== JSON.stringify(next)) {
+            builder.unsupportedSharedRoute(operation.operation, "incompatible request bodies");
+        }
+    }
+    return output;
 }
 function endpointResponses(program, builder, responses) {
     const byStatus = new Map();
@@ -522,6 +655,9 @@ function mergeContents(left, right) {
     }
     const output = [...left];
     for (const content of right) {
+        if (output.some((existing) => JSON.stringify(existing) === JSON.stringify(content))) {
+            continue;
+        }
         output.push(content);
     }
     return output;
@@ -573,11 +709,15 @@ function multipartPart(builder, part, idx) {
         ? fileSchemaRef(part.body.isText)
         : schemaRefForContent(builder, part.body.type, part.body.contentTypes[0] ?? "application/json", `multipart part ${part.name ?? idx}`);
     return prune({
-        name: part.name ?? `part${idx + 1}`,
+        name: part.partKind === "model" ? part.property.name : `part${idx + 1}`,
+        wire_name: part.name,
+        part_kind: part.partKind,
+        repeated: part.multi ? true : undefined,
         required: !part.optional,
         description: "property" in part && part.property ? getDoc(builder.program, part.property) : undefined,
         content_type: part.body.contentTypes[0],
         body_kind: bodyKind,
+        filename: part.filename !== undefined ? true : undefined,
         schema,
     });
 }
@@ -635,6 +775,20 @@ function operationSecurity(builder, operation, operationAuth, defaultSecurity) {
         return undefined;
     }
     return security;
+}
+function mergedOperationSecurity(builder, operations, operationsAuth, defaultSecurity) {
+    let output;
+    for (const operation of operations) {
+        const security = operationSecurity(builder, operation, operationsAuth.get(operation.operation), defaultSecurity);
+        if (output === undefined) {
+            output = security;
+            continue;
+        }
+        if (!sameSecurity(output, security)) {
+            builder.unsupportedSharedRoute(operation.operation, "incompatible authentication");
+        }
+    }
+    return output;
 }
 function authRequirements(builder, auth, target, context, allowNoAuth) {
     const requirements = [];
@@ -729,6 +883,18 @@ function stringLiteralUnionValues(type) {
         values.push(variant.type.value);
     }
     return values;
+}
+function uniqueStrings(values) {
+    const output = [];
+    const seen = new Set();
+    for (const value of values) {
+        if (seen.has(value)) {
+            continue;
+        }
+        seen.add(value);
+        output.push(value);
+    }
+    return output;
 }
 function isNamedUserModel(type) {
     return type.name !== "" && !isArrayModelType(type) && !isRecordModelType(type);

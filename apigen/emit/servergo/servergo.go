@@ -47,6 +47,16 @@ func cloneDocumentForEmit(doc ir.Document) ir.Document {
 		}
 		if endpoint.RequestBody != nil {
 			requestBody := *endpoint.RequestBody
+			requestBody.Contents = append([]ir.BodyContent(nil), endpoint.RequestBody.Contents...)
+			for k := range requestBody.Contents {
+				content := &requestBody.Contents[k]
+				if content.Schema != nil {
+					schema := *content.Schema
+					content.Schema = &schema
+				}
+				content.AnyOf = append([]ir.SchemaRef(nil), content.AnyOf...)
+				content.Parts = append([]ir.MultipartPart(nil), content.Parts...)
+			}
 			endpoint.RequestBody = &requestBody
 		}
 		if endpoint.CLI != nil {
@@ -120,6 +130,7 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	hasStrictOperations := false
 	hasRequestBodies := false
 	hasMultipartBodies := false
+	hasFileBodies := docUsesFileBodies(doc)
 	for _, endpoint := range doc.Endpoints {
 		if endpoint.OperationID != "getHealth" {
 			hasStrictOperations = true
@@ -140,6 +151,9 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		b.WriteString("\t\"fmt\"\n")
 		if hasRequestBodies {
 			b.WriteString("\t\"io\"\n")
+		}
+		if hasFileBodies {
+			b.WriteString("\t\"mime\"\n")
 		}
 		b.WriteString("\t\"strings\"\n")
 	}
@@ -375,6 +389,29 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		b.WriteString("\t_ = json.NewEncoder(w).Encode(Error{Code: apigenchi.SafeIntToInt32(statusCode), Message: apigenErrorMessage(statusCode, message)})\n")
 		b.WriteString("}\n\n")
 	}
+	if hasFileBodies {
+		b.WriteString("// GenFile represents a TypeSpec Http.File payload with transport metadata.\n")
+		b.WriteString("type GenFile struct {\n")
+		b.WriteString("\tContents []byte\n")
+		b.WriteString("\tContentType string\n")
+		b.WriteString("\tFilename *string\n")
+		b.WriteString("}\n\n")
+		b.WriteString("func writeAPIGenFileResponse(w http.ResponseWriter, file GenFile, defaultContentType string, statusCode int) error {\n")
+		b.WriteString("\tcontentType := file.ContentType\n")
+		b.WriteString("\tif contentType == \"\" {\n")
+		b.WriteString("\t\tcontentType = defaultContentType\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\tif contentType != \"\" {\n")
+		b.WriteString("\t\tw.Header().Set(\"Content-Type\", contentType)\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\tif file.Filename != nil && *file.Filename != \"\" {\n")
+		b.WriteString("\t\tw.Header().Set(\"Content-Disposition\", mime.FormatMediaType(\"attachment\", map[string]string{\"filename\": *file.Filename}))\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\tw.WriteHeader(statusCode)\n")
+		b.WriteString("\t_, err := w.Write(file.Contents)\n")
+		b.WriteString("\treturn err\n")
+		b.WriteString("}\n\n")
+	}
 	if hasRequestBodies {
 		b.WriteString("func decodeAPIGenJSONBody(body io.Reader, dest any, requiredBody bool, requiredFields ...string) error {\n")
 		b.WriteString("\traw, err := io.ReadAll(body)\n")
@@ -466,28 +503,66 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		b.WriteString("\treturn nil\n")
 		b.WriteString("}\n\n")
 		if hasMultipartBodies {
-			b.WriteString("func readAPIGenMultipartPart(r *http.Request, name string) ([]byte, bool, error) {\n")
-			b.WriteString("\tif r.MultipartForm == nil {\n")
-			b.WriteString("\t\treturn nil, false, nil\n")
-			b.WriteString("\t}\n")
-			b.WriteString("\tif values := r.MultipartForm.Value[name]; len(values) > 0 {\n")
-			b.WriteString("\t\treturn []byte(values[0]), true, nil\n")
-			b.WriteString("\t}\n")
-			b.WriteString("\tfiles := r.MultipartForm.File[name]\n")
-			b.WriteString("\tif len(files) == 0 {\n")
-			b.WriteString("\t\treturn nil, false, nil\n")
-			b.WriteString("\t}\n")
-			b.WriteString("\tfile, err := files[0].Open()\n")
-			b.WriteString("\tif err != nil {\n")
-			b.WriteString("\t\treturn nil, true, fmt.Errorf(\"open multipart part %s: %w\", name, err)\n")
-			b.WriteString("\t}\n")
-			b.WriteString("\tdefer file.Close()\n")
-			b.WriteString("\traw, err := io.ReadAll(file)\n")
-			b.WriteString("\tif err != nil {\n")
-			b.WriteString("\t\treturn nil, true, fmt.Errorf(\"read multipart part %s: %w\", name, err)\n")
-			b.WriteString("\t}\n")
-			b.WriteString("\treturn raw, true, nil\n")
+			b.WriteString("type apigenMultipartPart struct {\n")
+			b.WriteString("\tName string\n")
+			b.WriteString("\tFilename string\n")
+			b.WriteString("\tContentType string\n")
+			b.WriteString("\tRaw []byte\n")
 			b.WriteString("}\n\n")
+			b.WriteString("func readAPIGenMultipartParts(r *http.Request) ([]apigenMultipartPart, error) {\n")
+			b.WriteString("\treader, err := r.MultipartReader()\n")
+			b.WriteString("\tif err != nil {\n")
+			b.WriteString("\t\treturn nil, fmt.Errorf(\"parse multipart body: %w\", err)\n")
+			b.WriteString("\t}\n")
+			b.WriteString("\tparts := []apigenMultipartPart{}\n")
+			b.WriteString("\tfor {\n")
+			b.WriteString("\t\tpart, err := reader.NextPart()\n")
+			b.WriteString("\t\tif err == io.EOF {\n")
+			b.WriteString("\t\t\tbreak\n")
+			b.WriteString("\t\t}\n")
+			b.WriteString("\t\tif err != nil {\n")
+			b.WriteString("\t\t\treturn nil, fmt.Errorf(\"read multipart part: %w\", err)\n")
+			b.WriteString("\t\t}\n")
+			b.WriteString("\t\traw, err := io.ReadAll(part)\n")
+			b.WriteString("\t\tif closeErr := part.Close(); err == nil && closeErr != nil {\n")
+			b.WriteString("\t\t\terr = closeErr\n")
+			b.WriteString("\t\t}\n")
+			b.WriteString("\t\tif err != nil {\n")
+			b.WriteString("\t\t\treturn nil, fmt.Errorf(\"read multipart part %s: %w\", part.FormName(), err)\n")
+			b.WriteString("\t\t}\n")
+			b.WriteString("\t\tparts = append(parts, apigenMultipartPart{Name: part.FormName(), Filename: part.FileName(), ContentType: part.Header.Get(\"Content-Type\"), Raw: raw})\n")
+			b.WriteString("\t}\n")
+			b.WriteString("\treturn parts, nil\n")
+			b.WriteString("}\n\n")
+			b.WriteString("func apigenMultipartPartsByName(parts []apigenMultipartPart, name string) []apigenMultipartPart {\n")
+			b.WriteString("\tmatched := []apigenMultipartPart{}\n")
+			b.WriteString("\tfor _, part := range parts {\n")
+			b.WriteString("\t\tif part.Name == name {\n")
+			b.WriteString("\t\t\tmatched = append(matched, part)\n")
+			b.WriteString("\t\t}\n")
+			b.WriteString("\t}\n")
+			b.WriteString("\treturn matched\n")
+			b.WriteString("}\n\n")
+			b.WriteString("func apigenMultipartPartsByIndex(parts []apigenMultipartPart, index int) []apigenMultipartPart {\n")
+			b.WriteString("\tif index < 0 || index >= len(parts) {\n")
+			b.WriteString("\t\treturn nil\n")
+			b.WriteString("\t}\n")
+			b.WriteString("\treturn []apigenMultipartPart{parts[index]}\n")
+			b.WriteString("}\n\n")
+			if hasFileBodies {
+				b.WriteString("func genFileFromMultipartPart(part apigenMultipartPart, defaultContentType string) GenFile {\n")
+				b.WriteString("\tcontentType := part.ContentType\n")
+				b.WriteString("\tif contentType == \"\" {\n")
+				b.WriteString("\t\tcontentType = defaultContentType\n")
+				b.WriteString("\t}\n")
+				b.WriteString("\tvar filename *string\n")
+				b.WriteString("\tif part.Filename != \"\" {\n")
+				b.WriteString("\t\tvalue := part.Filename\n")
+				b.WriteString("\t\tfilename = &value\n")
+				b.WriteString("\t}\n")
+				b.WriteString("\treturn GenFile{Contents: part.Raw, ContentType: contentType, Filename: filename}\n")
+				b.WriteString("}\n\n")
+			}
 		}
 	}
 	emitSharedErrorResponseTypes(&b, doc)
@@ -624,34 +699,27 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 				b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
 				b.WriteString("\t\treturn\n")
 				b.WriteString("\t}\n")
-				b.WriteString("\tbody = value\n")
+				if content.BodyKind == "file" {
+					b.WriteString("\tbody = GenFile{Contents: value, ContentType: r.Header.Get(\"Content-Type\")}\n")
+				} else {
+					b.WriteString("\tbody = value\n")
+				}
 			case "form_urlencoded":
 				b.WriteString("\tif err := decodeAPIGenFormBody(r, &body, " + requiredBody + requiredFieldArgs + "); err != nil {\n")
 				b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
 				b.WriteString("\t\treturn\n")
 				b.WriteString("\t}\n")
 			case "multipart":
-				if endpoint.RequestBody.Required {
-					b.WriteString("\tif err := r.ParseMultipartForm(32 << 20); err != nil {\n")
-				} else {
-					b.WriteString("\tif r.ContentLength != 0 {\n")
-					b.WriteString("\t\tif err := r.ParseMultipartForm(32 << 20); err != nil {\n")
-				}
-				if endpoint.RequestBody.Required {
-					b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, fmt.Sprintf(\"parse multipart body: %v\", err))\n")
-					b.WriteString("\t\treturn\n")
-					b.WriteString("\t}\n")
-				} else {
-					b.WriteString("\t\t\twriteAPIGenError(w, http.StatusBadRequest, fmt.Sprintf(\"parse multipart body: %v\", err))\n")
-					b.WriteString("\t\t\treturn\n")
-					b.WriteString("\t\t}\n")
-				}
+				b.WriteString("\tif " + requiredBody + " || r.ContentLength != 0 {\n")
+				b.WriteString("\t\tparts, err := readAPIGenMultipartParts(r)\n")
+				b.WriteString("\t\tif err != nil {\n")
+				b.WriteString("\t\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
+				b.WriteString("\t\t\treturn\n")
+				b.WriteString("\t\t}\n")
 				if err := emitMultipartDecode(&b, doc, name, content); err != nil {
 					return nil, err
 				}
-				if !endpoint.RequestBody.Required {
-					b.WriteString("\t}\n")
-				}
+				b.WriteString("\t}\n")
 			default:
 				b.WriteString("\tif err := decodeAPIGenJSONBody(r.Body, &body, " + requiredBody + requiredFieldArgs + "); err != nil {\n")
 				b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
@@ -704,7 +772,9 @@ func emitMultipartRequestBody(b *strings.Builder, doc ir.Document, operationName
 		if err != nil {
 			return err
 		}
-		if !part.Required {
+		if part.Repeated {
+			partType = "[]" + partType
+		} else if !part.Required {
 			partType = "*" + partType
 		}
 		b.WriteString("\t" + exportedName(part.Name) + " " + partType + "\n")
@@ -714,15 +784,33 @@ func emitMultipartRequestBody(b *strings.Builder, doc ir.Document, operationName
 }
 
 func emitMultipartDecode(b *strings.Builder, doc ir.Document, operationName string, content ir.BodyContent) error {
-	for _, part := range content.Parts {
+	for idx, part := range content.Parts {
 		fieldName := exportedName(part.Name)
-		rawName := lowerCamelName(part.Name) + "Raw"
-		okName := lowerCamelName(part.Name) + "OK"
-		b.WriteString("\t" + rawName + ", " + okName + ", err := readAPIGenMultipartPart(r, " + strconv.Quote(part.Name) + ")\n")
-		b.WriteString("\tif err != nil {\n")
-		b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
-		b.WriteString("\t\treturn\n")
-		b.WriteString("\t}\n")
+		localName := lowerCamelName(part.Name)
+		partsName := localName + "Parts"
+		wireName := part.WireName
+		if wireName == "" {
+			b.WriteString("\t" + partsName + " := apigenMultipartPartsByIndex(parts, " + strconv.Itoa(idx) + ")\n")
+		} else {
+			b.WriteString("\t" + partsName + " := apigenMultipartPartsByName(parts, " + strconv.Quote(wireName) + ")\n")
+		}
+		if part.Repeated {
+			if part.Required {
+				b.WriteString("\tif len(" + partsName + ") == 0 {\n")
+				b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, " + strconv.Quote(part.Name+" is required") + ")\n")
+				b.WriteString("\t\treturn\n")
+				b.WriteString("\t}\n")
+			}
+			b.WriteString("\tfor _, " + localName + "Part := range " + partsName + " {\n")
+			if err := emitMultipartPartValue(b, doc, operationName, part, localName, localName+"Part"); err != nil {
+				return err
+			}
+			b.WriteString("\t\tbody." + fieldName + " = append(body." + fieldName + ", " + localName + "Value)\n")
+			b.WriteString("\t}\n")
+			continue
+		}
+		okName := localName + "OK"
+		b.WriteString("\t" + okName + " := len(" + partsName + ") > 0\n")
 		if part.Required {
 			b.WriteString("\tif !" + okName + " {\n")
 			b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, " + strconv.Quote(part.Name+" is required") + ")\n")
@@ -731,43 +819,48 @@ func emitMultipartDecode(b *strings.Builder, doc ir.Document, operationName stri
 		} else {
 			b.WriteString("\tif " + okName + " {\n")
 		}
-		valueName := lowerCamelName(part.Name) + "Value"
-		switch part.BodyKind {
-		case "json", "form_urlencoded":
-			partType, err := multipartPartTypeName(doc, part)
-			if err != nil {
-				return err
-			}
-			b.WriteString("\tvar " + valueName + " " + partType + "\n")
-			b.WriteString("\tif err := json.Unmarshal(" + rawName + ", &" + valueName + "); err != nil {\n")
-			b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, fmt.Sprintf(" + strconv.Quote("invalid multipart part "+part.Name+": %v") + ", err))\n")
-			b.WriteString("\t\treturn\n")
-			b.WriteString("\t}\n")
-			if part.Required {
-				b.WriteString("\tbody." + fieldName + " = " + valueName + "\n")
-			} else {
-				b.WriteString("\tbody." + fieldName + " = &" + valueName + "\n")
-			}
-		case "text":
-			b.WriteString("\t" + valueName + " := string(" + rawName + ")\n")
-			if part.Required {
-				b.WriteString("\tbody." + fieldName + " = " + valueName + "\n")
-			} else {
-				b.WriteString("\tbody." + fieldName + " = &" + valueName + "\n")
-			}
-		case "binary", "file":
-			b.WriteString("\t" + valueName + " := " + rawName + "\n")
-			if part.Required {
-				b.WriteString("\tbody." + fieldName + " = " + valueName + "\n")
-			} else {
-				b.WriteString("\tbody." + fieldName + " = &" + valueName + "\n")
-			}
-		default:
-			return fmt.Errorf("multipart request body generation for %s part %q has unsupported body kind %q", operationName, part.Name, part.BodyKind)
+		b.WriteString("\t" + localName + "Part := " + partsName + "[0]\n")
+		if err := emitMultipartPartValue(b, doc, operationName, part, localName, localName+"Part"); err != nil {
+			return err
 		}
-		if !part.Required {
+		if part.Required {
+			b.WriteString("\tbody." + fieldName + " = " + localName + "Value\n")
+		} else {
+			b.WriteString("\tbody." + fieldName + " = &" + localName + "Value\n")
 			b.WriteString("\t}\n")
 		}
+	}
+	return nil
+}
+
+func emitMultipartPartValue(
+	b *strings.Builder,
+	doc ir.Document,
+	operationName string,
+	part ir.MultipartPart,
+	localName string,
+	partExpr string,
+) error {
+	valueName := localName + "Value"
+	switch part.BodyKind {
+	case "json", "form_urlencoded":
+		partType, err := multipartPartTypeName(doc, part)
+		if err != nil {
+			return err
+		}
+		b.WriteString("\tvar " + valueName + " " + partType + "\n")
+		b.WriteString("\tif err := json.Unmarshal(" + partExpr + ".Raw, &" + valueName + "); err != nil {\n")
+		b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, fmt.Sprintf(" + strconv.Quote("invalid multipart part "+part.Name+": %v") + ", err))\n")
+		b.WriteString("\t\treturn\n")
+		b.WriteString("\t}\n")
+	case "text":
+		b.WriteString("\t" + valueName + " := string(" + partExpr + ".Raw)\n")
+	case "binary":
+		b.WriteString("\t" + valueName + " := " + partExpr + ".Raw\n")
+	case "file":
+		b.WriteString("\t" + valueName + " := genFileFromMultipartPart(" + partExpr + ", " + strconv.Quote(part.ContentType) + ")\n")
+	default:
+		return fmt.Errorf("multipart request body generation for %s part %q has unsupported body kind %q", operationName, part.Name, part.BodyKind)
 	}
 	return nil
 }
@@ -776,8 +869,10 @@ func multipartPartTypeName(doc ir.Document, part ir.MultipartPart) (string, erro
 	switch part.BodyKind {
 	case "text":
 		return "string", nil
-	case "binary", "file":
+	case "binary":
 		return "[]byte", nil
+	case "file":
+		return "GenFile", nil
 	case "json", "form_urlencoded":
 		if part.Schema == nil {
 			return "", fmt.Errorf("multipart part %q requires a schema", part.Name)
@@ -866,9 +961,13 @@ func emitOperationContentResponse(
 	b.WriteString("// Visit" + operationName + "Response writes " + operationName + " " + statusCode + " responses to the client.\n")
 	b.WriteString("func (response " + typeName + ") Visit" + operationName + "Response(w http.ResponseWriter) error {\n")
 	emitDirectHeaderWrites(b, headersFields)
-	b.WriteString("\tw.Header().Set(\"Content-Type\", " + strconv.Quote(content.ContentType) + ")\n")
-	b.WriteString("\tw.WriteHeader(" + statusCode + ")\n")
-	emitResponseBodyWrite(b, content)
+	if content.BodyKind == "file" {
+		b.WriteString("\treturn writeAPIGenFileResponse(w, response.Body, " + strconv.Quote(content.ContentType) + ", " + statusCode + ")\n")
+	} else {
+		b.WriteString("\tw.Header().Set(\"Content-Type\", " + strconv.Quote(content.ContentType) + ")\n")
+		b.WriteString("\tw.WriteHeader(" + statusCode + ")\n")
+		emitResponseBodyWrite(b, content)
+	}
 	b.WriteString("}\n\n")
 }
 
@@ -933,8 +1032,10 @@ func responseContentTypeName(doc ir.Document, content ir.BodyContent) string {
 	switch content.BodyKind {
 	case "text":
 		return "string"
-	case "binary", "file":
+	case "binary":
 		return "[]byte"
+	case "file":
+		return "GenFile"
 	default:
 		return responseBodyTypeName(doc, *content.Schema)
 	}
@@ -946,6 +1047,10 @@ func emitResponseBodyWrite(b *strings.Builder, content ir.BodyContent) {
 		b.WriteString("\t_, err := w.Write([]byte(response.Body))\n")
 		b.WriteString("\treturn err\n")
 	case "binary", "file":
+		if content.BodyKind == "file" {
+			b.WriteString("\treturn writeAPIGenFileResponse(w, response.Body, " + strconv.Quote(content.ContentType) + ", http.StatusOK)\n")
+			return
+		}
 		b.WriteString("\t_, err := w.Write(response.Body)\n")
 		b.WriteString("\treturn err\n")
 	default:
@@ -1255,6 +1360,31 @@ func docUsesTimeTypes(doc ir.Document) bool {
 	return false
 }
 
+func docUsesFileBodies(doc ir.Document) bool {
+	for _, endpoint := range doc.Endpoints {
+		if endpoint.RequestBody != nil {
+			for _, content := range endpoint.RequestBody.Contents {
+				if content.BodyKind == "file" {
+					return true
+				}
+				for _, part := range content.Parts {
+					if part.BodyKind == "file" {
+						return true
+					}
+				}
+			}
+		}
+		for _, response := range endpoint.Responses {
+			for _, content := range response.Contents {
+				if content.BodyKind == "file" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func requestBodyTypeName(doc ir.Document, endpoint ir.Endpoint) (string, error) {
 	if endpoint.RequestBody == nil {
 		return "", fmt.Errorf("request body generation for %s requires a named IR schema", endpoint.OperationID)
@@ -1266,8 +1396,10 @@ func requestBodyTypeName(doc ir.Document, endpoint ir.Endpoint) (string, error) 
 	switch content.BodyKind {
 	case "text":
 		return "string", nil
-	case "binary", "file":
+	case "binary":
 		return "[]byte", nil
+	case "file":
+		return "GenFile", nil
 	case "multipart":
 		return "Gen" + exportedName(endpoint.OperationID) + "MultipartBody", nil
 	}

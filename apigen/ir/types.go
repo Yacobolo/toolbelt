@@ -152,10 +152,14 @@ type BodyContent struct {
 // MultipartPart describes one part in a multipart body.
 type MultipartPart struct {
 	Name        string     `json:"name"`
+	WireName    string     `json:"wire_name,omitempty"`
+	PartKind    string     `json:"part_kind,omitempty"`
+	Repeated    bool       `json:"repeated,omitempty"`
 	Required    bool       `json:"required,omitempty"`
 	Description string     `json:"description,omitempty"`
 	ContentType string     `json:"content_type,omitempty"`
 	BodyKind    string     `json:"body_kind,omitempty"`
+	Filename    bool       `json:"filename,omitempty"`
 	Schema      *SchemaRef `json:"schema,omitempty"`
 }
 
@@ -181,6 +185,7 @@ type SchemaRef struct {
 	Ref                  string                `json:"ref,omitempty"`
 	Type                 string                `json:"type,omitempty"`
 	Format               string                `json:"format,omitempty"`
+	Enum                 []string              `json:"enum,omitempty"`
 	Items                *SchemaRef            `json:"items,omitempty"`
 	AdditionalProperties *AdditionalProperties `json:"additional_properties,omitempty"`
 }

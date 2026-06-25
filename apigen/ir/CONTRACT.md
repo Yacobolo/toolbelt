@@ -48,7 +48,7 @@ APIGen-owned endpoint extensions in current consumers:
 
 ## Body Contents
 
-Request and response bodies use ordered `contents` entries.
+Request and response bodies use ordered `contents` entries. TypeSpec `@sharedRoute` and same-endpoint `@overload` declarations are coalesced before IR emission when they describe one compatible HTTP operation.
 
 Each content entry defines:
 
@@ -64,9 +64,25 @@ Supported `body_kind` values:
 - `form_urlencoded`
 - `multipart`
 
-Schema-bearing content uses `schema`. Multiple response alternatives may use `any_of`. Multipart content uses `parts`, where each part has a name, body kind, optional content type, and optional schema.
+Schema-bearing content uses `schema`. Multiple response alternatives may use `any_of`. Multipart content uses `parts`. `SchemaRef.enum` is supported for inline string-literal parameter schemas such as coalesced `Accept` headers.
 
 JSON `bytes` values are represented as `type: string`, `format: byte`. Raw binary/file payloads are represented as `type: string`, `format: binary`.
+
+## Multipart Parts
+
+Each multipart part defines:
+
+- `name`: generated field/property name
+- `body_kind`: `json`, `text`, `binary`, or `file`
+- optional `wire_name`: HTTP part name; omitted for unnamed `multipart/mixed` tuple parts
+- optional `part_kind`: `model` or `tuple`
+- optional `repeated`: true for repeated TypeSpec `HttpPart<T>[]` parts
+- optional `required`
+- optional `content_type`
+- optional `filename`: true when a TypeSpec `Http.File` filename is available
+- optional `schema`
+
+Named `multipart/form-data` parts use `wire_name`. Unnamed `multipart/mixed` tuple parts are positional and keep stable generated names such as `part1`, `part2`. `HttpPart<T[]>` is a single JSON-array part; `HttpPart<T>[]` is repeated parts.
 
 ## Responses
 
@@ -99,7 +115,7 @@ Response headers are unique case-insensitively per response.
 
 `SchemaRef.ref` values are normalized against component-style paths and resolved against this registry.
 
-JSON and urlencoded form object bodies intended for generated Go output should resolve to named schema entries in this registry. Text bodies generate `string`; binary and file bodies generate `[]byte`. Generators reject anonymous object bodies when they cannot be mapped to a stable generated Go type.
+JSON and urlencoded form object bodies intended for generated Go output should resolve to named schema entries in this registry. Text bodies generate `string`; raw binary `bytes` bodies generate `[]byte`; TypeSpec `Http.File` bodies generate `GenFile` with byte contents, content type, and optional filename metadata. Generators reject anonymous object bodies when they cannot be mapped to a stable generated Go type.
 
 ## Contract Roles
 

@@ -297,6 +297,9 @@ func mediaTypeNode(content ir.BodyContent, examples *exampleResolver) *yaml.Node
 	mediaType := mappingNode()
 	if len(content.Parts) > 0 {
 		appendKeyValue(mediaType, "schema", multipartSchemaNode(content.Parts))
+		if encoding := multipartEncodingNode(content.Parts); encoding != nil {
+			appendKeyValue(mediaType, "encoding", encoding)
+		}
 	} else if len(content.AnyOf) > 0 {
 		schema := mappingNode()
 		anyOf := sequenceNode()
@@ -324,6 +327,12 @@ func multipartSchemaNode(parts []ir.MultipartPart) *yaml.Node {
 		if part.Schema != nil {
 			partSchema = schemaRefNode(*part.Schema)
 		}
+		if part.Repeated {
+			arraySchema := mappingNode()
+			appendKeyValue(arraySchema, "type", stringNode("array"))
+			appendKeyValue(arraySchema, "items", partSchema)
+			partSchema = arraySchema
+		}
 		appendKeyValue(properties, part.Name, partSchema)
 		if part.Required {
 			required.Content = append(required.Content, stringNode(part.Name))
@@ -334,6 +343,22 @@ func multipartSchemaNode(parts []ir.MultipartPart) *yaml.Node {
 		appendKeyValue(schema, "required", required)
 	}
 	return schema
+}
+
+func multipartEncodingNode(parts []ir.MultipartPart) *yaml.Node {
+	encoding := mappingNode()
+	for _, part := range parts {
+		if part.ContentType == "" {
+			continue
+		}
+		partEncoding := mappingNode()
+		appendKeyValue(partEncoding, "contentType", stringNode(part.ContentType))
+		appendKeyValue(encoding, part.Name, partEncoding)
+	}
+	if len(encoding.Content) == 0 {
+		return nil
+	}
+	return encoding
 }
 
 func securityRequirementsNode(requirements []ir.SecurityRequirement) *yaml.Node {
@@ -707,6 +732,13 @@ func schemaRefNode(ref ir.SchemaRef) *yaml.Node {
 	appendKeyValue(node, "type", stringNode(ref.Type))
 	if ref.Format != "" {
 		appendKeyValue(node, "format", stringNode(ref.Format))
+	}
+	if len(ref.Enum) > 0 {
+		enum := sequenceNode()
+		for _, value := range ref.Enum {
+			enum.Content = append(enum.Content, stringNode(value))
+		}
+		appendKeyValue(node, "enum", enum)
 	}
 	if ref.Items != nil {
 		appendKeyValue(node, "items", schemaRefNode(*ref.Items))

@@ -19,6 +19,10 @@ func binaryContent() []ir.BodyContent {
 	return []ir.BodyContent{{ContentType: "application/octet-stream", BodyKind: "binary", Schema: &ir.SchemaRef{Type: "string", Format: "binary"}}}
 }
 
+func fileContent() []ir.BodyContent {
+	return []ir.BodyContent{{ContentType: "application/octet-stream", BodyKind: "file", Schema: &ir.SchemaRef{Type: "string", Format: "binary"}}}
+}
+
 func TestEmit(t *testing.T) {
 	t.Helper()
 
@@ -558,10 +562,11 @@ func TestEmit_GeneratesMultipartBodyDecoding(t *testing.T) {
 					ContentType: "multipart/form-data",
 					BodyKind:    "multipart",
 					Parts: []ir.MultipartPart{
-						{Name: "metadata", Required: true, ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Ref: "Metadata"}},
-						{Name: "note", Required: false, ContentType: "text/plain", BodyKind: "text", Schema: &ir.SchemaRef{Type: "string"}},
-						{Name: "artifact", Required: true, ContentType: "application/octet-stream", BodyKind: "file", Schema: &ir.SchemaRef{Type: "string", Format: "binary"}},
-						{Name: "checksum", Required: false, ContentType: "application/octet-stream", BodyKind: "binary", Schema: &ir.SchemaRef{Type: "string", Format: "binary"}},
+						{Name: "metadata", WireName: "metadata", PartKind: "model", Required: true, ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Ref: "Metadata"}},
+						{Name: "note", WireName: "note", PartKind: "model", Required: false, ContentType: "text/plain", BodyKind: "text", Schema: &ir.SchemaRef{Type: "string"}},
+						{Name: "artifact", WireName: "artifact", PartKind: "model", Required: true, ContentType: "application/octet-stream", BodyKind: "file", Filename: true, Schema: &ir.SchemaRef{Type: "string", Format: "binary"}},
+						{Name: "checksums", WireName: "checksum", PartKind: "model", Required: false, Repeated: true, ContentType: "text/plain", BodyKind: "text", Schema: &ir.SchemaRef{Type: "string"}},
+						{Name: "part5", PartKind: "tuple", Required: true, ContentType: "application/octet-stream", BodyKind: "binary", Schema: &ir.SchemaRef{Type: "string", Format: "binary"}},
 					},
 				}}},
 				Responses: []ir.Response{{StatusCode: 204, Description: "uploaded"}},
@@ -575,16 +580,19 @@ func TestEmit_GeneratesMultipartBodyDecoding(t *testing.T) {
 	require.Contains(t, content, "type GenUploadArtifactMultipartBody struct {")
 	require.Contains(t, content, "\tMetadata GenSchemaMetadata")
 	require.Contains(t, content, "\tNote *string")
-	require.Contains(t, content, "\tArtifact []byte")
-	require.Contains(t, content, "\tChecksum *[]byte")
+	require.Contains(t, content, "\tArtifact GenFile")
+	require.Contains(t, content, "\tChecksums []string")
+	require.Contains(t, content, "\tPart5 []byte")
 	require.Contains(t, content, "type GenUploadArtifactBody = GenUploadArtifactMultipartBody")
-	require.Contains(t, content, "if err := r.ParseMultipartForm(32 << 20); err != nil {")
-	require.Contains(t, content, "metadataRaw, metadataOK, err := readAPIGenMultipartPart(r, \"metadata\")")
+	require.Contains(t, content, "parts, err := readAPIGenMultipartParts(r)")
+	require.Contains(t, content, "metadataParts := apigenMultipartPartsByName(parts, \"metadata\")")
 	require.Contains(t, content, "if !metadataOK {")
-	require.Contains(t, content, "json.Unmarshal(metadataRaw, &metadataValue)")
-	require.Contains(t, content, "noteValue := string(noteRaw)")
-	require.Contains(t, content, "artifactValue := artifactRaw")
-	require.Contains(t, content, "func readAPIGenMultipartPart(r *http.Request, name string) ([]byte, bool, error) {")
+	require.Contains(t, content, "json.Unmarshal(metadataPart.Raw, &metadataValue)")
+	require.Contains(t, content, "noteValue := string(notePart.Raw)")
+	require.Contains(t, content, "artifactValue := genFileFromMultipartPart(artifactPart, \"application/octet-stream\")")
+	require.Contains(t, content, "for _, checksumsPart := range checksumsParts {")
+	require.Contains(t, content, "part5Parts := apigenMultipartPartsByIndex(parts, 4)")
+	require.Contains(t, content, "func readAPIGenMultipartParts(r *http.Request) ([]apigenMultipartPart, error) {")
 
 	assertGeneratedServerCompiles(t, b, `package gen
 
@@ -599,8 +607,56 @@ type GenSchemaMetadata struct {
 
 var _ = GenUploadArtifactBody{
 	Metadata: GenSchemaMetadata{Name: "duck"},
-	Artifact: []byte("payload"),
+	Artifact: GenFile{Contents: []byte("payload")},
+	Checksums: []string{"abc"},
+	Part5: []byte("payload"),
 }
+`)
+}
+
+func TestEmit_GeneratesGenFileRequestAndResponse(t *testing.T) {
+	t.Helper()
+
+	doc := ir.Document{
+		SchemaVersion: "v2",
+		API:           ir.API{BasePath: "/"},
+		Info:          ir.Info{Title: "t", Version: "1"},
+		Endpoints: []ir.Endpoint{
+			{
+				Method:      "put",
+				Path:        "/artifact",
+				OperationID: "putArtifact",
+				RequestBody: &ir.RequestBody{Required: true, Contents: fileContent()},
+				Responses: []ir.Response{{
+					StatusCode:  200,
+					Description: "ok",
+					Contents:    fileContent(),
+				}},
+			},
+		},
+	}
+
+	b, err := Emit(doc, Options{PackageName: "gen"})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, "type GenFile struct {")
+	require.Contains(t, content, "\tContents []byte")
+	require.Contains(t, content, "\tContentType string")
+	require.Contains(t, content, "\tFilename *string")
+	require.Contains(t, content, "type GenPutArtifactBody = GenFile")
+	require.Contains(t, content, `body = GenFile{Contents: value, ContentType: r.Header.Get("Content-Type")}`)
+	require.Contains(t, content, "type GenPutArtifact200FileResponse struct {")
+	require.Contains(t, content, "Body GenFile")
+	require.Contains(t, content, "writeAPIGenFileResponse(w, response.Body, \"application/octet-stream\", 200)")
+
+	assertGeneratedServerCompiles(t, b, `package gen
+
+type Error struct {
+	Code int32
+	Message string
+}
+
+var _ GenPutArtifactResponse = GenPutArtifact200FileResponse{Body: GenFile{Contents: []byte("payload")}}
 `)
 }
 

@@ -380,6 +380,14 @@ func validateBodyContent(doc Document, content BodyContent, context string) erro
 		if strings.TrimSpace(part.Name) == "" {
 			return fmt.Errorf("%s parts[%d] name is required", context, idx)
 		}
+		switch strings.TrimSpace(part.PartKind) {
+		case "", "model", "tuple":
+		default:
+			return fmt.Errorf("%s parts[%d] has unsupported part_kind %q", context, idx, part.PartKind)
+		}
+		if strings.TrimSpace(part.WireName) == "" && part.PartKind == "model" {
+			return fmt.Errorf("%s parts[%d] model part wire_name is required", context, idx)
+		}
 		if strings.TrimSpace(part.BodyKind) == "" {
 			return fmt.Errorf("%s parts[%d] body_kind is required", context, idx)
 		}
@@ -387,6 +395,9 @@ func validateBodyContent(doc Document, content BodyContent, context string) erro
 		case "json", "text", "binary", "file":
 		default:
 			return fmt.Errorf("%s parts[%d] has unsupported body_kind %q", context, idx, part.BodyKind)
+		}
+		if part.Filename && part.BodyKind != "file" {
+			return fmt.Errorf("%s parts[%d] filename metadata requires body_kind file", context, idx)
 		}
 		if part.Schema != nil {
 			if err := validateSchemaRefExists(doc, *part.Schema, fmt.Sprintf("%s parts[%d] schema", context, idx)); err != nil {
@@ -437,6 +448,11 @@ func validateSchemaRefExists(doc Document, schemaRef SchemaRef, context string) 
 	if schemaRef.Items != nil {
 		if err := validateSchemaRefExists(doc, *schemaRef.Items, context+" items"); err != nil {
 			return err
+		}
+	}
+	for idx, value := range schemaRef.Enum {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%s enum[%d] is required", context, idx)
 		}
 	}
 	if schemaRef.AdditionalProperties != nil && schemaRef.AdditionalProperties.Schema != nil {

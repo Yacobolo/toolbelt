@@ -9,6 +9,8 @@
 - Generated non-JSON request and response types no longer use `JSONBody` or `JSONResponse` names.
 - Same-status response variants are represented as one IR response with multiple ordered contents.
 - Multi-content generated responses use media-specific concrete names such as `ApplicationJSONResponse` and `ApplicationOctetStreamResponse`.
+- Raw `bytes` bodies stay `[]byte`; TypeSpec `Http.File` bodies now generate `GenFile` with contents, content type, and optional filename metadata.
+- Multipart generated body fields now distinguish required, optional, repeated, named form-data, and ordered mixed tuple parts.
 - `GenericRequest` inference is removed; TypeSpec contracts must name the schema they want generated.
 
 ## TypeSpec-Native HTTP
@@ -23,6 +25,10 @@ APIGen now follows resolved `@typespec/http` semantics for:
 - `multipart/form-data`
 - optional request bodies
 - multiple response content variants
+- content negotiation with `@sharedRoute` and same-endpoint `@overload`
+- `HttpPart<T>[]` repeated multipart parts
+- `HttpPart<T[]>` single JSON-array multipart parts
+- `multipart/mixed` tuple parts
 - standard response helpers such as `Response<Status>`, `Body<T>`, `OkResponse`, `CreatedResponse`, and `NoContentResponse`
 - aliased response unions
 - namespace/interface route containers
@@ -78,7 +84,9 @@ Generated Go migration:
 - Keep JSON response constructors named `Gen<Operation><Status>JSONResponse`.
 - Use `Gen<Operation><Status>TextResponse`, `BinaryResponse`, or `FileResponse` for non-JSON responses.
 - For multi-content statuses, use media-specific response constructors such as `GenGetArtifact200ApplicationJSONResponse` or `GenGetArtifact200ApplicationOctetStreamResponse`.
-- Multipart request handlers receive `Gen<Operation>Body` aliased to a generated `Gen<Operation>MultipartBody` struct. Required parts are concrete fields; optional parts are pointers. JSON/form parts decode to generated schema types, text parts decode to `string`, and binary/file parts decode to `[]byte`.
+- Multipart request handlers receive `Gen<Operation>Body` aliased to a generated `Gen<Operation>MultipartBody` struct. Required parts are concrete fields; optional single parts are pointers; repeated parts are slices. JSON/form parts decode to generated schema types, text parts decode to `string`, raw bytes decode to `[]byte`, and `Http.File` parts decode to `GenFile`.
+- `GenFile` responses write the authored/default content type, honor runtime `GenFile.ContentType` when present, and emit `Content-Disposition` when `Filename` is set.
+- Generated CLI remains failure-closed for multipart request bodies unless an operation explicitly opts into a custom override.
 - Replace `GenericRequest` wrappers with the concrete TypeSpec model name.
 
 ## Preferred TypeSpec
@@ -122,7 +130,6 @@ model DeploymentArtifactUploadRequest {
 op uploadDeploymentArtifact(@body body: DeploymentArtifactUploadRequest): UploadDeploymentArtifactOK | BadRequest | Unauthorized;
 
 // After: standard TypeSpec HTTP transport.
-alias UploadDeploymentArtifactOK = OkJson<DeploymentArtifactResponse>;
 alias CommonErrors = BadRequest | Unauthorized;
 
 @route("/api/v1")
@@ -134,7 +141,7 @@ namespace Deployments {
     @path deployment: string,
     @header contentType: "application/octet-stream",
     @body body: bytes,
-  ): UploadDeploymentArtifactOK | CommonErrors;
+  ): OkJson<DeploymentArtifactResponse> | CommonErrors;
 }
 ```
 
