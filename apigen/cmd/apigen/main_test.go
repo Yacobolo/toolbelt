@@ -23,6 +23,7 @@ func TestRunCLI_TopLevelHelp(t *testing.T) {
 	require.Contains(t, stdout.String(), "Usage:")
 	require.Contains(t, stdout.String(), "apigen <command> [flags]")
 	require.Contains(t, stdout.String(), "cue-compile")
+	require.Contains(t, stdout.String(), "typespec-compile")
 	require.Contains(t, stdout.String(), `Use "apigen <command> -h" for command-specific flags.`)
 	require.Empty(t, stderr.String())
 }
@@ -103,6 +104,7 @@ func TestResolveCommandConfig_GroupedManifestTarget(t *testing.T) {
 	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
   - name: example
     cue_dir: api/cue
+    typespec_dir: api/typespec
     ir_out: api/gen/json-ir.json
     openapi_out: api/gen/openapi.yaml
     go_out:
@@ -114,6 +116,7 @@ func TestResolveCommandConfig_GroupedManifestTarget(t *testing.T) {
 	config, err := resolveCommandConfig("all", manifestPath, "example", commandConfig{})
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(dir, "api", "cue"), config.CueDir)
+	require.Equal(t, filepath.Join(dir, "api", "typespec"), config.TypeSpecDir)
 	require.Equal(t, filepath.Join(dir, "api", "gen", "json-ir.json"), config.IRPath)
 	require.Equal(t, filepath.Join(dir, "api", "gen", "openapi.yaml"), config.CanonicalOpenAPIPath)
 	require.Equal(t, filepath.Join(dir, "internal", "api", "gen", "server.apigen.gen.go"), config.ServerOut)
@@ -123,6 +126,55 @@ func TestResolveCommandConfig_GroupedManifestTarget(t *testing.T) {
 	require.Equal(t, filepath.Join(dir, "cmd", "cli", "gen", "apigen_registry.gen.go"), config.CLIOut)
 	require.Equal(t, "gen", config.CLIPackage)
 	require.True(t, config.GenerateCLI)
+}
+
+func TestResolveCommandConfig_TypeSpecCompileRequiresTypeSpecDir(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
+	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
+  - name: example
+    typespec_dir: api/typespec
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      dir: internal/api/gen
+`), 0o644))
+
+	config, err := resolveCommandConfig("typespec-compile", manifestPath, "example", commandConfig{})
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(dir, "api", "typespec"), config.TypeSpecDir)
+
+	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
+  - name: example
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      dir: internal/api/gen
+`), 0o644))
+	_, err = resolveCommandConfig("typespec-compile", manifestPath, "example", commandConfig{})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "typespec_dir")
+}
+
+func TestCompileTypeSpec_GeneratesIRAndOpenAPI(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	irPath := filepath.Join(dir, "json-ir.json")
+	openAPIPath := filepath.Join(dir, "openapi.yaml")
+	fixtureDir := filepath.Join("..", "..", "typespec", "test", "fixtures", "todo")
+
+	require.NoError(t, compileTypeSpec(fixtureDir, irPath, openAPIPath))
+
+	doc, err := loadDocument(irPath)
+	require.NoError(t, err)
+	require.Equal(t, "APIGen Todo Example", doc.Info.Title)
+	require.Len(t, doc.Endpoints, 5)
+	require.Equal(t, "CreateTodoRequest", doc.Endpoints[1].RequestBody.Schema.Ref)
+	require.Equal(t, []string{"todos", "create"}, doc.Endpoints[1].CLI.Command)
+	require.FileExists(t, openAPIPath)
 }
 
 func TestResolveCommandConfig_GroupedManifestOverrides(t *testing.T) {

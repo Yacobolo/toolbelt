@@ -6,7 +6,7 @@
   "info": {
     "title": "APIGen Todo Example",
     "version": "0.1.0",
-    "description": "Small in-memory todo API authored in CUE to showcase APIGen generation and strict server wiring."
+    "description": "Small in-memory todo API authored in TypeSpec to showcase APIGen generation and strict server wiring."
   },
   "openapi": {
     "version": "3.0.0",

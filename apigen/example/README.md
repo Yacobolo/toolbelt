@@ -1,10 +1,10 @@
 # example
 
-This is the canonical APIGen showcase: a small in-memory todo app with authored CUE input, checked-in generated artifacts, a handwritten strict server, and a generated CLI.
+This is the canonical APIGen showcase: a small in-memory todo app with authored TypeSpec input, checked-in generated artifacts, a handwritten strict server, and a generated CLI.
 
 ## Handwritten files
 
-- `api/cue/`: authored todo contract
+- `api/typespec/`: authored todo contract
 - `apigen.targets.yaml`: regeneration target manifest
 - `internal/api/server.go`: strict handler implementation and in-memory todo store
 - `internal/api/router.go`: router assembly and `/openapi.json` utility route
@@ -24,7 +24,7 @@ This is the canonical APIGen showcase: a small in-memory todo app with authored 
 From `apigen/`:
 
 ```bash
-go run ./cmd/apigen cue-compile -manifest ./example/apigen.targets.yaml -target example
+go run ./cmd/apigen typespec-compile -manifest ./example/apigen.targets.yaml -target example
 go run ./cmd/apigen all -manifest ./example/apigen.targets.yaml -target example
 ```
 
@@ -53,7 +53,7 @@ Optional:
 
 ## What this shows
 
-- CUE -> JSON IR -> OpenAPI -> generated Go artifacts
+- TypeSpec -> JSON IR -> OpenAPI -> generated Go artifacts
 - strict handler integration via `RegisterAPIGenStrictRoutes`
 - handwritten handlers in `internal/api` using generated request and response types from `internal/api/gen`
 - generated Cobra commands with path args, query params, JSON body input, detail output, collection output, and confirmation
