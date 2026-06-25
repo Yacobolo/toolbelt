@@ -41,8 +41,9 @@ targets:
 Regenerate artifacts with:
 
 ```bash
-go run ./cmd/apigen typespec-compile -manifest ./example/apigen.targets.yaml -target example
-go run ./cmd/apigen all -manifest ./example/apigen.targets.yaml -target example
+go install github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.3.0
+apigen typespec-compile -manifest ./apigen.targets.yaml -target example
+apigen all -manifest ./apigen.targets.yaml -target example
 ```
 
 ## TypeSpec Frontend
@@ -55,6 +56,7 @@ go run ./cmd/apigen all -manifest ./example/apigen.targets.yaml -target example
   - `@apigen.manual`
   - `@apigen.responseShape(...)`
 - TypeSpec-native HTTP/OpenAPI decorators now describe API shape, including routes, verbs, parameters, request bodies, responses, docs, tags, servers, and auth.
+- Project TypeSpec sources can use conventional package imports for `@typespec/http`, `@typespec/openapi`, and `@yacobolo/apigen`; `typespec-compile` resolves those packages from the managed cache.
 - Named TypeSpec enums and inherited model properties are emitted into JSON IR.
 - Unsupported constructs fail closed with TypeSpec/APIGen diagnostics instead of best-effort output.
 

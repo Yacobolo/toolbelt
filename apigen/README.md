@@ -15,7 +15,13 @@ Canonical OpenAPI is the published API artifact. JSON IR is the compatibility bo
 
 ## CLI
 
-Run from this module:
+Install the CLI:
+
+```bash
+go install github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.3.0
+```
+
+Or run from this module during local development:
 
 ```bash
 go run ./cmd/apigen --help
@@ -91,7 +97,7 @@ Recommended TypeSpec flow:
 
 The runnable reference showcase lives in `example/`. It is a small todo app with checked-in `json-ir`, OpenAPI, server transport, request-model aliases, CLI registry metadata, handwritten strict handlers, and a generated Cobra CLI.
 
-The in-repo TypeSpec emitter lives in `typespec/` with a checked-in `package-lock.json`. Use `npm ci` there for reproducible local TypeSpec development; `typespec-compile` also bootstraps that pinned toolchain when needed.
+The in-repo TypeSpec emitter lives in `typespec/` with a checked-in `package-lock.json`. Use `npm ci` there for reproducible local TypeSpec development; `typespec-compile` also bootstraps that pinned toolchain when needed. Project TypeSpec sources may use conventional package imports such as `import "@typespec/http";`, `import "@typespec/openapi";`, and `import "@yacobolo/apigen";`; the CLI resolves those imports from its managed cache.
 
 ## Operation Vendor Extensions
 
@@ -131,7 +137,7 @@ APIGen-owned extension keys are reserved. Use APIGen decorators for `x-authz` an
 Install as a dependency with:
 
 ```bash
-go get github.com/Yacobolo/toolbelt/apigen
+go get github.com/Yacobolo/toolbelt/apigen@v0.3.0
 ```
 
 ## Contract Notes
