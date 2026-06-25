@@ -459,13 +459,6 @@ func compileTypeSpec(typeSpecDir string, irOutPath string, openAPIOutPath string
 		return fmt.Errorf("resolve openapi output path: %w", err)
 	}
 
-	if err := removeFileIfExists(absIROutPath); err != nil {
-		return err
-	}
-	if err := removeFileIfExists(absOpenAPIOutPath); err != nil {
-		return err
-	}
-
 	pkg, err := resolveTypeSpecPackage()
 	if err != nil {
 		return err
@@ -473,6 +466,17 @@ func compileTypeSpec(typeSpecDir string, irOutPath string, openAPIOutPath string
 	if err := ensureTypeSpecToolchain(pkg); err != nil {
 		return err
 	}
+
+	tempIRPath, err := tempOutputPath(absIROutPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tempIRPath) }()
+	tempOpenAPIPath, err := tempOutputPath(absOpenAPIOutPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tempOpenAPIPath) }()
 
 	tsp := filepath.Join(pkg.Dir, "node_modules", "@typespec", "compiler", "cmd", "tsp.js")
 	cmd := exec.Command(
@@ -485,7 +489,7 @@ func compileTypeSpec(typeSpecDir string, irOutPath string, openAPIOutPath string
 		"--emit",
 		pkg.Dir,
 		"--option",
-		"@yacobolo/apigen.output-file="+absIROutPath,
+		"@yacobolo/apigen.output-file="+tempIRPath,
 		"--option",
 		"@yacobolo/apigen.base-path=/",
 	)
@@ -495,14 +499,20 @@ func compileTypeSpec(typeSpecDir string, irOutPath string, openAPIOutPath string
 		return fmt.Errorf("run tsp compile: %w\n%s", err, strings.TrimSpace(string(output)))
 	}
 
-	doc, err := loadDocument(absIROutPath)
+	doc, err := loadDocument(tempIRPath)
 	if err != nil {
 		return err
 	}
-	if err := writeJSONDocument(absIROutPath, doc); err != nil {
+	if err := writeJSONDocument(tempIRPath, doc); err != nil {
 		return err
 	}
-	if err := generateOpenAPI(doc, absOpenAPIOutPath); err != nil {
+	if err := generateOpenAPI(doc, tempOpenAPIPath); err != nil {
+		return err
+	}
+	if err := replaceFile(tempIRPath, absIROutPath); err != nil {
+		return err
+	}
+	if err := replaceFile(tempOpenAPIPath, absOpenAPIOutPath); err != nil {
 		return err
 	}
 	return nil
@@ -614,19 +624,38 @@ func ensureTypeSpecToolchain(pkg typeSpecPackage) error {
 	return nil
 }
 
-func removeFileIfExists(path string) error {
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove stale output %s: %w", path, err)
-	}
-	return nil
-}
-
 func runTypeSpecPackageCommand(dir string, name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s %s: %w\n%s", name, strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func tempOutputPath(finalPath string) (string, error) {
+	if err := os.MkdirAll(filepath.Dir(finalPath), 0o750); err != nil {
+		return "", fmt.Errorf("create output directory: %w", err)
+	}
+	file, err := os.CreateTemp(filepath.Dir(finalPath), "."+filepath.Base(finalPath)+".*.tmp")
+	if err != nil {
+		return "", fmt.Errorf("create temp output for %s: %w", finalPath, err)
+	}
+	path := file.Name()
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("close temp output for %s: %w", finalPath, err)
+	}
+	if err := os.Remove(path); err != nil {
+		return "", fmt.Errorf("prepare temp output for %s: %w", finalPath, err)
+	}
+	return path, nil
+}
+
+func replaceFile(tempPath string, finalPath string) error {
+	if err := os.Rename(tempPath, finalPath); err != nil {
+		return fmt.Errorf("replace output %s: %w", finalPath, err)
 	}
 	return nil
 }

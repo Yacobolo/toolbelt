@@ -217,6 +217,99 @@ func TestLoad_RejectsNonVendorEndpointExtensions(t *testing.T) {
 	require.ErrorContains(t, err, `extension "agent" must start with "x-"`)
 }
 
+func TestLoad_RejectsUnknownAPIGenEndpointExtensions(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ir.json")
+
+	require.NoError(t, os.WriteFile(path, []byte(`{
+  "schema_version": "v1",
+  "api": {"base_path": "/v1"},
+  "info": {"title": "Duck", "version": "0.1.0"},
+  "endpoints": [{
+    "method": "get",
+    "path": "/widgets",
+    "operation_id": "listWidgets",
+    "extensions": {"x-apigen-tool": true},
+    "responses": [{"status_code": 200, "description": "ok"}]
+  }]
+}`), 0o644))
+
+	_, err := Load(path)
+	require.Error(t, err)
+	require.ErrorContains(t, err, `unsupported APIGen-owned extension "x-apigen-tool"`)
+}
+
+func TestLoad_RejectsMalformedAPIGenEndpointExtensions(t *testing.T) {
+	t.Helper()
+
+	tests := []struct {
+		name      string
+		extension map[string]any
+		wantErr   string
+	}{
+		{
+			name:      "manual must be boolean",
+			extension: map[string]any{"x-apigen-manual": "true"},
+			wantErr:   `x-apigen-manual must be boolean`,
+		},
+		{
+			name:      "authz must be object",
+			extension: map[string]any{"x-authz": "none"},
+			wantErr:   `x-authz must be an object`,
+		},
+		{
+			name:      "authz mode must be string",
+			extension: map[string]any{"x-authz": map[string]any{"mode": true}},
+			wantErr:   `x-authz.mode must be string`,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Helper()
+			err := Validate(Document{
+				SchemaVersion: "v1",
+				API:           API{BasePath: "/v1"},
+				Info:          Info{Title: "Duck", Version: "0.1.0"},
+				Endpoints: []Endpoint{{
+					Method:      "get",
+					Path:        "/widgets",
+					OperationID: "listWidgets",
+					Extensions:  tc.extension,
+					Responses:   []Response{{StatusCode: 200, Description: "ok"}},
+				}},
+			})
+			require.Error(t, err)
+			require.ErrorContains(t, err, tc.wantErr)
+		})
+	}
+}
+
+func TestLoad_RejectsUnknownAPIGenResponseExtensions(t *testing.T) {
+	t.Helper()
+
+	err := Validate(Document{
+		SchemaVersion: "v1",
+		API:           API{BasePath: "/v1"},
+		Info:          Info{Title: "Duck", Version: "0.1.0"},
+		Endpoints: []Endpoint{{
+			Method:      "get",
+			Path:        "/widgets",
+			OperationID: "listWidgets",
+			Responses: []Response{{
+				StatusCode:  200,
+				Description: "ok",
+				Extensions:  map[string]any{"x-apigen-other": true},
+			}},
+		}},
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, `unsupported APIGen-owned extension "x-apigen-other"`)
+}
+
 func TestValidate_RejectsNonJSONCompatibleEndpointExtensionValues(t *testing.T) {
 	t.Helper()
 

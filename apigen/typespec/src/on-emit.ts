@@ -84,6 +84,37 @@ interface Endpoint {
   extensions?: Record<string, unknown>;
 }
 
+interface DecoratorNodeLike {
+  target?: MemberExpressionNodeLike | IdentifierNodeLike;
+  arguments?: readonly ExtensionLiteralNodeLike[];
+}
+
+interface IdentifierNodeLike {
+  sv?: unknown;
+}
+
+interface MemberExpressionNodeLike {
+  id?: IdentifierNodeLike;
+}
+
+interface ExtensionLiteralNodeLike {
+  value?: unknown;
+  target?: IdentifierNodeLike;
+  arguments?: readonly ExtensionLiteralNodeLike[];
+  id?: IdentifierNodeLike;
+  properties?: readonly ExtensionObjectPropertyNodeLike[];
+  values?: readonly ExtensionLiteralNodeLike[];
+}
+
+interface ExtensionObjectPropertyNodeLike {
+  id?: IdentifierNodeLike & { value?: unknown };
+  value?: ExtensionLiteralNodeLike;
+}
+
+type LiteralConversionResult =
+  | { ok: true; value: unknown }
+  | { ok: false };
+
 interface Parameter {
   name: string;
   in: string;
@@ -430,7 +461,7 @@ function endpoint(
     extensions["x-apigen-manual"] = true;
   }
 
-  return prune({
+  const output = prune({
     method: operation.verb,
     path: operation.path,
     operation_id: getOperationId(program, operation.operation) ?? resolveOperationId(program, operation.operation),
@@ -442,8 +473,11 @@ function endpoint(
     responses: operation.responses.map((response) => endpointResponse(program, builder, response)),
     cli: cliMetadata(program, operation),
     security: operationSecurity(builder, operation, operationAuth, defaultSecurity),
-    extensions: Object.keys(extensions).length > 0 ? extensions : undefined,
   }) as Endpoint;
+  if (Object.keys(extensions).length > 0) {
+    output.extensions = extensions;
+  }
+  return output;
 }
 
 function operationVendorExtensions(
@@ -451,8 +485,12 @@ function operationVendorExtensions(
   builder: IRBuilder,
   operation: Operation,
 ): [string, unknown][] {
-  const entries = [...getExtensions(program, operation).entries()];
-  entries.sort(([left], [right]) => left.localeCompare(right));
+  const extensions = new Map<string, unknown>(getExtensions(program, operation).entries());
+  for (const [key, value] of operationExtensionDecoratorLiterals(operation)) {
+    extensions.set(key, value);
+  }
+
+  const entries = [...extensions.entries()].sort(([left], [right]) => left.localeCompare(right));
   const output: [string, unknown][] = [];
   for (const [key, value] of entries) {
     if (!key.startsWith("x-")) {
@@ -470,6 +508,90 @@ function operationVendorExtensions(
     output.push([key, value]);
   }
   return output;
+}
+
+function operationExtensionDecoratorLiterals(operation: Operation): [string, unknown][] {
+  const decorators = ((operation.node as unknown) as { decorators?: readonly DecoratorNodeLike[] }).decorators ?? [];
+  const output: [string, unknown][] = [];
+  for (const decorator of decorators) {
+    if (decoratorName(decorator.target) !== "extension") {
+      continue;
+    }
+    const args = decorator.arguments ?? [];
+    const key = args[0]?.value;
+    if (typeof key !== "string" || args[1] === undefined) {
+      continue;
+    }
+    const value = extensionLiteralValue(args[1]);
+    if (value.ok) {
+      output.push([key, value.value]);
+    }
+  }
+  return output;
+}
+
+function decoratorName(target: DecoratorNodeLike["target"]): string | undefined {
+  if (target !== undefined && "sv" in target && typeof target.sv === "string") {
+    return target.sv;
+  }
+  if (target !== undefined && "id" in target && typeof target.id?.sv === "string") {
+    return target.id.sv;
+  }
+  return undefined;
+}
+
+function extensionLiteralValue(node: ExtensionLiteralNodeLike): LiteralConversionResult {
+  if (Array.isArray(node.values)) {
+    const values: unknown[] = [];
+    for (const item of node.values) {
+      const value = extensionLiteralValue(item);
+      if (!value.ok) {
+        return value;
+      }
+      values.push(value.value);
+    }
+    return { ok: true, value: values };
+  }
+
+  if (Array.isArray(node.properties)) {
+    const output: Record<string, unknown> = {};
+    for (const property of node.properties) {
+      const key = extensionObjectPropertyName(property);
+      if (key === undefined || property.value === undefined) {
+        return { ok: false };
+      }
+      const value = extensionLiteralValue(property.value);
+      if (!value.ok) {
+        return value;
+      }
+      output[key] = value.value;
+    }
+    return { ok: true, value: output };
+  }
+
+  switch (typeof node.value) {
+    case "string":
+    case "boolean":
+      return { ok: true, value: node.value };
+    case "number":
+      return Number.isFinite(node.value) ? { ok: true, value: node.value } : { ok: false };
+  }
+
+  if (node.target?.sv === "null" && node.arguments?.length === 0) {
+    return { ok: true, value: null };
+  }
+
+  return { ok: false };
+}
+
+function extensionObjectPropertyName(property: ExtensionObjectPropertyNodeLike): string | undefined {
+  if (typeof property.id?.sv === "string") {
+    return property.id.sv;
+  }
+  if (typeof property.id?.value === "string") {
+    return property.id.value;
+  }
+  return undefined;
 }
 
 function isReservedExtensionKey(key: string): boolean {
@@ -776,6 +898,10 @@ function prune<T>(value: T): T {
         continue;
       }
       if (Array.isArray(child) && child.length === 0) {
+        continue;
+      }
+      if (key === "extensions") {
+        output[key] = child;
         continue;
       }
       output[key] = prune(child);

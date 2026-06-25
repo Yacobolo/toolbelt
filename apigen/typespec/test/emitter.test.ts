@@ -186,12 +186,16 @@ describe("APIGen TypeSpec emitter", () => {
 
       @extension("x-agent", #{
         enabled: true,
+        disabled: false,
         name: "list_workspace_assets",
         risk: "read",
+        retries: 0,
         score: 1.5,
+        scopes: #[],
         tags: #["workspace", "lineage"],
-        nested: #{ nullable: null, count: 3 },
+        nested: #{ nullable: null, count: 3, empty: #{} },
       })
+      @extension("x-flags", #[])
       @route("/workspaces")
       @get
       op listWorkspaces(): Workspace[];
@@ -200,12 +204,16 @@ describe("APIGen TypeSpec emitter", () => {
     expect(doc.endpoints[0].extensions).toEqual({
       "x-agent": {
         enabled: true,
+        disabled: false,
         name: "list_workspace_assets",
         risk: "read",
+        retries: 0,
         score: 1.5,
+        scopes: [],
         tags: ["workspace", "lineage"],
-        nested: { nullable: null, count: 3 },
+        nested: { nullable: null, count: 3, empty: {} },
       },
+      "x-flags": [],
     });
   });
 

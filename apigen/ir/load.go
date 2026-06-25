@@ -76,7 +76,7 @@ func Validate(doc Document) error {
 		if strings.TrimSpace(endpoint.OperationID) == "" {
 			return fmt.Errorf("endpoint operation_id is required")
 		}
-		if err := validateExtensions(endpoint.Extensions, fmt.Sprintf("endpoint %q", endpoint.OperationID)); err != nil {
+		if err := validateEndpointExtensions(endpoint.Extensions, fmt.Sprintf("endpoint %q", endpoint.OperationID)); err != nil {
 			return err
 		}
 		for _, parameter := range endpoint.Parameters {
@@ -96,7 +96,7 @@ func Validate(doc Document) error {
 			endpoint.RequestBody.ContentType = "application/json"
 		}
 		for _, response := range endpoint.Responses {
-			if err := validateExtensions(response.Extensions, fmt.Sprintf("endpoint %q response %d", endpoint.OperationID, response.StatusCode)); err != nil {
+			if err := validateResponseExtensions(response.Extensions, fmt.Sprintf("endpoint %q response %d", endpoint.OperationID, response.StatusCode)); err != nil {
 				return err
 			}
 			if response.StatusCode <= 0 {
@@ -193,14 +193,61 @@ func Validate(doc Document) error {
 	return nil
 }
 
-func validateExtensions(extensions map[string]any, context string) error {
+func validateEndpointExtensions(extensions map[string]any, context string) error {
 	for key, value := range extensions {
 		if !strings.HasPrefix(key, "x-") {
 			return fmt.Errorf("%s extension %q must start with \"x-\"", context, key)
 		}
+		switch key {
+		case "x-authz":
+			if err := validateAuthzExtension(value); err != nil {
+				return fmt.Errorf("%s extension %q: %w", context, key, err)
+			}
+		case "x-apigen-manual":
+			if _, ok := value.(bool); !ok {
+				return fmt.Errorf("%s extension %q: x-apigen-manual must be boolean", context, key)
+			}
+		default:
+			if strings.HasPrefix(key, "x-apigen-") {
+				return fmt.Errorf("%s unsupported APIGen-owned extension %q", context, key)
+			}
+		}
 		if err := validateJSONCompatibleExtensionValue(value); err != nil {
 			return fmt.Errorf("%s extension %q: %w", context, key, err)
 		}
+	}
+	return nil
+}
+
+func validateResponseExtensions(extensions map[string]any, context string) error {
+	for key, value := range extensions {
+		if !strings.HasPrefix(key, "x-") {
+			return fmt.Errorf("%s extension %q must start with \"x-\"", context, key)
+		}
+		if key != ResponseShapeExtensionKey {
+			if strings.HasPrefix(key, "x-apigen-") {
+				return fmt.Errorf("%s unsupported APIGen-owned extension %q", context, key)
+			}
+			return fmt.Errorf("%s unsupported response extension %q", context, key)
+		}
+		if err := validateJSONCompatibleExtensionValue(value); err != nil {
+			return fmt.Errorf("%s extension %q: %w", context, key, err)
+		}
+	}
+	return nil
+}
+
+func validateAuthzExtension(value any) error {
+	extension, ok := value.(map[string]any)
+	if !ok {
+		return fmt.Errorf("x-authz must be an object")
+	}
+	mode, ok := extension["mode"]
+	if !ok {
+		return fmt.Errorf("x-authz.mode is required")
+	}
+	if _, ok := mode.(string); !ok {
+		return fmt.Errorf("x-authz.mode must be string")
 	}
 	return nil
 }

@@ -1,6 +1,7 @@
 package servergo
 
 import (
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +16,15 @@ func TestEmit(t *testing.T) {
 
 	doc := ir.Document{
 		SchemaVersion: "v1",
+		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
+		Schemas: map[string]ir.Schema{
+			"QueryResult":         {Type: "object"},
+			"SubmitQueryResponse": {Type: "object"},
+			"CancelQueryResponse": {Type: "object"},
+			"PaginatedGroups":     {Type: "object"},
+			"Error":               {Type: "object"},
+		},
 		Endpoints: []ir.Endpoint{
 			{Method: "get", Path: "/healthz", OperationID: "getHealth", Responses: []ir.Response{{StatusCode: 200, Description: "ok"}}},
 		},
@@ -54,6 +63,7 @@ func TestEmit_UsesIRPathAsIs(t *testing.T) {
 
 	doc := ir.Document{
 		SchemaVersion: "v1",
+		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
 			{Method: "post", Path: "/query", OperationID: "executeQuery", Responses: []ir.Response{{StatusCode: 200, Description: "ok"}}},
@@ -90,6 +100,7 @@ func TestValidateOperationIDs(t *testing.T) {
 
 	doc := ir.Document{
 		SchemaVersion: "v1",
+		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
 			{Method: "get", Path: "/a", OperationID: "create-user", Responses: []ir.Response{{StatusCode: 200, Description: "ok"}}},
@@ -106,6 +117,7 @@ func TestEmit_DispatchParityAndHealthHandling(t *testing.T) {
 
 	doc := ir.Document{
 		SchemaVersion: "v1",
+		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
 			{Method: "get", Path: "/healthz", OperationID: "getHealth", Responses: []ir.Response{{StatusCode: 200, Description: "ok"}}},
@@ -142,6 +154,7 @@ func TestEmit_OperationContractsIncludeManualAndBodyMetadata(t *testing.T) {
 
 	doc := ir.Document{
 		SchemaVersion: "v1",
+		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
 			{
@@ -181,6 +194,7 @@ func TestEmit_OperationContractsIncludeExtensionDefensiveCopies(t *testing.T) {
 
 	doc := ir.Document{
 		SchemaVersion: "v1",
+		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
 			{
@@ -195,6 +209,7 @@ func TestEmit_OperationContractsIncludeExtensionDefensiveCopies(t *testing.T) {
 						"name":    "list_workspace_assets",
 						"risk":    "read",
 						"score":   1.5,
+						"limit":   uint64(math.MaxUint64),
 						"tags":    []any{"workspace", "lineage"},
 						"nested":  map[string]any{"nullable": nil, "count": 3},
 					},
@@ -249,6 +264,9 @@ func TestExtensionDefensiveCopies(t *testing.T) {
 	if firstAgent["nested"].(map[string]any)["count"] != 3 {
 		t.Fatalf("nested mutated: %#v", firstAgent["nested"])
 	}
+	if firstAgent["limit"].(uint64) != ^uint64(0) {
+		t.Fatalf("limit changed type or value: %#v", firstAgent["limit"])
+	}
 
 	firstAgent["enabled"] = false
 	second, _ := GetAPIGenOperationContract("listWidgets")
@@ -264,11 +282,55 @@ func TestExtensionDefensiveCopies(t *testing.T) {
 	require.NoError(t, err, string(output))
 }
 
+func TestEmit_RejectsInvalidExtensionValues(t *testing.T) {
+	t.Helper()
+
+	doc := ir.Document{
+		SchemaVersion: "v1",
+		API:           ir.API{BasePath: "/"},
+		Info:          ir.Info{Title: "t", Version: "1"},
+		Endpoints: []ir.Endpoint{
+			{
+				Method:      "get",
+				Path:        "/widgets",
+				OperationID: "listWidgets",
+				Responses:   []ir.Response{{StatusCode: 200, Description: "ok"}},
+				Extensions:  map[string]any{"x-agent": map[string]any{"score": math.Inf(1)}},
+			},
+		},
+	}
+
+	_, err := Emit(doc, Options{})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "extension")
+	require.ErrorContains(t, err, "number must be finite")
+}
+
+func TestEmit_DoesNotMutateInputDocument(t *testing.T) {
+	t.Helper()
+
+	doc := ir.Document{
+		SchemaVersion: "v1",
+		API:           ir.API{BasePath: "/"},
+		Info:          ir.Info{Title: "t", Version: "1"},
+		Endpoints: []ir.Endpoint{
+			{Method: "get", Path: "/z", OperationID: "listZ", Responses: []ir.Response{{StatusCode: 200, Description: "ok"}}},
+			{Method: "get", Path: "/a", OperationID: "listA", Responses: []ir.Response{{StatusCode: 200, Description: "ok"}}},
+		},
+	}
+
+	_, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	require.Equal(t, "/z", doc.Endpoints[0].Path)
+	require.Equal(t, "/a", doc.Endpoints[1].Path)
+}
+
 func TestEmit_GeneratesPathAndQueryBinding(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
 		SchemaVersion: "v1",
+		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
 			{
@@ -325,6 +387,7 @@ func TestEmit_GeneratesStrictJSONBodyDecoding(t *testing.T) {
 
 	doc := ir.Document{
 		SchemaVersion: "v1",
+		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
 			"CreatePipelineRequest": {Type: "object"},
@@ -361,6 +424,7 @@ func TestEmit_UsesNamedRequestBodySchemas(t *testing.T) {
 
 	doc := ir.Document{
 		SchemaVersion: "v1",
+		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
 			"CreateAPIKeyRequest":   {Type: "object"},
@@ -406,6 +470,7 @@ func TestEmit_FailsForUnnamedRequestBodySchema(t *testing.T) {
 
 	doc := ir.Document{
 		SchemaVersion: "v1",
+		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
 			"GenericRequest": {Type: "object"},
@@ -423,7 +488,7 @@ func TestEmit_FailsForUnnamedRequestBodySchema(t *testing.T) {
 
 	_, err := Emit(doc, Options{})
 	require.Error(t, err)
-	require.ErrorContains(t, err, "request body generation")
+	require.ErrorContains(t, err, "generic request body schema could not be resolved")
 	require.ErrorContains(t, err, "createWidget")
 }
 
@@ -432,7 +497,15 @@ func TestEmit_ImportsTimeForDateTimeParameters(t *testing.T) {
 
 	doc := ir.Document{
 		SchemaVersion: "v1",
+		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
+		Schemas: map[string]ir.Schema{
+			"QueryResult":         {Type: "object"},
+			"SubmitQueryResponse": {Type: "object"},
+			"CancelQueryResponse": {Type: "object"},
+			"PaginatedGroups":     {Type: "object"},
+			"Error":               {Type: "object"},
+		},
 		Endpoints: []ir.Endpoint{
 			{
 				Method:      "get",
@@ -460,7 +533,15 @@ func TestEmit_EmitsCanonicalResponseTypesOnly(t *testing.T) {
 
 	doc := ir.Document{
 		SchemaVersion: "v1",
+		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
+		Schemas: map[string]ir.Schema{
+			"QueryResult":         {Type: "object"},
+			"SubmitQueryResponse": {Type: "object"},
+			"CancelQueryResponse": {Type: "object"},
+			"PaginatedGroups":     {Type: "object"},
+			"Error":               {Type: "object"},
+		},
 		Endpoints: []ir.Endpoint{
 			{
 				Method:      "post",
@@ -520,6 +601,7 @@ func TestEmit_UsesIRResponseHeadersForVisitMethods(t *testing.T) {
 
 	doc := ir.Document{
 		SchemaVersion: "v1",
+		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{{
 			Method:      "get",

@@ -4,6 +4,7 @@ package servergo
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,7 +22,81 @@ type Options struct {
 
 // Emit renders Go server scaffolding from IR.
 func Emit(doc ir.Document, opts Options) ([]byte, error) {
-	return emit(doc, opts)
+	if err := ir.Validate(doc); err != nil {
+		return nil, fmt.Errorf("validate ir document: %w", err)
+	}
+	normalized := cloneDocumentForEmit(doc)
+	if err := ir.Normalize(&normalized); err != nil {
+		return nil, fmt.Errorf("normalize ir document: %w", err)
+	}
+	return emit(normalized, opts)
+}
+
+func cloneDocumentForEmit(doc ir.Document) ir.Document {
+	clone := doc
+	clone.Endpoints = append([]ir.Endpoint(nil), doc.Endpoints...)
+	for i := range clone.Endpoints {
+		endpoint := &clone.Endpoints[i]
+		endpoint.Tags = append([]string(nil), endpoint.Tags...)
+		endpoint.Parameters = append([]ir.Parameter(nil), endpoint.Parameters...)
+		for j := range endpoint.Parameters {
+			if endpoint.Parameters[j].Explode != nil {
+				explode := *endpoint.Parameters[j].Explode
+				endpoint.Parameters[j].Explode = &explode
+			}
+		}
+		if endpoint.RequestBody != nil {
+			requestBody := *endpoint.RequestBody
+			endpoint.RequestBody = &requestBody
+		}
+		if endpoint.CLI != nil {
+			endpoint.CLI = cloneCLI(endpoint.CLI)
+		}
+		endpoint.Security = cloneSecurityRequirements(endpoint.Security)
+		endpoint.Responses = append([]ir.Response(nil), endpoint.Responses...)
+		for j := range endpoint.Responses {
+			response := &endpoint.Responses[j]
+			response.Headers = append([]ir.Header(nil), response.Headers...)
+			if response.Schema != nil {
+				schema := *response.Schema
+				response.Schema = &schema
+			}
+			response.AnyOf = append([]ir.SchemaRef(nil), response.AnyOf...)
+		}
+	}
+	return clone
+}
+
+func cloneCLI(cli *ir.CLI) *ir.CLI {
+	clone := *cli
+	clone.Command = append([]string(nil), cli.Command...)
+	clone.Args = append([]ir.CLIArg(nil), cli.Args...)
+	if cli.Output != nil {
+		output := *cli.Output
+		output.TableColumns = append([]string(nil), cli.Output.TableColumns...)
+		output.QuietFields = append([]string(nil), cli.Output.QuietFields...)
+		clone.Output = &output
+	}
+	if cli.Pagination != nil {
+		pagination := *cli.Pagination
+		clone.Pagination = &pagination
+	}
+	return &clone
+}
+
+func cloneSecurityRequirements(requirements []ir.SecurityRequirement) []ir.SecurityRequirement {
+	clone := append([]ir.SecurityRequirement(nil), requirements...)
+	for i := range clone {
+		if clone[i] == nil {
+			continue
+		}
+		requirement := make(ir.SecurityRequirement, len(clone[i]))
+		for name, scopes := range clone[i] {
+			requirement[name] = append([]string(nil), scopes...)
+		}
+		clone[i] = requirement
+	}
+	return clone
 }
 
 func emit(doc ir.Document, opts Options) ([]byte, error) {
@@ -92,6 +167,10 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("}\n\n")
 	b.WriteString("var genOperationContracts = map[string]GenOperationContract{\n")
 	for _, endpoint := range doc.Endpoints {
+		extensions, err := renderGoAnyMap(endpoint.Extensions)
+		if err != nil {
+			return nil, fmt.Errorf("render operation %q extensions: %w", endpoint.OperationID, err)
+		}
 		fmt.Fprintf(&b, "\t%q: {OperationID: %q, Method: %q, Path: %q, Tags: %s, DocumentedStatusCodes: %s, RequestBodyRequired: %t, AuthzMode: %q, Protected: %t, Manual: %t, Extensions: %s},\n",
 			endpoint.OperationID,
 			endpoint.OperationID,
@@ -103,7 +182,7 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 			endpointAuthzMode(endpoint),
 			endpointProtected(endpoint),
 			endpointManual(endpoint),
-			renderGoAnyMap(endpoint.Extensions),
+			extensions,
 		)
 	}
 	b.WriteString("}\n\n")
@@ -640,9 +719,9 @@ func renderGoIntSlice(values []int) string {
 	return b.String()
 }
 
-func renderGoAnyMap(values map[string]any) string {
+func renderGoAnyMap(values map[string]any) (string, error) {
 	if len(values) == 0 {
-		return "nil"
+		return "nil", nil
 	}
 	keys := make([]string, 0, len(values))
 	for key := range values {
@@ -655,47 +734,57 @@ func renderGoAnyMap(values map[string]any) string {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		fmt.Fprintf(&b, "%q: %s", key, renderGoAny(values[key]))
+		value, err := renderGoAny(values[key])
+		if err != nil {
+			return "", fmt.Errorf("%s: %w", key, err)
+		}
+		fmt.Fprintf(&b, "%q: %s", key, value)
 	}
 	b.WriteString("}")
-	return b.String()
+	return b.String(), nil
 }
 
-func renderGoAny(value any) string {
+func renderGoAny(value any) (string, error) {
 	switch typed := value.(type) {
 	case nil:
-		return "nil"
+		return "nil", nil
 	case string:
-		return strconv.Quote(typed)
+		return strconv.Quote(typed), nil
 	case bool:
 		if typed {
-			return "true"
+			return "true", nil
 		}
-		return "false"
+		return "false", nil
 	case int:
-		return strconv.Itoa(typed)
+		return strconv.Itoa(typed), nil
 	case int8:
-		return strconv.FormatInt(int64(typed), 10)
+		return strconv.FormatInt(int64(typed), 10), nil
 	case int16:
-		return strconv.FormatInt(int64(typed), 10)
+		return strconv.FormatInt(int64(typed), 10), nil
 	case int32:
-		return strconv.FormatInt(int64(typed), 10)
+		return strconv.FormatInt(int64(typed), 10), nil
 	case int64:
-		return strconv.FormatInt(typed, 10)
+		return "int64(" + strconv.FormatInt(typed, 10) + ")", nil
 	case uint:
-		return strconv.FormatUint(uint64(typed), 10)
+		return "uint(" + strconv.FormatUint(uint64(typed), 10) + ")", nil
 	case uint8:
-		return strconv.FormatUint(uint64(typed), 10)
+		return strconv.FormatUint(uint64(typed), 10), nil
 	case uint16:
-		return strconv.FormatUint(uint64(typed), 10)
+		return strconv.FormatUint(uint64(typed), 10), nil
 	case uint32:
-		return strconv.FormatUint(uint64(typed), 10)
+		return "uint32(" + strconv.FormatUint(uint64(typed), 10) + ")", nil
 	case uint64:
-		return strconv.FormatUint(typed, 10)
+		return "uint64(" + strconv.FormatUint(typed, 10) + ")", nil
 	case float32:
-		return strconv.FormatFloat(float64(typed), 'g', -1, 32)
+		if math.IsInf(float64(typed), 0) || math.IsNaN(float64(typed)) {
+			return "", fmt.Errorf("number must be finite")
+		}
+		return "float32(" + strconv.FormatFloat(float64(typed), 'g', -1, 32) + ")", nil
 	case float64:
-		return strconv.FormatFloat(typed, 'g', -1, 64)
+		if math.IsInf(typed, 0) || math.IsNaN(typed) {
+			return "", fmt.Errorf("number must be finite")
+		}
+		return "float64(" + strconv.FormatFloat(typed, 'g', -1, 64) + ")", nil
 	case []any:
 		return renderGoAnySlice(typed)
 	case []string:
@@ -707,21 +796,25 @@ func renderGoAny(value any) string {
 	case map[string]any:
 		return renderGoAnyMap(typed)
 	default:
-		return strconv.Quote(fmt.Sprint(typed))
+		return "", fmt.Errorf("unsupported JSON value type %T", value)
 	}
 }
 
-func renderGoAnySlice(values []any) string {
+func renderGoAnySlice(values []any) (string, error) {
 	var b strings.Builder
 	b.WriteString("[]any{")
 	for i, value := range values {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(renderGoAny(value))
+		rendered, err := renderGoAny(value)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(rendered)
 	}
 	b.WriteString("}")
-	return b.String()
+	return b.String(), nil
 }
 
 func documentedStatusCodes(endpoint ir.Endpoint) []int {

@@ -175,7 +175,7 @@ func TestCompileTypeSpec_GeneratesIRAndOpenAPI(t *testing.T) {
 	t.Helper()
 
 	dir := t.TempDir()
-	t.Setenv(typeSpecPackageDirEnv, mustAbs(t, filepath.Join("..", "..", "typespec")))
+	setupManagedTypeSpecCache(t)
 	irPath := filepath.Join(dir, "json-ir.json")
 	openAPIPath := filepath.Join(dir, "openapi.yaml")
 	fixtureDir := filepath.Join("..", "..", "typespec", "test", "fixtures", "todo")
@@ -189,6 +189,23 @@ func TestCompileTypeSpec_GeneratesIRAndOpenAPI(t *testing.T) {
 	require.Equal(t, "CreateTodoRequest", doc.Endpoints[1].RequestBody.Schema.Ref)
 	require.Equal(t, []string{"todos", "create"}, doc.Endpoints[1].CLI.Command)
 	require.FileExists(t, openAPIPath)
+}
+
+func TestCompileTypeSpec_PreservesOutputsWhenToolchainUnavailable(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	t.Setenv(typeSpecPackageDirEnv, filepath.Join(dir, "missing-typespec-package"))
+	irPath := filepath.Join(dir, "json-ir.json")
+	openAPIPath := filepath.Join(dir, "openapi.yaml")
+	require.NoError(t, os.WriteFile(irPath, []byte(`{"existing":true}`), 0o644))
+	require.NoError(t, os.WriteFile(openAPIPath, []byte("existing: true\n"), 0o644))
+
+	err := compileTypeSpec(filepath.Join("..", "..", "typespec", "test", "fixtures", "todo"), irPath, openAPIPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "typespec compiler not found")
+	require.Equal(t, `{"existing":true}`, strings.TrimSpace(mustReadString(t, irPath)))
+	require.Equal(t, "existing: true", strings.TrimSpace(mustReadString(t, openAPIPath)))
 }
 
 func TestResolveTypeSpecPackage_UsesDevelopmentOverride(t *testing.T) {
@@ -218,11 +235,11 @@ func TestInstallBundledTypeSpecPackage_UsesWritableCache(t *testing.T) {
 	require.FileExists(t, filepath.Join(pkg.Dir, "dist", "src", "index.js"))
 }
 
-func TestCompileTypeSpec_FailureRemovesStaleOutputs(t *testing.T) {
+func TestCompileTypeSpec_FailurePreservesExistingOutputs(t *testing.T) {
 	t.Helper()
 
 	dir := t.TempDir()
-	t.Setenv(typeSpecPackageDirEnv, mustAbs(t, filepath.Join("..", "..", "typespec")))
+	setupManagedTypeSpecCache(t)
 	irPath := filepath.Join(dir, "json-ir.json")
 	openAPIPath := filepath.Join(dir, "openapi.yaml")
 	require.NoError(t, os.WriteFile(irPath, []byte(`{"stale":true}`), 0o644))
@@ -232,8 +249,8 @@ func TestCompileTypeSpec_FailureRemovesStaleOutputs(t *testing.T) {
 	err := compileTypeSpec(fixtureDir, irPath, openAPIPath)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "requires request body to resolve to a named model schema")
-	require.NoFileExists(t, irPath)
-	require.NoFileExists(t, openAPIPath)
+	require.Equal(t, `{"stale":true}`, strings.TrimSpace(mustReadString(t, irPath)))
+	require.Equal(t, "stale: true", strings.TrimSpace(mustReadString(t, openAPIPath)))
 }
 
 func TestResolveCommandConfig_GroupedManifestOverrides(t *testing.T) {
@@ -354,7 +371,7 @@ func TestMultiTargetManifest_GeneratesVersionedArtifacts(t *testing.T) {
 	t.Helper()
 
 	root := t.TempDir()
-	t.Setenv(typeSpecPackageDirEnv, mustAbs(t, filepath.Join("..", "..", "typespec")))
+	setupManagedTypeSpecCache(t)
 	writeMinimalTypeSpecContract(t, filepath.Join(root, "api", "v1", "typespec"), "/v1", "Widget API", "1.0.0")
 	writeMinimalTypeSpecContract(t, filepath.Join(root, "api", "v2", "typespec"), "/v2", "Widget API v2", "2.0.0")
 
@@ -456,7 +473,7 @@ func TestGenerateServer_FailsForUnnamedRequestBodySchema(t *testing.T) {
 
 	err := generateServer(doc, serverPath, "api", requestModelsPath, "api", canonicalOpenAPIPath)
 	require.Error(t, err)
-	require.ErrorContains(t, err, "request body generation")
+	require.ErrorContains(t, err, "generic request body schema could not be resolved")
 	require.ErrorContains(t, err, "createWidget")
 }
 
@@ -499,6 +516,15 @@ func mustAbs(t *testing.T, path string) string {
 	abs, err := filepath.Abs(path)
 	require.NoError(t, err)
 	return abs
+}
+
+func setupManagedTypeSpecCache(t *testing.T) {
+	t.Helper()
+
+	t.Setenv(typeSpecPackageDirEnv, "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
 }
 
 func writeCanonicalOpenAPI(t *testing.T, dir string, doc ir.Document) string {
