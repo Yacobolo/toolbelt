@@ -35,21 +35,11 @@ func ResolveSchema(doc Document, schemaRef SchemaRef) (Schema, bool) {
 
 // ResolveRequestBodySchemaName returns the concrete request body schema name when present.
 func ResolveRequestBodySchemaName(doc Document, endpoint Endpoint) (string, bool) {
-	if endpoint.RequestBody == nil {
+	content, ok := PrimaryRequestBodyContent(endpoint)
+	if !ok || content.Schema == nil {
 		return "", false
 	}
-	ref := endpoint.RequestBody.Schema
-	if ref.Ref == "GenericRequest" {
-		name, ok := ResolveGenericRequestBodySchemaName(doc, endpoint.OperationID)
-		if !ok {
-			return "", false
-		}
-		if _, ok := doc.Schemas[name]; !ok {
-			return "", false
-		}
-		return name, true
-	}
-
+	ref := *content.Schema
 	name, ok := NormalizedSchemaRefName(ref)
 	if !ok {
 		return "", false
@@ -91,10 +81,38 @@ func ResolveResponseBodySchema(doc Document, response Response) (Schema, bool) {
 		schema, ok := doc.Schemas[shape.BodyType]
 		return schema, ok
 	}
-	if response.Schema == nil {
+	content, ok := PrimaryResponseContent(response)
+	if !ok || content.Schema == nil {
 		return Schema{}, false
 	}
-	return ResolveSchema(doc, *response.Schema)
+	return ResolveSchema(doc, *content.Schema)
+}
+
+// PrimaryRequestBodyContent returns the preferred content entry for generated
+// server and CLI code paths that can use only one request representation.
+func PrimaryRequestBodyContent(endpoint Endpoint) (BodyContent, bool) {
+	if endpoint.RequestBody == nil || len(endpoint.RequestBody.Contents) == 0 {
+		return BodyContent{}, false
+	}
+	return preferredContent(endpoint.RequestBody.Contents)
+}
+
+// PrimaryResponseContent returns the preferred content entry for generated
+// server and CLI code paths that can use only one response representation.
+func PrimaryResponseContent(response Response) (BodyContent, bool) {
+	if len(response.Contents) == 0 {
+		return BodyContent{}, false
+	}
+	return preferredContent(response.Contents)
+}
+
+func preferredContent(contents []BodyContent) (BodyContent, bool) {
+	for _, content := range contents {
+		if content.BodyKind == "json" {
+			return content, true
+		}
+	}
+	return contents[0], true
 }
 
 // JoinAPIPath combines a contract base path with an authored endpoint path.
@@ -214,66 +232,6 @@ func OrderedPropertyNames(schema Schema) []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-// ResolveGenericRequestBodySchemaName returns the concrete schema name backing a
-// GenericRequest placeholder when one can be inferred from the contract.
-func ResolveGenericRequestBodySchemaName(doc Document, operationID string) (string, bool) {
-	if schemaName, ok := genericRequestBodySchemaOverrides[operationID]; ok {
-		return schemaName, true
-	}
-	for _, candidate := range genericRequestBodySchemaCandidates(operationID) {
-		if _, ok := doc.Schemas[candidate]; ok {
-			return candidate, true
-		}
-	}
-	return "", false
-}
-
-func genericRequestBodySchemaCandidates(operationID string) []string {
-	return []string{exportedName(operationID) + "Request"}
-}
-
-var genericRequestBodySchemaOverrides = map[string]string{
-	"bindColumnMask":                  "ColumnMaskBindingRequest",
-	"bindRowFilter":                   "RowFilterBindingRequest",
-	"commitTableIngestion":            "CommitIngestionRequest",
-	"createCell":                      "CreateCellRequest",
-	"createComputeAssignment":         "CreateComputeAssignmentRequest",
-	"createComputeEndpoint":           "CreateComputeEndpointRequest",
-	"createGitRepo":                   "CreateGitRepoRequest",
-	"createMacro":                     "CreateMacroRequest",
-	"createManifest":                  "ManifestRequest",
-	"createModelTest":                 "CreateModelTestRequest",
-	"createNotebook":                  "CreateNotebookRequest",
-	"createPipeline":                  "CreatePipelineRequest",
-	"createPipelineJob":               "CreatePipelineJobRequest",
-	"createSemanticMetric":            "CreateSemanticMetricRequest",
-	"createSemanticModel":             "CreateSemanticModelRequest",
-	"createSemanticPreAggregation":    "CreateSemanticPreAggregationRequest",
-	"createSemanticModelRelationship": "CreateSemanticRelationshipRequest",
-	"createTag":                       "CreateTagRequest",
-	"createTagAssignment":             "CreateTagAssignmentRequest",
-	"createUploadUrl":                 "UploadUrlRequest",
-	"executeQuery":                    "QueryRequest",
-	"explainMetricQuery":              "MetricQueryRequest",
-	"loadTableExternalFiles":          "LoadExternalRequest",
-	"promoteNotebookToModel":          "PromoteNotebookRequest",
-	"purgeLineage":                    "PurgeLineageRequest",
-	"reorderCells":                    "ReorderCellsRequest",
-	"runMetricQuery":                  "MetricQueryRequest",
-	"triggerModelRun":                 "TriggerModelRunRequest",
-	"triggerPipelineRun":              "TriggerPipelineRunRequest",
-	"updateCell":                      "UpdateCellRequest",
-	"updateComputeEndpoint":           "UpdateComputeEndpointRequest",
-	"updateMacro":                     "UpdateMacroRequest",
-	"updateModel":                     "UpdateModelRequest",
-	"updateNotebook":                  "UpdateNotebookRequest",
-	"updatePipeline":                  "UpdatePipelineRequest",
-	"updateSemanticMetric":            "UpdateSemanticMetricRequest",
-	"updateSemanticModel":             "UpdateSemanticModelRequest",
-	"updateSemanticPreAggregation":    "UpdateSemanticPreAggregationRequest",
-	"updateSemanticModelRelationship": "UpdateSemanticRelationshipRequest",
 }
 
 func exportedName(value string) string {

@@ -20,7 +20,7 @@ func FetchAllPages(client *Client, method, path string, baseQuery url.Values) ([
 			query.Set("page_token", pageToken)
 		}
 
-		resp, err := client.Do(method, path, query, nil)
+		resp, err := client.Do(method, path, query, nil, "", "")
 		if err != nil {
 			return nil, err
 		}

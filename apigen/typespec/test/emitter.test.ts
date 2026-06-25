@@ -18,7 +18,7 @@ describe("APIGen TypeSpec emitter", () => {
     await compileFixture("todo", irPath);
 
     const doc = JSON.parse(await readFile(irPath, "utf8"));
-    expect(doc.schema_version).toBe("v1");
+    expect(doc.schema_version).toBe("v2");
     expect(doc.info.title).toBe("APIGen Todo Example");
     expect(doc.endpoints.map((x: any) => x.operation_id)).toEqual([
       "listTodos",
@@ -28,7 +28,11 @@ describe("APIGen TypeSpec emitter", () => {
       "deleteTodo",
     ]);
     expect(doc.schemas.Todo.property_order).toEqual(["id", "title", "status"]);
-    expect(doc.endpoints[1].request_body.schema.ref).toBe("CreateTodoRequest");
+    expect(doc.endpoints[1].request_body.contents[0]).toMatchObject({
+      content_type: "application/json",
+      body_kind: "json",
+      schema: { ref: "CreateTodoRequest" },
+    });
     expect(doc.endpoints[1].cli.command).toEqual(["todos", "create"]);
     expect(doc.openapi.security).toEqual([{ BearerAuth: [] }, { ApiKeyAuth: [] }]);
   });
@@ -82,7 +86,158 @@ describe("APIGen TypeSpec emitter", () => {
     expect(doc.schemas.Widget.required).toEqual(["status", "id"]);
     expect(doc.schemas.Widget.properties.status.schema).toEqual({ ref: "WidgetStatus" });
     expect(doc.endpoints[0].parameters[0].schema).toEqual({ ref: "WidgetStatus" });
-    expect(doc.endpoints[1].request_body.schema).toEqual({ ref: "WidgetStatus" });
+    expect(doc.endpoints[1].request_body.contents[0].schema).toEqual({ ref: "WidgetStatus" });
+  });
+
+  it("emits v2 IR for optimized TypeSpec HTTP authoring", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Optimized API" })
+      namespace OptimizedAPI;
+
+      model Error {
+        code: int32;
+        message: string;
+      }
+
+      model Artifact {
+        id: string;
+      }
+
+      model ArtifactCreate {
+        name: string;
+      }
+
+      model Metadata {
+        name: string;
+      }
+
+      model OkJson<T> {
+        ...OkResponse;
+        ...Body<T>;
+      }
+
+      model CreatedJson<T> {
+        ...CreatedResponse;
+        ...Body<T>;
+      }
+
+      model BadRequest {
+        ...BadRequestResponse;
+        ...Body<Error>;
+      }
+
+      model RateLimited {
+        ...Response<429>;
+        ...Body<Error>;
+      }
+
+      alias CommonErrors = BadRequest | RateLimited;
+
+      @route("/artifacts")
+      namespace Artifacts {
+        @route("/{id}")
+        @get
+        op get(@path id: string): OkJson<Artifact> | CommonErrors;
+
+        @post
+        op create(@body body?: ArtifactCreate): CreatedJson<Artifact> | CommonErrors;
+
+        @route("/{id}/text")
+        @put
+        op replaceText(@path id: string, @header contentType: "text/plain", @body body: string): OkJson<Artifact> | CommonErrors;
+
+        @route("/{id}/blob")
+        @put
+        op replaceBlob(@path id: string, @header contentType: "application/octet-stream", @body body: bytes): OkJson<Artifact> | CommonErrors;
+
+        @route("/{id}/file")
+        @put
+        op replaceFile(@path id: string, @bodyRoot body: File<"application/octet-stream", bytes>): OkJson<Artifact> | CommonErrors;
+
+        @route("/{id}/form")
+        @put
+        op replaceForm(@path id: string, @header contentType: "application/x-www-form-urlencoded", @body body: Metadata): OkJson<Artifact> | CommonErrors;
+
+        @route("/{id}/multipart")
+        @put
+        op replaceMultipart(@path id: string, @multipartBody body: {
+          metadata: HttpPart<Metadata>;
+          artifact: HttpPart<File<"application/octet-stream", bytes>>;
+        }): OkJson<Artifact> | CommonErrors;
+      }
+    `);
+
+    expect(doc.schema_version).toBe("v2");
+    expect(doc.endpoints.map((x: any) => x.path)).toEqual([
+      "/artifacts/{id}",
+      "/artifacts",
+      "/artifacts/{id}/text",
+      "/artifacts/{id}/blob",
+      "/artifacts/{id}/file",
+      "/artifacts/{id}/form",
+      "/artifacts/{id}/multipart",
+    ]);
+    expect(doc.endpoints[0].responses.map((x: any) => x.status_code)).toEqual([200, 400, 429]);
+    expect(doc.endpoints[1].request_body.required).toBe(false);
+    expect(doc.endpoints[2].request_body.contents[0].body_kind).toBe("text");
+    expect(doc.endpoints[3].request_body.contents[0]).toMatchObject({
+      content_type: "application/octet-stream",
+      body_kind: "binary",
+      schema: { type: "string", format: "binary" },
+    });
+    expect(doc.endpoints[4].request_body.contents[0].body_kind).toBe("file");
+    expect(doc.endpoints[5].request_body.contents[0].body_kind).toBe("form_urlencoded");
+    expect(doc.endpoints[6].request_body.contents[0].body_kind).toBe("multipart");
+    expect(doc.endpoints[6].request_body.contents[0].parts.map((x: any) => x.name)).toEqual([
+      "metadata",
+      "artifact",
+    ]);
+  });
+
+  it("merges same-status response variants into ordered IR contents", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Multi Content API" })
+      namespace MultiContentAPI;
+
+      model Artifact {
+        id: string;
+      }
+
+      model JSONArtifact {
+        ...OkResponse;
+        ...Body<Artifact>;
+      }
+
+      model BinaryArtifact {
+        ...OkResponse;
+        @header contentType: "application/octet-stream";
+        @body body: bytes;
+      }
+
+      @route("/artifacts/{id}")
+      @get
+      op getArtifact(@path id: string): JSONArtifact | BinaryArtifact;
+    `);
+
+    const response = doc.endpoints[0].responses[0];
+    expect(doc.endpoints[0].responses).toHaveLength(1);
+    expect(response.status_code).toBe(200);
+    expect(response.contents).toEqual([
+      {
+        content_type: "application/json",
+        body_kind: "json",
+        schema: { ref: "Artifact" },
+      },
+      {
+        content_type: "application/octet-stream",
+        body_kind: "binary",
+        schema: { type: "string", format: "binary" },
+      },
+    ]);
   });
 
   it("fails without writing IR for inline string literal unions", async () => {

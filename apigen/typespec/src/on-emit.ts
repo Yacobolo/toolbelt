@@ -27,6 +27,7 @@ import {
   type HttpAuthRef,
   type HttpOperation,
   type HttpOperationParameter,
+  type HttpOperationPart,
   type HttpOperationResponse,
   type HttpOperationResponseContent,
   type HttpPayloadBody,
@@ -37,7 +38,7 @@ import { getAuthz, getCLI, getResponseShape, isManual } from "./decorators.js";
 import { type EmitterOptions, reportDiagnostic } from "./lib.js";
 
 interface Document {
-  schema_version: "v1";
+  schema_version: "v2";
   api: { base_path: string };
   info: { title: string; version: string; description?: string };
   openapi?: {
@@ -127,17 +128,32 @@ interface Parameter {
 interface RequestBody {
   required?: boolean;
   description?: string;
-  content_type?: string;
-  schema: SchemaRef;
+  contents: BodyContent[];
 }
 
 interface Response {
   status_code: number;
   description: string;
   headers?: Header[];
-  content_type?: string;
-  schema?: SchemaRef;
+  contents?: BodyContent[];
   extensions?: Record<string, unknown>;
+}
+
+interface BodyContent {
+  content_type: string;
+  body_kind: "json" | "text" | "binary" | "file" | "form_urlencoded" | "multipart";
+  schema?: SchemaRef;
+  any_of?: SchemaRef[];
+  parts?: MultipartPart[];
+}
+
+interface MultipartPart {
+  name: string;
+  required?: boolean;
+  description?: string;
+  content_type?: string;
+  body_kind?: "json" | "text" | "binary" | "file";
+  schema?: SchemaRef;
 }
 
 interface Header {
@@ -178,7 +194,7 @@ class IRBuilder {
   private readonly emittedEnums = new Set<string>();
   private failed = false;
 
-  constructor(private readonly program: Program) {}
+  constructor(readonly program: Program) {}
 
   hasFailed() {
     return this.failed;
@@ -423,7 +439,7 @@ function buildDocument(
   );
 
   return prune({
-    schema_version: "v1",
+    schema_version: "v2",
     api: { base_path: options["base-path"] ?? "/" },
     info: prune({
       title: info.title ?? serviceInfo?.title ?? "API",
@@ -470,7 +486,7 @@ function endpoint(
     tags: getAllTags(program, operation.operation),
     parameters: operation.parameters.parameters.map((parameter) => endpointParameter(program, builder, parameter)),
     request_body: requestBody(builder, operation.parameters.body),
-    responses: operation.responses.map((response) => endpointResponse(program, builder, response)),
+    responses: endpointResponses(program, builder, operation.responses),
     cli: cliMetadata(program, operation),
     security: operationSecurity(builder, operation, operationAuth, defaultSecurity),
   }) as Endpoint;
@@ -685,15 +701,36 @@ function requestBody(builder: IRBuilder, body: HttpPayloadBody | undefined): Req
   if (!body) {
     return undefined;
   }
-  if (body.bodyKind !== "single") {
-    builder.unsupportedType(body.type, "request body");
-    return undefined;
-  }
   return prune({
     required: body.property ? !body.property.optional : true,
-    content_type: body.contentTypes[0],
-    schema: builder.namedSchemaRef(body.type, "request body"),
+    contents: bodyContents(builder, body, "request body"),
   }) as RequestBody;
+}
+
+function endpointResponses(
+  program: Program,
+  builder: IRBuilder,
+  responses: HttpOperationResponse[],
+): Response[] {
+  const byStatus = new Map<number, Response>();
+  const order: number[] = [];
+
+  for (const httpResponse of responses) {
+    const response = endpointResponse(program, builder, httpResponse);
+    const existing = byStatus.get(response.status_code);
+    if (!existing) {
+      byStatus.set(response.status_code, response);
+      order.push(response.status_code);
+      continue;
+    }
+
+    existing.description = existing.description || response.description;
+    existing.headers = mergeHeaders(existing.headers, response.headers);
+    existing.contents = mergeContents(existing.contents, response.contents);
+    existing.extensions = mergeResponseExtensions(existing.extensions, response.extensions);
+  }
+
+  return order.map((status) => byStatus.get(status)!);
 }
 
 function endpointResponse(
@@ -704,7 +741,7 @@ function endpointResponse(
   if (typeof response.statusCodes !== "number") {
     builder.unsupportedResponseStatus(response);
   }
-  const content = response.responses[0];
+  const firstContent = response.responses[0];
   const shape = response.type.kind === "Model" ? getResponseShape({ program }, response.type) : undefined;
   const extensions = shape
     ? {
@@ -718,11 +755,139 @@ function endpointResponse(
   return prune({
     status_code: typeof response.statusCodes === "number" ? response.statusCodes : 0,
     description: response.description ?? "The request has completed.",
-    headers: content ? responseHeaders(program, builder, content) : undefined,
-    content_type: content?.body?.contentTypes[0],
-    schema: content?.body ? builder.schemaRef(content.body.type, "response body") : undefined,
+    headers: firstContent ? responseHeaders(program, builder, firstContent) : undefined,
+    contents: responseContents(builder, response.responses),
     extensions,
   }) as Response;
+}
+
+function mergeHeaders(left: Header[] | undefined, right: Header[] | undefined): Header[] | undefined {
+  if (!left || left.length === 0) {
+    return right;
+  }
+  if (!right || right.length === 0) {
+    return left;
+  }
+  const output = [...left];
+  const seen = new Set(left.map((header) => header.name.toLowerCase()));
+  for (const header of right) {
+    const key = header.name.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    output.push(header);
+  }
+  return output;
+}
+
+function mergeContents(left: BodyContent[] | undefined, right: BodyContent[] | undefined): BodyContent[] | undefined {
+  if (!left || left.length === 0) {
+    return right;
+  }
+  if (!right || right.length === 0) {
+    return left;
+  }
+  const output = [...left];
+  for (const content of right) {
+    output.push(content);
+  }
+  return output;
+}
+
+function mergeResponseExtensions(
+  left: Record<string, unknown> | undefined,
+  right: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!left || Object.keys(left).length === 0) {
+    return right;
+  }
+  if (!right || Object.keys(right).length === 0) {
+    return left;
+  }
+  return { ...left, ...right };
+}
+
+function responseContents(builder: IRBuilder, contents: HttpOperationResponseContent[]): BodyContent[] | undefined {
+  const output: BodyContent[] = [];
+  for (const content of contents) {
+    if (!content.body) {
+      continue;
+    }
+    output.push(...bodyContents(builder, content.body, "response body"));
+  }
+  return output.length > 0 ? output : undefined;
+}
+
+function bodyContents(builder: IRBuilder, body: HttpPayloadBody, context: string): BodyContent[] {
+  switch (body.bodyKind) {
+    case "single":
+      return body.contentTypes.map((contentType) =>
+        prune({
+          content_type: contentType,
+          body_kind: bodyKindForSingle(body.type, contentType),
+          schema: schemaRefForContent(builder, body.type, contentType, context),
+        }) as BodyContent,
+      );
+    case "file":
+      return body.contentTypes.map((contentType) =>
+        prune({
+          content_type: contentType,
+          body_kind: "file",
+          schema: fileSchemaRef(body.isText),
+        }) as BodyContent,
+      );
+    case "multipart":
+      return body.contentTypes.map((contentType) =>
+        prune({
+          content_type: contentType,
+          body_kind: "multipart",
+          parts: body.parts.map((part, idx) => multipartPart(builder, part, idx)),
+        }) as BodyContent,
+      );
+  }
+}
+
+function multipartPart(builder: IRBuilder, part: HttpOperationPart, idx: number): MultipartPart {
+  const bodyKind = part.body.bodyKind === "file" ? "file" : bodyKindForSingle(part.body.type, part.body.contentTypes[0] ?? "application/json");
+  const schema =
+    part.body.bodyKind === "file"
+      ? fileSchemaRef(part.body.isText)
+      : schemaRefForContent(builder, part.body.type, part.body.contentTypes[0] ?? "application/json", `multipart part ${part.name ?? idx}`);
+  return prune({
+    name: part.name ?? `part${idx + 1}`,
+    required: !part.optional,
+    description: "property" in part && part.property ? getDoc(builder.program, part.property) : undefined,
+    content_type: part.body.contentTypes[0],
+    body_kind: bodyKind,
+    schema,
+  }) as MultipartPart;
+}
+
+function bodyKindForSingle(type: Type, contentType: string): BodyContent["body_kind"] {
+  const normalized = contentType.toLowerCase();
+  if (normalized === "application/x-www-form-urlencoded") {
+    return "form_urlencoded";
+  }
+  if (normalized.startsWith("text/")) {
+    return "text";
+  }
+  if (normalized === "application/octet-stream" || isBytesType(type)) {
+    return "binary";
+  }
+  return "json";
+}
+
+function schemaRefForContent(builder: IRBuilder, type: Type, contentType: string, context: string): SchemaRef {
+  const kind = bodyKindForSingle(type, contentType);
+  if ((kind === "binary" || kind === "file") && isBytesType(type)) {
+    return { type: "string", format: "binary" };
+  }
+  return builder.schemaRef(type, context);
+}
+
+function fileSchemaRef(isText: boolean): SchemaRef {
+  return isText ? { type: "string" } : { type: "string", format: "binary" };
 }
 
 function responseHeaders(
@@ -863,6 +1028,18 @@ function scalarSchemaRef(scalar: Scalar): SchemaRef {
     }
   }
   return { type: "string" };
+}
+
+function isBytesType(type: Type): boolean {
+  if (type.kind !== "Scalar") {
+    return false;
+  }
+  for (let current: Scalar | undefined = type; current; current = current.baseScalar) {
+    if (current.name === "bytes") {
+      return true;
+    }
+  }
+  return false;
 }
 
 function enumValues(type: Enum): string[] {

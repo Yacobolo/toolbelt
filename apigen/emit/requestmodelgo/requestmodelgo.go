@@ -422,10 +422,11 @@ func safeResponseSchemaRoots(doc ir.Document) []string {
 					seen[shape.BodyType] = struct{}{}
 				}
 			}
-			if response.Schema == nil || isErrorSchemaRef(*response.Schema) {
+			content, ok := ir.PrimaryResponseContent(response)
+			if !ok || content.Schema == nil || isErrorSchemaRef(*content.Schema) {
 				continue
 			}
-			bodyTypeName, ok := normalizedSchemaRefName(*response.Schema)
+			bodyTypeName, ok := normalizedSchemaRefName(*content.Schema)
 			if !ok {
 				continue
 			}

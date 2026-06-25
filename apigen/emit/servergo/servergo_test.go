@@ -11,11 +11,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func jsonContent(ref ir.SchemaRef) []ir.BodyContent {
+	return []ir.BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &ref}}
+}
+
+func binaryContent() []ir.BodyContent {
+	return []ir.BodyContent{{ContentType: "application/octet-stream", BodyKind: "binary", Schema: &ir.SchemaRef{Type: "string", Format: "binary"}}}
+}
+
 func TestEmit(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -62,7 +70,7 @@ func TestEmit_UsesIRPathAsIs(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -81,7 +89,7 @@ func TestEmit_UsesAPIBasePathForRoutes(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/v1"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -99,7 +107,7 @@ func TestValidateOperationIDs(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -116,7 +124,7 @@ func TestEmit_DispatchParityAndHealthHandling(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -153,7 +161,7 @@ func TestEmit_OperationContractsIncludeManualAndBodyMetadata(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -162,7 +170,7 @@ func TestEmit_OperationContractsIncludeManualAndBodyMetadata(t *testing.T) {
 				Path:        "/auth/local-login",
 				OperationID: "localLogin",
 				Tags:        []string{"Auth"},
-				RequestBody: &ir.RequestBody{Required: true, Schema: ir.SchemaRef{Ref: "LoginRequest"}},
+				RequestBody: &ir.RequestBody{Required: true, Contents: jsonContent(ir.SchemaRef{Ref: "LoginRequest"})},
 				Responses: []ir.Response{
 					{StatusCode: 200, Description: "ok"},
 					{StatusCode: 401, Description: "unauthorized"},
@@ -193,7 +201,7 @@ func TestEmit_OperationContractsIncludeExtensionDefensiveCopies(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -286,7 +294,7 @@ func TestEmit_RejectsInvalidExtensionValues(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -310,7 +318,7 @@ func TestEmit_DoesNotMutateInputDocument(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -329,7 +337,7 @@ func TestEmit_GeneratesPathAndQueryBinding(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -386,7 +394,7 @@ func TestEmit_GeneratesStrictJSONBodyDecoding(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -397,7 +405,7 @@ func TestEmit_GeneratesStrictJSONBodyDecoding(t *testing.T) {
 				Method:      "post",
 				Path:        "/pipelines",
 				OperationID: "createPipeline",
-				RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "CreatePipelineRequest"}},
+				RequestBody: &ir.RequestBody{Contents: jsonContent(ir.SchemaRef{Ref: "CreatePipelineRequest"})},
 				Responses:   []ir.Response{{StatusCode: 201, Description: "created"}},
 			},
 		},
@@ -408,22 +416,199 @@ func TestEmit_GeneratesStrictJSONBodyDecoding(t *testing.T) {
 	content := string(b)
 
 	require.Contains(t, content, "\"io\"")
-	require.Contains(t, content, "func decodeAPIGenJSONBody(body io.Reader, dest any, requiredFields ...string) error {")
+	require.Contains(t, content, "func decodeAPIGenJSONBody(body io.Reader, dest any, requiredBody bool, requiredFields ...string) error {")
 	require.Contains(t, content, "decoder.DisallowUnknownFields()")
 	require.Contains(t, content, "return fmt.Errorf(\"request body must not be empty\")")
 	require.Contains(t, content, "return fmt.Errorf(\"request body must contain a single JSON value\")")
 	require.Contains(t, content, "decoder := json.NewDecoder(strings.NewReader(string(raw)))")
-	require.Contains(t, content, "if err := decodeAPIGenJSONBody(r.Body, &body); err != nil {")
+	require.Contains(t, content, "if err := decodeAPIGenJSONBody(r.Body, &body, false); err != nil {")
 	require.Contains(t, content, "writeAPIGenError(w, http.StatusBadRequest, err.Error())")
 	require.Contains(t, content, "writeAPIGenError(w, http.StatusInternalServerError, err.Error())")
 	require.Contains(t, content, "Message: apigenErrorMessage(statusCode, message)")
+}
+
+func TestEmit_GeneratesTransportAwareBodies(t *testing.T) {
+	t.Helper()
+
+	doc := ir.Document{
+		SchemaVersion: "v2",
+		API:           ir.API{BasePath: "/"},
+		Info:          ir.Info{Title: "t", Version: "1"},
+		Schemas: map[string]ir.Schema{
+			"FormRequest": {Type: "object", Properties: map[string]ir.SchemaProperty{"name": {Schema: ir.SchemaRef{Type: "string"}}}},
+		},
+		Endpoints: []ir.Endpoint{
+			{
+				Method:      "put",
+				Path:        "/text",
+				OperationID: "replaceText",
+				RequestBody: &ir.RequestBody{Required: true, Contents: []ir.BodyContent{{ContentType: "text/plain", BodyKind: "text", Schema: &ir.SchemaRef{Type: "string"}}}},
+				Responses:   []ir.Response{{StatusCode: 200, Description: "ok", Contents: []ir.BodyContent{{ContentType: "text/plain", BodyKind: "text", Schema: &ir.SchemaRef{Type: "string"}}}}},
+			},
+			{
+				Method:      "put",
+				Path:        "/blob",
+				OperationID: "replaceBlob",
+				RequestBody: &ir.RequestBody{Required: true, Contents: binaryContent()},
+				Responses:   []ir.Response{{StatusCode: 200, Description: "ok", Contents: binaryContent()}},
+			},
+			{
+				Method:      "put",
+				Path:        "/form",
+				OperationID: "replaceForm",
+				RequestBody: &ir.RequestBody{Required: true, Contents: []ir.BodyContent{{ContentType: "application/x-www-form-urlencoded", BodyKind: "form_urlencoded", Schema: &ir.SchemaRef{Ref: "FormRequest"}}}},
+				Responses:   []ir.Response{{StatusCode: 204, Description: "ok"}},
+			},
+		},
+	}
+
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, "type GenReplaceTextBody = string")
+	require.Contains(t, content, "type GenReplaceBlobBody = []byte")
+	require.Contains(t, content, "type GenReplaceFormBody = GenSchemaFormRequest")
+	require.Contains(t, content, "decodeAPIGenTextBody(r.Body, true)")
+	require.Contains(t, content, "decodeAPIGenBytesBody(r.Body, true)")
+	require.Contains(t, content, "decodeAPIGenFormBody(r, &body, true")
+	require.Contains(t, content, "type GenReplaceText200TextResponse struct")
+	require.Contains(t, content, "type GenReplaceBlob200BinaryResponse struct")
+	require.Contains(t, content, "w.Header().Set(\"Content-Type\", \"text/plain\")")
+	require.Contains(t, content, "w.Header().Set(\"Content-Type\", \"application/octet-stream\")")
+	require.NotContains(t, content, "type GenReplaceBlobBody = GenSchema")
+	require.NotContains(t, content, "type GenReplaceBlob200JSONResponse")
+}
+
+func TestEmit_GeneratesMultiContentResponseVariants(t *testing.T) {
+	t.Helper()
+
+	doc := ir.Document{
+		SchemaVersion: "v2",
+		API:           ir.API{BasePath: "/"},
+		Info:          ir.Info{Title: "t", Version: "1"},
+		Schemas: map[string]ir.Schema{
+			"Artifact": {Type: "object", Properties: map[string]ir.SchemaProperty{"id": {Schema: ir.SchemaRef{Type: "string"}}}},
+		},
+		Endpoints: []ir.Endpoint{
+			{
+				Method:      "get",
+				Path:        "/artifacts/{id}",
+				OperationID: "getArtifact",
+				Parameters:  []ir.Parameter{{Name: "id", In: "path", Required: true, Schema: ir.SchemaRef{Type: "string"}}},
+				Responses: []ir.Response{{
+					StatusCode:  200,
+					Description: "ok",
+					Contents: []ir.BodyContent{
+						{ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Ref: "Artifact"}},
+						{ContentType: "application/octet-stream", BodyKind: "binary", Schema: &ir.SchemaRef{Type: "string", Format: "binary"}},
+					},
+				}},
+			},
+		},
+	}
+
+	b, err := Emit(doc, Options{PackageName: "gen"})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, "type GenGetArtifact200ApplicationJSONResponse struct")
+	require.Contains(t, content, "type GenGetArtifact200ApplicationOctetStreamResponse struct")
+	require.Contains(t, content, "func (response GenGetArtifact200ApplicationJSONResponse) VisitGetArtifactResponse")
+	require.Contains(t, content, "func (response GenGetArtifact200ApplicationOctetStreamResponse) VisitGetArtifactResponse")
+	require.Contains(t, content, "w.Header().Set(\"Content-Type\", \"application/json\")")
+	require.Contains(t, content, "w.Header().Set(\"Content-Type\", \"application/octet-stream\")")
+	require.NotContains(t, content, "type GenGetArtifact200JSONResponse")
+	require.NotContains(t, content, "type GenGetArtifact200BinaryResponse")
+
+	assertGeneratedServerCompiles(t, b, `package gen
+
+type Error struct {
+	Code int32
+	Message string
+}
+
+type GenSchemaArtifact struct {
+	Id string
+}
+
+var _ GenGetArtifactResponse = GenGetArtifact200ApplicationJSONResponse{}
+var _ GenGetArtifactResponse = GenGetArtifact200ApplicationOctetStreamResponse{}
+`)
+}
+
+func TestEmit_GeneratesMultipartBodyDecoding(t *testing.T) {
+	t.Helper()
+
+	doc := ir.Document{
+		SchemaVersion: "v2",
+		API:           ir.API{BasePath: "/"},
+		Info:          ir.Info{Title: "t", Version: "1"},
+		Schemas: map[string]ir.Schema{
+			"Metadata": {
+				Type:       "object",
+				Required:   []string{"name"},
+				Properties: map[string]ir.SchemaProperty{"name": {Schema: ir.SchemaRef{Type: "string"}}},
+			},
+		},
+		Endpoints: []ir.Endpoint{
+			{
+				Method:      "post",
+				Path:        "/artifacts",
+				OperationID: "uploadArtifact",
+				RequestBody: &ir.RequestBody{Required: true, Contents: []ir.BodyContent{{
+					ContentType: "multipart/form-data",
+					BodyKind:    "multipart",
+					Parts: []ir.MultipartPart{
+						{Name: "metadata", Required: true, ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Ref: "Metadata"}},
+						{Name: "note", Required: false, ContentType: "text/plain", BodyKind: "text", Schema: &ir.SchemaRef{Type: "string"}},
+						{Name: "artifact", Required: true, ContentType: "application/octet-stream", BodyKind: "file", Schema: &ir.SchemaRef{Type: "string", Format: "binary"}},
+						{Name: "checksum", Required: false, ContentType: "application/octet-stream", BodyKind: "binary", Schema: &ir.SchemaRef{Type: "string", Format: "binary"}},
+					},
+				}}},
+				Responses: []ir.Response{{StatusCode: 204, Description: "uploaded"}},
+			},
+		},
+	}
+
+	b, err := Emit(doc, Options{PackageName: "gen"})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, "type GenUploadArtifactMultipartBody struct {")
+	require.Contains(t, content, "\tMetadata GenSchemaMetadata")
+	require.Contains(t, content, "\tNote *string")
+	require.Contains(t, content, "\tArtifact []byte")
+	require.Contains(t, content, "\tChecksum *[]byte")
+	require.Contains(t, content, "type GenUploadArtifactBody = GenUploadArtifactMultipartBody")
+	require.Contains(t, content, "if err := r.ParseMultipartForm(32 << 20); err != nil {")
+	require.Contains(t, content, "metadataRaw, metadataOK, err := readAPIGenMultipartPart(r, \"metadata\")")
+	require.Contains(t, content, "if !metadataOK {")
+	require.Contains(t, content, "json.Unmarshal(metadataRaw, &metadataValue)")
+	require.Contains(t, content, "noteValue := string(noteRaw)")
+	require.Contains(t, content, "artifactValue := artifactRaw")
+	require.Contains(t, content, "func readAPIGenMultipartPart(r *http.Request, name string) ([]byte, bool, error) {")
+
+	assertGeneratedServerCompiles(t, b, `package gen
+
+type Error struct {
+	Code int32
+	Message string
+}
+
+type GenSchemaMetadata struct {
+	Name string
+}
+
+var _ = GenUploadArtifactBody{
+	Metadata: GenSchemaMetadata{Name: "duck"},
+	Artifact: []byte("payload"),
+}
+`)
 }
 
 func TestEmit_UsesNamedRequestBodySchemas(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -436,21 +621,21 @@ func TestEmit_UsesNamedRequestBodySchemas(t *testing.T) {
 				Method:      "post",
 				Path:        "/api-keys",
 				OperationID: "createAPIKey",
-				RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "CreateAPIKeyRequest"}},
+				RequestBody: &ir.RequestBody{Contents: jsonContent(ir.SchemaRef{Ref: "CreateAPIKeyRequest"})},
 				Responses:   []ir.Response{{StatusCode: 201, Description: "created"}},
 			},
 			{
 				Method:      "post",
 				Path:        "/pipelines",
 				OperationID: "createPipeline",
-				RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "GenericRequest"}},
+				RequestBody: &ir.RequestBody{Contents: jsonContent(ir.SchemaRef{Ref: "CreatePipelineRequest"})},
 				Responses:   []ir.Response{{StatusCode: 201, Description: "created"}},
 			},
 			{
 				Method:      "post",
 				Path:        "/metric-queries:run",
 				OperationID: "runMetricQuery",
-				RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "GenericRequest"}},
+				RequestBody: &ir.RequestBody{Contents: jsonContent(ir.SchemaRef{Ref: "MetricQueryRequest"})},
 				Responses:   []ir.Response{{StatusCode: 201, Description: "created"}},
 			},
 		},
@@ -460,27 +645,24 @@ func TestEmit_UsesNamedRequestBodySchemas(t *testing.T) {
 	require.NoError(t, err)
 	content := string(b)
 
-	require.Contains(t, content, "type GenCreateAPIKeyJSONBody = GenSchemaCreateAPIKeyRequest")
-	require.Contains(t, content, "type GenCreatePipelineJSONBody = GenSchemaCreatePipelineRequest")
-	require.Contains(t, content, "type GenRunMetricQueryJSONBody = GenSchemaMetricQueryRequest")
+	require.Contains(t, content, "type GenCreateAPIKeyBody = GenSchemaCreateAPIKeyRequest")
+	require.Contains(t, content, "type GenCreatePipelineBody = GenSchemaCreatePipelineRequest")
+	require.Contains(t, content, "type GenRunMetricQueryBody = GenSchemaMetricQueryRequest")
 }
 
 func TestEmit_FailsForUnnamedRequestBodySchema(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
-		Schemas: map[string]ir.Schema{
-			"GenericRequest": {Type: "object"},
-		},
 		Endpoints: []ir.Endpoint{
 			{
 				Method:      "post",
 				Path:        "/widgets",
 				OperationID: "createWidget",
-				RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "GenericRequest"}},
+				RequestBody: &ir.RequestBody{Contents: jsonContent(ir.SchemaRef{Type: "object"})},
 				Responses:   []ir.Response{{StatusCode: 201, Description: "created"}},
 			},
 		},
@@ -488,7 +670,7 @@ func TestEmit_FailsForUnnamedRequestBodySchema(t *testing.T) {
 
 	_, err := Emit(doc, Options{})
 	require.Error(t, err)
-	require.ErrorContains(t, err, "generic request body schema could not be resolved")
+	require.ErrorContains(t, err, "requires a named IR schema")
 	require.ErrorContains(t, err, "createWidget")
 }
 
@@ -496,7 +678,7 @@ func TestEmit_ImportsTimeForDateTimeParameters(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -532,7 +714,7 @@ func TestEmit_EmitsCanonicalResponseTypesOnly(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -547,19 +729,19 @@ func TestEmit_EmitsCanonicalResponseTypesOnly(t *testing.T) {
 				Method:      "post",
 				Path:        "/query",
 				OperationID: "executeQuery",
-				Responses:   []ir.Response{{StatusCode: 201, Description: "created", Schema: &ir.SchemaRef{Ref: "#/schemas/QueryResult"}}},
+				Responses:   []ir.Response{{StatusCode: 201, Description: "created", Contents: jsonContent(ir.SchemaRef{Ref: "#/schemas/QueryResult"})}},
 			},
 			{
 				Method:      "post",
 				Path:        "/queries",
 				OperationID: "submitQuery",
-				Responses:   []ir.Response{{StatusCode: 201, Description: "created", Schema: &ir.SchemaRef{Ref: "#/schemas/SubmitQueryResponse"}}},
+				Responses:   []ir.Response{{StatusCode: 201, Description: "created", Contents: jsonContent(ir.SchemaRef{Ref: "#/schemas/SubmitQueryResponse"})}},
 			},
 			{
 				Method:      "post",
 				Path:        "/queries/{queryId}/cancel",
 				OperationID: "cancelQuery",
-				Responses:   []ir.Response{{StatusCode: 201, Description: "created", Schema: &ir.SchemaRef{Ref: "#/schemas/CancelQueryResponse"}}},
+				Responses:   []ir.Response{{StatusCode: 201, Description: "created", Contents: jsonContent(ir.SchemaRef{Ref: "#/schemas/CancelQueryResponse"})}},
 			},
 			{
 				Method:      "post",
@@ -572,8 +754,8 @@ func TestEmit_EmitsCanonicalResponseTypesOnly(t *testing.T) {
 				Path:        "/groups",
 				OperationID: "listGroups",
 				Responses: []ir.Response{
-					{StatusCode: 200, Description: "ok", Schema: &ir.SchemaRef{Ref: "#/schemas/PaginatedGroups"}},
-					{StatusCode: 403, Description: "forbidden", Schema: &ir.SchemaRef{Ref: "#/schemas/Error"}},
+					{StatusCode: 200, Description: "ok", Contents: jsonContent(ir.SchemaRef{Ref: "#/schemas/PaginatedGroups"})},
+					{StatusCode: 403, Description: "forbidden", Contents: jsonContent(ir.SchemaRef{Ref: "#/schemas/Error"})},
 				},
 			},
 		},
@@ -600,7 +782,7 @@ func TestEmit_UsesIRResponseHeadersForVisitMethods(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{{
@@ -614,7 +796,7 @@ func TestEmit_UsesIRResponseHeadersForVisitMethods(t *testing.T) {
 					Name:   "X-Trace-Id",
 					Schema: ir.SchemaRef{Type: "string"},
 				}},
-				Schema: &ir.SchemaRef{Type: "string"},
+				Contents: jsonContent(ir.SchemaRef{Type: "string"}),
 			}},
 		}},
 	}
@@ -701,4 +883,25 @@ func apigenModuleRoot(t *testing.T) string {
 	root, err := filepath.Abs(filepath.Join(wd, "..", ".."))
 	require.NoError(t, err)
 	return root
+}
+
+func assertGeneratedServerCompiles(t *testing.T, generated []byte, testSource string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(`module generatedtest
+
+go 1.25.8
+
+require github.com/Yacobolo/toolbelt/apigen v0.0.0
+
+replace github.com/Yacobolo/toolbelt/apigen => `+apigenModuleRoot(t)+`
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "server.apigen.gen.go"), generated, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "server_test.go"), []byte(testSource), 0o644))
+
+	cmd := exec.Command("go", "test", "-mod=mod", "./...")
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
 }

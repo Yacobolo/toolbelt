@@ -47,7 +47,7 @@ func NewClient(baseURL, apiKey, token string) *Client {
 }
 
 // Do issues an authenticated HTTP request against the generated API surface.
-func (c *Client) Do(method, path string, query url.Values, body any) (*http.Response, error) {
+func (c *Client) Do(method, path string, query url.Values, body any, contentType string, bodyKind string) (*http.Response, error) {
 	baseURL := strings.TrimRight(c.BaseURL, "/")
 	if baseURL == "" {
 		baseURL = "http://localhost:8080"
@@ -60,11 +60,31 @@ func (c *Client) Do(method, path string, query url.Values, body any) (*http.Resp
 
 	var bodyReader io.Reader
 	if body != nil {
-		payload, err := json.Marshal(body)
-		if err != nil {
-			return nil, fmt.Errorf("marshal request body: %w", err)
+		switch bodyKind {
+		case "text":
+			bodyReader = strings.NewReader(fmt.Sprint(body))
+		case "binary", "file":
+			switch typed := body.(type) {
+			case []byte:
+				bodyReader = bytes.NewReader(typed)
+			case string:
+				bodyReader = strings.NewReader(typed)
+			default:
+				return nil, fmt.Errorf("unsupported %s request body type %T", bodyKind, body)
+			}
+		case "form_urlencoded":
+			values, ok := body.(url.Values)
+			if !ok {
+				return nil, fmt.Errorf("form_urlencoded request body must be url.Values")
+			}
+			bodyReader = strings.NewReader(values.Encode())
+		default:
+			payload, err := json.Marshal(body)
+			if err != nil {
+				return nil, fmt.Errorf("marshal request body: %w", err)
+			}
+			bodyReader = bytes.NewReader(payload)
 		}
-		bodyReader = bytes.NewReader(payload)
 	}
 
 	req, err := http.NewRequestWithContext(context.Background(), method, reqURL, bodyReader)
@@ -73,7 +93,10 @@ func (c *Client) Do(method, path string, query url.Values, body any) (*http.Resp
 	}
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		if strings.TrimSpace(contentType) == "" {
+			contentType = "application/json"
+		}
+		req.Header.Set("Content-Type", contentType)
 	}
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)

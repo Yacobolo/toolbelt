@@ -95,11 +95,16 @@ func renderRequestBody(doc ir.Document, endpoint ir.Endpoint) string {
 		bodyInput = endpoint.CLI.BodyInput
 	}
 	fields := collectBodyFields(doc, endpoint)
-	schemaType := schemaType(doc, endpoint.RequestBody.Schema)
-	return fmt.Sprintf("&apigencobra.RequestBodySpec{Required: %t, ContentType: %q, SchemaType: %q, InputMode: %q, Fields: %s}",
+	content, _ := ir.PrimaryRequestBodyContent(endpoint)
+	bodySchemaType := content.BodyKind
+	if content.Schema != nil {
+		bodySchemaType = schemaType(doc, *content.Schema)
+	}
+	return fmt.Sprintf("&apigencobra.RequestBodySpec{Required: %t, ContentType: %q, BodyKind: %q, SchemaType: %q, InputMode: %q, Fields: %s}",
 		endpoint.RequestBody.Required,
-		defaultContentType(endpoint.RequestBody.ContentType),
-		schemaType,
+		content.ContentType,
+		content.BodyKind,
+		bodySchemaType,
 		bodyInput,
 		renderFields(fields),
 	)

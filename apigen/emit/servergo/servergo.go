@@ -57,11 +57,16 @@ func cloneDocumentForEmit(doc ir.Document) ir.Document {
 		for j := range endpoint.Responses {
 			response := &endpoint.Responses[j]
 			response.Headers = append([]ir.Header(nil), response.Headers...)
-			if response.Schema != nil {
-				schema := *response.Schema
-				response.Schema = &schema
+			response.Contents = append([]ir.BodyContent(nil), response.Contents...)
+			for k := range response.Contents {
+				content := &response.Contents[k]
+				if content.Schema != nil {
+					schema := *content.Schema
+					content.Schema = &schema
+				}
+				content.AnyOf = append([]ir.SchemaRef(nil), content.AnyOf...)
+				content.Parts = append([]ir.MultipartPart(nil), content.Parts...)
 			}
-			response.AnyOf = append([]ir.SchemaRef(nil), response.AnyOf...)
 		}
 	}
 	return clone
@@ -114,12 +119,16 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	usesTime := docUsesTimeTypes(doc)
 	hasStrictOperations := false
 	hasRequestBodies := false
+	hasMultipartBodies := false
 	for _, endpoint := range doc.Endpoints {
 		if endpoint.OperationID != "getHealth" {
 			hasStrictOperations = true
 		}
 		if endpoint.RequestBody != nil {
 			hasRequestBodies = true
+			if content, ok := ir.PrimaryRequestBodyContent(endpoint); ok && content.BodyKind == "multipart" {
+				hasMultipartBodies = true
+			}
 		}
 	}
 	b.WriteString("package ")
@@ -367,12 +376,15 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		b.WriteString("}\n\n")
 	}
 	if hasRequestBodies {
-		b.WriteString("func decodeAPIGenJSONBody(body io.Reader, dest any, requiredFields ...string) error {\n")
+		b.WriteString("func decodeAPIGenJSONBody(body io.Reader, dest any, requiredBody bool, requiredFields ...string) error {\n")
 		b.WriteString("\traw, err := io.ReadAll(body)\n")
 		b.WriteString("\tif err != nil {\n")
 		b.WriteString("\t\treturn fmt.Errorf(\"read request body: %w\", err)\n")
 		b.WriteString("\t}\n")
 		b.WriteString("\tif len(strings.TrimSpace(string(raw))) == 0 {\n")
+		b.WriteString("\t\tif !requiredBody {\n")
+		b.WriteString("\t\t\treturn nil\n")
+		b.WriteString("\t\t}\n")
 		b.WriteString("\t\treturn fmt.Errorf(\"request body must not be empty\")\n")
 		b.WriteString("\t}\n")
 		b.WriteString("\tif len(requiredFields) > 0 {\n")
@@ -399,6 +411,84 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		b.WriteString("\t}\n")
 		b.WriteString("\treturn nil\n")
 		b.WriteString("}\n\n")
+		b.WriteString("func decodeAPIGenTextBody(body io.Reader, requiredBody bool) (string, error) {\n")
+		b.WriteString("\traw, err := io.ReadAll(body)\n")
+		b.WriteString("\tif err != nil {\n")
+		b.WriteString("\t\treturn \"\", fmt.Errorf(\"read request body: %w\", err)\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\tif len(raw) == 0 && requiredBody {\n")
+		b.WriteString("\t\treturn \"\", fmt.Errorf(\"request body must not be empty\")\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\treturn string(raw), nil\n")
+		b.WriteString("}\n\n")
+		b.WriteString("func decodeAPIGenBytesBody(body io.Reader, requiredBody bool) ([]byte, error) {\n")
+		b.WriteString("\traw, err := io.ReadAll(body)\n")
+		b.WriteString("\tif err != nil {\n")
+		b.WriteString("\t\treturn nil, fmt.Errorf(\"read request body: %w\", err)\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\tif len(raw) == 0 && requiredBody {\n")
+		b.WriteString("\t\treturn nil, fmt.Errorf(\"request body must not be empty\")\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\treturn raw, nil\n")
+		b.WriteString("}\n\n")
+		b.WriteString("func decodeAPIGenFormBody(r *http.Request, dest any, requiredBody bool, requiredFields ...string) error {\n")
+		b.WriteString("\tif err := r.ParseForm(); err != nil {\n")
+		b.WriteString("\t\treturn fmt.Errorf(\"parse form body: %w\", err)\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\tif len(r.PostForm) == 0 {\n")
+		b.WriteString("\t\tif !requiredBody {\n")
+		b.WriteString("\t\t\treturn nil\n")
+		b.WriteString("\t\t}\n")
+		b.WriteString("\t\treturn fmt.Errorf(\"request body must not be empty\")\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\tfor _, field := range requiredFields {\n")
+		b.WriteString("\t\tif strings.TrimSpace(r.PostForm.Get(field)) == \"\" {\n")
+		b.WriteString("\t\t\treturn fmt.Errorf(\"%s is required\", field)\n")
+		b.WriteString("\t\t}\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\tpayload := map[string]any{}\n")
+		b.WriteString("\tfor key, values := range r.PostForm {\n")
+		b.WriteString("\t\tif len(values) == 1 {\n")
+		b.WriteString("\t\t\tpayload[key] = values[0]\n")
+		b.WriteString("\t\t} else {\n")
+		b.WriteString("\t\t\tpayload[key] = values\n")
+		b.WriteString("\t\t}\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\tencoded, err := json.Marshal(payload)\n")
+		b.WriteString("\tif err != nil {\n")
+		b.WriteString("\t\treturn fmt.Errorf(\"encode form body: %w\", err)\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\tdecoder := json.NewDecoder(strings.NewReader(string(encoded)))\n")
+		b.WriteString("\tdecoder.DisallowUnknownFields()\n")
+		b.WriteString("\tif err := decoder.Decode(dest); err != nil {\n")
+		b.WriteString("\t\treturn fmt.Errorf(\"invalid form body: %w\", err)\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\treturn nil\n")
+		b.WriteString("}\n\n")
+		if hasMultipartBodies {
+			b.WriteString("func readAPIGenMultipartPart(r *http.Request, name string) ([]byte, bool, error) {\n")
+			b.WriteString("\tif r.MultipartForm == nil {\n")
+			b.WriteString("\t\treturn nil, false, nil\n")
+			b.WriteString("\t}\n")
+			b.WriteString("\tif values := r.MultipartForm.Value[name]; len(values) > 0 {\n")
+			b.WriteString("\t\treturn []byte(values[0]), true, nil\n")
+			b.WriteString("\t}\n")
+			b.WriteString("\tfiles := r.MultipartForm.File[name]\n")
+			b.WriteString("\tif len(files) == 0 {\n")
+			b.WriteString("\t\treturn nil, false, nil\n")
+			b.WriteString("\t}\n")
+			b.WriteString("\tfile, err := files[0].Open()\n")
+			b.WriteString("\tif err != nil {\n")
+			b.WriteString("\t\treturn nil, true, fmt.Errorf(\"open multipart part %s: %w\", name, err)\n")
+			b.WriteString("\t}\n")
+			b.WriteString("\tdefer file.Close()\n")
+			b.WriteString("\traw, err := io.ReadAll(file)\n")
+			b.WriteString("\tif err != nil {\n")
+			b.WriteString("\t\treturn nil, true, fmt.Errorf(\"read multipart part %s: %w\", name, err)\n")
+			b.WriteString("\t}\n")
+			b.WriteString("\treturn raw, true, nil\n")
+			b.WriteString("}\n\n")
+		}
 	}
 	emitSharedErrorResponseTypes(&b, doc)
 	for _, endpoint := range doc.Endpoints {
@@ -429,7 +519,7 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 			b.WriteString("\tParams Gen" + name + "Params\n")
 		}
 		if endpoint.RequestBody != nil {
-			b.WriteString("\tBody *Gen" + name + "JSONBody\n")
+			b.WriteString("\tBody *Gen" + name + "Body\n")
 		}
 		b.WriteString("}\n\n")
 		b.WriteString("// Gen" + name + "Response represents the APIGen strict response contract for " + name + ".\n")
@@ -437,114 +527,21 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		b.WriteString("\tVisit" + name + "Response(w http.ResponseWriter) error\n")
 		b.WriteString("}\n\n")
 		for _, response := range endpoint.Responses {
-			statusCode := fmt.Sprintf("%d", response.StatusCode)
-			if shared, ok := sharedErrorResponseType(response); ok {
-				b.WriteString("// Gen" + name + statusCode + "ResponseHeaders aliases the APIGen shared response headers for " + name + " " + statusCode + " errors.\n")
-				b.WriteString("type Gen" + name + statusCode + "ResponseHeaders = Gen" + shared + "ResponseHeaders\n\n")
-				b.WriteString("// Gen" + name + statusCode + "JSONResponse is the APIGen concrete JSON response for " + name + " " + statusCode + ".\n")
-				b.WriteString("type Gen" + name + statusCode + "JSONResponse struct{ Gen" + shared + "JSONResponse }\n\n")
-				b.WriteString("// Visit" + name + "Response writes " + name + " " + statusCode + " responses to the client.\n")
-				b.WriteString("func (response Gen" + name + statusCode + "JSONResponse) Visit" + name + "Response(w http.ResponseWriter) error {\n")
-				emitDirectHeaderWrites(&b, responseHeaderFields(response))
-				b.WriteString("\tw.Header().Set(\"Content-Type\", \"application/json\")\n")
-				b.WriteString("\tw.WriteHeader(" + statusCode + ")\n")
-				b.WriteString("\treturn json.NewEncoder(w).Encode(response.Body)\n")
-				b.WriteString("}\n\n")
-				continue
-			}
-			if shape, ok, err := ir.ResponseShapeMetadata(response); err == nil && ok && shape.Kind == "wrapped_json" {
-				headersTypeName := "Gen" + name + statusCode + "ResponseHeaders"
-				headersFields := responseHeaderFieldsWithDefaults(response)
-				emitOwnedResponseHeaders(&b, headersTypeName, headersFields)
-				b.WriteString("// Gen" + name + statusCode + "JSONResponse is the APIGen concrete JSON response for " + name + " " + statusCode + ".\n")
-				b.WriteString("type Gen" + name + statusCode + "JSONResponse struct {\n")
-				b.WriteString("\tBody " + shape.BodyType + "\n")
-				b.WriteString("\tHeaders " + headersTypeName + "\n")
-				b.WriteString("}\n\n")
-				b.WriteString("// Visit" + name + "Response writes " + name + " " + statusCode + " responses to the client.\n")
-				b.WriteString("func (response Gen" + name + statusCode + "JSONResponse) Visit" + name + "Response(w http.ResponseWriter) error {\n")
-				emitDirectHeaderWrites(&b, headersFields)
-				b.WriteString("\tw.Header().Set(\"Content-Type\", \"application/json\")\n")
-				b.WriteString("\tw.WriteHeader(" + statusCode + ")\n")
-				b.WriteString("\treturn json.NewEncoder(w).Encode(response.Body)\n")
-				b.WriteString("}\n\n")
-				continue
-			}
-			if len(response.Headers) == 0 && response.Schema != nil && usesDirectOwnedResponseSchema(response, doc) && len(responseHeaderFieldsWithDefaults(response)) == 0 {
-				schemaName, _ := responseSchemaTypeName(doc, *response.Schema)
-				b.WriteString("// Gen" + name + statusCode + "JSONResponse is the APIGen concrete JSON response for " + name + " " + statusCode + ".\n")
-				b.WriteString("type Gen" + name + statusCode + "JSONResponse GenSchema" + schemaName + "\n\n")
-				b.WriteString("// Visit" + name + "Response writes " + name + " " + statusCode + " responses to the client.\n")
-				b.WriteString("func (response Gen" + name + statusCode + "JSONResponse) Visit" + name + "Response(w http.ResponseWriter) error {\n")
-				b.WriteString("\tw.Header().Set(\"Content-Type\", \"application/json\")\n")
-				b.WriteString("\tw.WriteHeader(" + statusCode + ")\n")
-				b.WriteString("\treturn json.NewEncoder(w).Encode(response)\n")
-				b.WriteString("}\n\n")
-				continue
-			}
-			if response.Schema != nil {
-				bodyTypeName := responseBodyTypeName(doc, *response.Schema)
-				headersFields := responseHeaderFieldsWithDefaults(response)
-				if len(headersFields) > 0 {
-					headersTypeName := "Gen" + name + statusCode + "ResponseHeaders"
-					emitOwnedResponseHeaders(&b, headersTypeName, headersFields)
-					b.WriteString("// Gen" + name + statusCode + "JSONResponse is the APIGen concrete JSON response for " + name + " " + statusCode + ".\n")
-					b.WriteString("type Gen" + name + statusCode + "JSONResponse struct {\n")
-					b.WriteString("\tBody " + bodyTypeName + "\n")
-					b.WriteString("\tHeaders " + headersTypeName + "\n")
-					b.WriteString("}\n\n")
-					b.WriteString("// Visit" + name + "Response writes " + name + " " + statusCode + " responses to the client.\n")
-					b.WriteString("func (response Gen" + name + statusCode + "JSONResponse) Visit" + name + "Response(w http.ResponseWriter) error {\n")
-					emitDirectHeaderWrites(&b, headersFields)
-					b.WriteString("\tw.Header().Set(\"Content-Type\", \"application/json\")\n")
-					b.WriteString("\tw.WriteHeader(" + statusCode + ")\n")
-					b.WriteString("\treturn json.NewEncoder(w).Encode(response.Body)\n")
-					b.WriteString("}\n\n")
-					continue
-				}
-				b.WriteString("// Gen" + name + statusCode + "JSONResponse is the APIGen concrete JSON response for " + name + " " + statusCode + ".\n")
-				b.WriteString("type Gen" + name + statusCode + "JSONResponse " + bodyTypeName + "\n\n")
-				b.WriteString("// Visit" + name + "Response writes " + name + " " + statusCode + " responses to the client.\n")
-				b.WriteString("func (response Gen" + name + statusCode + "JSONResponse) Visit" + name + "Response(w http.ResponseWriter) error {\n")
-				b.WriteString("\tw.Header().Set(\"Content-Type\", \"application/json\")\n")
-				b.WriteString("\tw.WriteHeader(" + statusCode + ")\n")
-				b.WriteString("\treturn json.NewEncoder(w).Encode(response)\n")
-				b.WriteString("}\n\n")
-				continue
-			}
-			headersFields := responseHeaderFieldsWithDefaults(response)
-			if len(headersFields) > 0 {
-				headersTypeName := "Gen" + name + statusCode + "ResponseHeaders"
-				emitOwnedResponseHeaders(&b, headersTypeName, headersFields)
-				b.WriteString("// Gen" + name + statusCode + "Response is the APIGen concrete response for " + name + " " + statusCode + ".\n")
-				b.WriteString("type Gen" + name + statusCode + "Response struct {\n")
-				b.WriteString("\tHeaders " + headersTypeName + "\n")
-				b.WriteString("}\n\n")
-				b.WriteString("// Visit" + name + "Response writes " + name + " " + statusCode + " responses to the client.\n")
-				b.WriteString("func (response Gen" + name + statusCode + "Response) Visit" + name + "Response(w http.ResponseWriter) error {\n")
-				emitDirectHeaderWrites(&b, headersFields)
-				b.WriteString("\tw.WriteHeader(" + statusCode + ")\n")
-				b.WriteString("\treturn nil\n")
-				b.WriteString("}\n\n")
-				continue
-			}
-
-			b.WriteString("// Gen" + name + statusCode + "Response is the APIGen concrete response for " + name + " " + statusCode + ".\n")
-			b.WriteString("type Gen" + name + statusCode + "Response struct{}\n\n")
-			b.WriteString("// Visit" + name + "Response writes " + name + " " + statusCode + " responses to the client.\n")
-			b.WriteString("func (response Gen" + name + statusCode + "Response) Visit" + name + "Response(w http.ResponseWriter) error {\n")
-			b.WriteString("\tw.WriteHeader(" + statusCode + ")\n")
-			b.WriteString("\treturn nil\n")
-			b.WriteString("}\n\n")
+			emitOperationResponse(&b, doc, name, response)
 		}
 		emitMissingSharedErrorResponses(&b, endpoint)
 		if endpoint.RequestBody != nil {
+			if content, ok := ir.PrimaryRequestBodyContent(endpoint); ok && content.BodyKind == "multipart" {
+				if err := emitMultipartRequestBody(&b, doc, name, content); err != nil {
+					return nil, err
+				}
+			}
 			bodyTypeName, err := requestBodyTypeName(doc, endpoint)
 			if err != nil {
 				return nil, err
 			}
-			b.WriteString("// Gen" + name + "JSONBody aliases the APIGen strict JSON request body schema for " + name + ".\n")
-			b.WriteString("type Gen" + name + "JSONBody = " + bodyTypeName + "\n\n")
+			b.WriteString("// Gen" + name + "Body aliases the APIGen strict request body schema for " + name + ".\n")
+			b.WriteString("type Gen" + name + "Body = " + bodyTypeName + "\n\n")
 		}
 	}
 
@@ -602,16 +599,65 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		}
 
 		if endpoint.RequestBody != nil {
-			b.WriteString("\tvar body Gen" + name + "JSONBody\n")
+			content, _ := ir.PrimaryRequestBodyContent(endpoint)
+			b.WriteString("\tvar body Gen" + name + "Body\n")
 			requiredFields := requestBodyRequiredFields(doc, endpoint)
-			if len(requiredFields) > 0 {
-				b.WriteString("\tif err := decodeAPIGenJSONBody(r.Body, &body, " + renderGoStringSlice(requiredFields) + "...); err != nil {\n")
-			} else {
-				b.WriteString("\tif err := decodeAPIGenJSONBody(r.Body, &body); err != nil {\n")
+			requiredBody := "false"
+			if endpoint.RequestBody.Required {
+				requiredBody = "true"
 			}
-			b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
-			b.WriteString("\t\treturn\n")
-			b.WriteString("\t}\n")
+			requiredFieldArgs := ""
+			if len(requiredFields) > 0 {
+				requiredFieldArgs = ", " + renderGoStringSlice(requiredFields) + "..."
+			}
+			switch content.BodyKind {
+			case "text":
+				b.WriteString("\tvalue, err := decodeAPIGenTextBody(r.Body, " + requiredBody + ")\n")
+				b.WriteString("\tif err != nil {\n")
+				b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
+				b.WriteString("\t\treturn\n")
+				b.WriteString("\t}\n")
+				b.WriteString("\tbody = value\n")
+			case "binary", "file":
+				b.WriteString("\tvalue, err := decodeAPIGenBytesBody(r.Body, " + requiredBody + ")\n")
+				b.WriteString("\tif err != nil {\n")
+				b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
+				b.WriteString("\t\treturn\n")
+				b.WriteString("\t}\n")
+				b.WriteString("\tbody = value\n")
+			case "form_urlencoded":
+				b.WriteString("\tif err := decodeAPIGenFormBody(r, &body, " + requiredBody + requiredFieldArgs + "); err != nil {\n")
+				b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
+				b.WriteString("\t\treturn\n")
+				b.WriteString("\t}\n")
+			case "multipart":
+				if endpoint.RequestBody.Required {
+					b.WriteString("\tif err := r.ParseMultipartForm(32 << 20); err != nil {\n")
+				} else {
+					b.WriteString("\tif r.ContentLength != 0 {\n")
+					b.WriteString("\t\tif err := r.ParseMultipartForm(32 << 20); err != nil {\n")
+				}
+				if endpoint.RequestBody.Required {
+					b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, fmt.Sprintf(\"parse multipart body: %v\", err))\n")
+					b.WriteString("\t\treturn\n")
+					b.WriteString("\t}\n")
+				} else {
+					b.WriteString("\t\t\twriteAPIGenError(w, http.StatusBadRequest, fmt.Sprintf(\"parse multipart body: %v\", err))\n")
+					b.WriteString("\t\t\treturn\n")
+					b.WriteString("\t\t}\n")
+				}
+				if err := emitMultipartDecode(&b, doc, name, content); err != nil {
+					return nil, err
+				}
+				if !endpoint.RequestBody.Required {
+					b.WriteString("\t}\n")
+				}
+			default:
+				b.WriteString("\tif err := decodeAPIGenJSONBody(r.Body, &body, " + requiredBody + requiredFieldArgs + "); err != nil {\n")
+				b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
+				b.WriteString("\t\treturn\n")
+				b.WriteString("\t}\n")
+			}
 			b.WriteString("\trequest.Body = &body\n")
 		}
 
@@ -648,6 +694,263 @@ func emitSpecJSON(docIR ir.Document) (string, error) {
 		return "", fmt.Errorf("marshal embedded openapi json: %w", err)
 	}
 	return string(jsonBytes), nil
+}
+
+func emitMultipartRequestBody(b *strings.Builder, doc ir.Document, operationName string, content ir.BodyContent) error {
+	b.WriteString("// Gen" + operationName + "MultipartBody represents the APIGen strict multipart request body for " + operationName + ".\n")
+	b.WriteString("type Gen" + operationName + "MultipartBody struct {\n")
+	for _, part := range content.Parts {
+		partType, err := multipartPartTypeName(doc, part)
+		if err != nil {
+			return err
+		}
+		if !part.Required {
+			partType = "*" + partType
+		}
+		b.WriteString("\t" + exportedName(part.Name) + " " + partType + "\n")
+	}
+	b.WriteString("}\n\n")
+	return nil
+}
+
+func emitMultipartDecode(b *strings.Builder, doc ir.Document, operationName string, content ir.BodyContent) error {
+	for _, part := range content.Parts {
+		fieldName := exportedName(part.Name)
+		rawName := lowerCamelName(part.Name) + "Raw"
+		okName := lowerCamelName(part.Name) + "OK"
+		b.WriteString("\t" + rawName + ", " + okName + ", err := readAPIGenMultipartPart(r, " + strconv.Quote(part.Name) + ")\n")
+		b.WriteString("\tif err != nil {\n")
+		b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
+		b.WriteString("\t\treturn\n")
+		b.WriteString("\t}\n")
+		if part.Required {
+			b.WriteString("\tif !" + okName + " {\n")
+			b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, " + strconv.Quote(part.Name+" is required") + ")\n")
+			b.WriteString("\t\treturn\n")
+			b.WriteString("\t}\n")
+		} else {
+			b.WriteString("\tif " + okName + " {\n")
+		}
+		valueName := lowerCamelName(part.Name) + "Value"
+		switch part.BodyKind {
+		case "json", "form_urlencoded":
+			partType, err := multipartPartTypeName(doc, part)
+			if err != nil {
+				return err
+			}
+			b.WriteString("\tvar " + valueName + " " + partType + "\n")
+			b.WriteString("\tif err := json.Unmarshal(" + rawName + ", &" + valueName + "); err != nil {\n")
+			b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, fmt.Sprintf(" + strconv.Quote("invalid multipart part "+part.Name+": %v") + ", err))\n")
+			b.WriteString("\t\treturn\n")
+			b.WriteString("\t}\n")
+			if part.Required {
+				b.WriteString("\tbody." + fieldName + " = " + valueName + "\n")
+			} else {
+				b.WriteString("\tbody." + fieldName + " = &" + valueName + "\n")
+			}
+		case "text":
+			b.WriteString("\t" + valueName + " := string(" + rawName + ")\n")
+			if part.Required {
+				b.WriteString("\tbody." + fieldName + " = " + valueName + "\n")
+			} else {
+				b.WriteString("\tbody." + fieldName + " = &" + valueName + "\n")
+			}
+		case "binary", "file":
+			b.WriteString("\t" + valueName + " := " + rawName + "\n")
+			if part.Required {
+				b.WriteString("\tbody." + fieldName + " = " + valueName + "\n")
+			} else {
+				b.WriteString("\tbody." + fieldName + " = &" + valueName + "\n")
+			}
+		default:
+			return fmt.Errorf("multipart request body generation for %s part %q has unsupported body kind %q", operationName, part.Name, part.BodyKind)
+		}
+		if !part.Required {
+			b.WriteString("\t}\n")
+		}
+	}
+	return nil
+}
+
+func multipartPartTypeName(doc ir.Document, part ir.MultipartPart) (string, error) {
+	switch part.BodyKind {
+	case "text":
+		return "string", nil
+	case "binary", "file":
+		return "[]byte", nil
+	case "json", "form_urlencoded":
+		if part.Schema == nil {
+			return "", fmt.Errorf("multipart part %q requires a schema", part.Name)
+		}
+		if ref, ok := normalizedSchemaRefName(*part.Schema); ok {
+			if _, ok := doc.Schemas[ref]; ok {
+				return "GenSchema" + exportedName(ref), nil
+			}
+		}
+		if strings.EqualFold(part.Schema.Type, "object") {
+			return "", fmt.Errorf("multipart part %q requires a named IR schema", part.Name)
+		}
+		return schemaTypeName(*part.Schema), nil
+	default:
+		return "", fmt.Errorf("multipart part %q has unsupported body kind %q", part.Name, part.BodyKind)
+	}
+}
+
+func emitOperationResponse(b *strings.Builder, doc ir.Document, operationName string, response ir.Response) {
+	statusCode := fmt.Sprintf("%d", response.StatusCode)
+	if shared, ok := sharedErrorResponseType(response); ok && len(response.Contents) <= 1 {
+		b.WriteString("// Gen" + operationName + statusCode + "ResponseHeaders aliases the APIGen shared response headers for " + operationName + " " + statusCode + " errors.\n")
+		b.WriteString("type Gen" + operationName + statusCode + "ResponseHeaders = Gen" + shared + "ResponseHeaders\n\n")
+		b.WriteString("// Gen" + operationName + statusCode + "JSONResponse is the APIGen concrete JSON response for " + operationName + " " + statusCode + ".\n")
+		b.WriteString("type Gen" + operationName + statusCode + "JSONResponse struct{ Gen" + shared + "JSONResponse }\n\n")
+		b.WriteString("// Visit" + operationName + "Response writes " + operationName + " " + statusCode + " responses to the client.\n")
+		b.WriteString("func (response Gen" + operationName + statusCode + "JSONResponse) Visit" + operationName + "Response(w http.ResponseWriter) error {\n")
+		emitDirectHeaderWrites(b, responseHeaderFields(response))
+		b.WriteString("\tw.Header().Set(\"Content-Type\", \"application/json\")\n")
+		b.WriteString("\tw.WriteHeader(" + statusCode + ")\n")
+		b.WriteString("\treturn json.NewEncoder(w).Encode(response.Body)\n")
+		b.WriteString("}\n\n")
+		return
+	}
+
+	headersFields := responseHeaderFieldsWithDefaults(response)
+	headersTypeName := "Gen" + operationName + statusCode + "ResponseHeaders"
+	if len(headersFields) > 0 {
+		emitOwnedResponseHeaders(b, headersTypeName, headersFields)
+	}
+	if len(response.Contents) == 0 {
+		typeName := "Gen" + operationName + statusCode + "Response"
+		b.WriteString("// " + typeName + " is the APIGen concrete response for " + operationName + " " + statusCode + ".\n")
+		b.WriteString("type " + typeName + " struct")
+		if len(headersFields) > 0 {
+			b.WriteString(" {\n\tHeaders " + headersTypeName + "\n}")
+		} else {
+			b.WriteString("{}")
+		}
+		b.WriteString("\n\n")
+		b.WriteString("// Visit" + operationName + "Response writes " + operationName + " " + statusCode + " responses to the client.\n")
+		b.WriteString("func (response " + typeName + ") Visit" + operationName + "Response(w http.ResponseWriter) error {\n")
+		emitDirectHeaderWrites(b, headersFields)
+		b.WriteString("\tw.WriteHeader(" + statusCode + ")\n")
+		b.WriteString("\treturn nil\n")
+		b.WriteString("}\n\n")
+		return
+	}
+
+	multiContent := len(response.Contents) > 1
+	for _, content := range response.Contents {
+		emitOperationContentResponse(b, doc, operationName, response, content, headersFields, headersTypeName, multiContent)
+	}
+}
+
+func emitOperationContentResponse(
+	b *strings.Builder,
+	doc ir.Document,
+	operationName string,
+	response ir.Response,
+	content ir.BodyContent,
+	headersFields []ownedHeaderField,
+	headersTypeName string,
+	multiContent bool,
+) {
+	statusCode := fmt.Sprintf("%d", response.StatusCode)
+	typeName := "Gen" + operationName + statusCode + responseTypeSuffix(content, true, multiContent)
+	b.WriteString("// " + typeName + " is the APIGen concrete response for " + operationName + " " + statusCode + ".\n")
+	bodyType := responseContentTypeName(doc, content)
+	b.WriteString("type " + typeName + " struct {\n")
+	b.WriteString("\tBody " + bodyType + "\n")
+	if len(headersFields) > 0 {
+		b.WriteString("\tHeaders " + headersTypeName + "\n")
+	}
+	b.WriteString("}\n\n")
+	b.WriteString("// Visit" + operationName + "Response writes " + operationName + " " + statusCode + " responses to the client.\n")
+	b.WriteString("func (response " + typeName + ") Visit" + operationName + "Response(w http.ResponseWriter) error {\n")
+	emitDirectHeaderWrites(b, headersFields)
+	b.WriteString("\tw.Header().Set(\"Content-Type\", " + strconv.Quote(content.ContentType) + ")\n")
+	b.WriteString("\tw.WriteHeader(" + statusCode + ")\n")
+	emitResponseBodyWrite(b, content)
+	b.WriteString("}\n\n")
+}
+
+func responseTypeSuffix(content ir.BodyContent, ok bool, multiContent bool) string {
+	if !ok {
+		return "Response"
+	}
+	if multiContent {
+		return mediaTypeResponseSuffix(content.ContentType)
+	}
+	switch content.BodyKind {
+	case "json":
+		return "JSONResponse"
+	case "text":
+		return "TextResponse"
+	case "binary":
+		return "BinaryResponse"
+	case "file":
+		return "FileResponse"
+	case "form_urlencoded":
+		return "FormResponse"
+	default:
+		return "Response"
+	}
+}
+
+func mediaTypeResponseSuffix(contentType string) string {
+	mediaType := strings.TrimSpace(strings.Split(contentType, ";")[0])
+	parts := strings.FieldsFunc(mediaType, func(r rune) bool {
+		switch r {
+		case '/', '+', '.', '-', '_':
+			return true
+		default:
+			return false
+		}
+	})
+	if len(parts) == 0 {
+		return "Response"
+	}
+	var b strings.Builder
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		if strings.EqualFold(part, "json") {
+			b.WriteString("JSON")
+			continue
+		}
+		b.WriteString(exportedName(part))
+	}
+	if b.Len() == 0 {
+		return "Response"
+	}
+	b.WriteString("Response")
+	return b.String()
+}
+
+func responseContentTypeName(doc ir.Document, content ir.BodyContent) string {
+	if content.Schema == nil {
+		return "[]byte"
+	}
+	switch content.BodyKind {
+	case "text":
+		return "string"
+	case "binary", "file":
+		return "[]byte"
+	default:
+		return responseBodyTypeName(doc, *content.Schema)
+	}
+}
+
+func emitResponseBodyWrite(b *strings.Builder, content ir.BodyContent) {
+	switch content.BodyKind {
+	case "text":
+		b.WriteString("\t_, err := w.Write([]byte(response.Body))\n")
+		b.WriteString("\treturn err\n")
+	case "binary", "file":
+		b.WriteString("\t_, err := w.Write(response.Body)\n")
+		b.WriteString("\treturn err\n")
+	default:
+		b.WriteString("\treturn json.NewEncoder(w).Encode(response.Body)\n")
+	}
 }
 
 func exportedName(operationID string) string {
@@ -956,18 +1259,40 @@ func requestBodyTypeName(doc ir.Document, endpoint ir.Endpoint) (string, error) 
 	if endpoint.RequestBody == nil {
 		return "", fmt.Errorf("request body generation for %s requires a named IR schema", endpoint.OperationID)
 	}
+	content, ok := ir.PrimaryRequestBodyContent(endpoint)
+	if !ok {
+		return "", fmt.Errorf("request body generation for %s requires content", endpoint.OperationID)
+	}
+	switch content.BodyKind {
+	case "text":
+		return "string", nil
+	case "binary", "file":
+		return "[]byte", nil
+	case "multipart":
+		return "Gen" + exportedName(endpoint.OperationID) + "MultipartBody", nil
+	}
 
 	if schemaName, ok := ir.ResolveRequestBodySchemaName(doc, endpoint); ok {
 		return "GenSchema" + exportedName(schemaName), nil
 	}
-	return "", fmt.Errorf("request body generation for %s requires a named IR schema", endpoint.OperationID)
+	if content.Schema != nil {
+		if strings.EqualFold(content.Schema.Type, "object") {
+			return "", fmt.Errorf("request body generation for %s requires a named IR schema", endpoint.OperationID)
+		}
+		return schemaTypeName(*content.Schema), nil
+	}
+	return "", fmt.Errorf("request body generation for %s requires a schema", endpoint.OperationID)
 }
 
 func requestBodyRequiredFields(doc ir.Document, endpoint ir.Endpoint) []string {
 	if endpoint.RequestBody == nil {
 		return nil
 	}
-	schema, ok := resolveSchema(doc, endpoint.RequestBody.Schema)
+	content, ok := ir.PrimaryRequestBodyContent(endpoint)
+	if !ok || content.Schema == nil {
+		return nil
+	}
+	schema, ok := resolveSchema(doc, *content.Schema)
 	if !ok {
 		return nil
 	}
@@ -1003,7 +1328,11 @@ func emitMissingSharedErrorResponses(b *strings.Builder, endpoint ir.Endpoint) {
 		response := ir.Response{
 			StatusCode: statusCode,
 			Headers:    defaultSharedErrorHeaders(statusCode),
-			Schema:     &ir.SchemaRef{Ref: "Error"},
+			Contents: []ir.BodyContent{{
+				ContentType: "application/json",
+				BodyKind:    "json",
+				Schema:      &ir.SchemaRef{Ref: "Error"},
+			}},
 		}
 		shared, ok := sharedErrorResponseType(response)
 		if !ok {
@@ -1105,7 +1434,8 @@ func responseHeaderFieldsWithDefaults(response ir.Response) []ownedHeaderField {
 }
 
 func sharedErrorResponseType(response ir.Response) (string, bool) {
-	if response.Schema == nil || !isErrorSchema(*response.Schema) {
+	content, ok := ir.PrimaryResponseContent(response)
+	if !ok || content.Schema == nil || !isErrorSchema(*content.Schema) {
 		return "", false
 	}
 
@@ -1184,16 +1514,17 @@ type ownedHeaderField struct {
 }
 
 func usesDirectOwnedResponseSchema(response ir.Response, doc ir.Document) bool {
-	if response.Schema == nil {
+	content, ok := ir.PrimaryResponseContent(response)
+	if !ok || content.Schema == nil {
 		return false
 	}
 	if shape, ok, err := ir.ResponseShapeMetadata(response); err == nil && ok && shape.Kind == "wrapped_json" {
 		return false
 	}
-	if isErrorSchema(*response.Schema) {
+	if isErrorSchema(*content.Schema) {
 		return false
 	}
-	_, ok := responseSchemaTypeName(doc, *response.Schema)
+	_, ok = responseSchemaTypeName(doc, *content.Schema)
 	return ok
 }
 

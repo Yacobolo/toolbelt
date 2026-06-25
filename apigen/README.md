@@ -9,7 +9,7 @@ Module path: `github.com/Yacobolo/toolbelt/apigen`
 APIGen has two contract layers:
 
 - TypeSpec authoring input for humans
-- JSON IR `v1` for generators
+- JSON IR `v2` for generators
 
 Canonical OpenAPI is the published API artifact. JSON IR is the compatibility boundary between TypeSpec and the Go emitters. Repo-owned OpenAPI extensions such as `x-authz` are preserved there.
 
@@ -18,7 +18,7 @@ Canonical OpenAPI is the published API artifact. JSON IR is the compatibility bo
 Install the CLI:
 
 ```bash
-go install github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.3.0
+go install github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.3.2
 ```
 
 Or run from this module during local development:
@@ -137,16 +137,104 @@ APIGen-owned extension keys are reserved. Use APIGen decorators for `x-authz` an
 Install as a dependency with:
 
 ```bash
-go get github.com/Yacobolo/toolbelt/apigen@v0.3.0
+go get github.com/Yacobolo/toolbelt/apigen@v0.3.2
 ```
 
 ## Contract Notes
 
-JSON IR currently supports schema version `v1`. Required root fields are `schema_version`, `info.title`, `info.version`, and at least one endpoint. Endpoint extensions preserve operation-level `x-*` vendor metadata; APIGen-owned endpoint extensions include `x-authz` and `x-apigen-manual`. Supported response extensions include `x-apigen-response-shape`.
+JSON IR currently supports schema version `v2`. Required root fields are `schema_version`, `info.title`, `info.version`, and at least one endpoint. Request and response bodies use ordered `contents` entries with explicit `content_type` and `body_kind`. Endpoint extensions preserve operation-level `x-*` vendor metadata; APIGen-owned endpoint extensions include `x-authz` and `x-apigen-manual`. Supported response extensions include `x-apigen-response-shape`.
 
 Generated request bodies are contract-first:
 
-- request bodies used in generated server and request-model output must resolve to named IR-owned schemas
-- generation fails explicitly when a request body cannot be mapped to a named IR schema
+- JSON and form object bodies used in generated Go output should resolve to named IR-owned schemas
+- text bodies generate `string`, and binary/file bodies generate `[]byte`
+- multipart bodies generate a `Gen<Operation>MultipartBody` struct; JSON/form parts decode into generated schema types, text parts into `string`, and binary/file parts into `[]byte`
+- generation fails explicitly when an anonymous object body cannot be mapped to a named IR schema
+
+Generated response writers are content-aware. Single-content responses keep concise names such as `GenGetArtifact200JSONResponse`, `GenGetArtifact200TextResponse`, and `GenGetArtifact200BinaryResponse`. When one status can return multiple media types, APIGen emits one concrete type per content variant using sanitized media names, for example `GenGetArtifact200ApplicationJSONResponse` and `GenGetArtifact200ApplicationOctetStreamResponse`. Each writer sets the authored `Content-Type`.
+
+## Preferred TypeSpec Style
+
+Prefer TypeSpec-native HTTP helpers and aliases over APIGen-shaped response boilerplate:
+
+```typespec
+using Http;
+
+model Error {
+  code: int32;
+  message: string;
+}
+
+model OkJson<T> {
+  ...OkResponse;
+  ...Body<T>;
+}
+
+model BadRequest {
+  ...BadRequestResponse;
+  ...Body<Error>;
+}
+
+model RateLimited {
+  ...Response<429>;
+  ...Body<Error>;
+}
+
+alias CommonErrors = BadRequest | RateLimited;
+
+@route("/artifacts")
+namespace Artifacts {
+  @route("/{id}/blob")
+  @put
+  op replaceBlob(
+    @path id: string,
+    @header contentType: "application/octet-stream",
+    @body body: bytes,
+  ): OkJson<Artifact> | CommonErrors;
+}
+```
+
+APIGen v0.3.2 follows resolved `@typespec/http` semantics for JSON, text, binary, file, urlencoded form, multipart, optional bodies, response helpers, aliased response unions, and route containers.
+
+LibreDash-style contracts should use standard HTTP transport instead of raw-body extensions. Before:
+
+```typespec
+model DeploymentArtifactUploadRequest {
+  value: bytes;
+}
+
+@extension("x-libredash-dispatch", "raw-body")
+op uploadDeploymentArtifact(@body body: DeploymentArtifactUploadRequest): UploadDeploymentArtifactOK | BadRequest | Unauthorized | Forbidden;
+```
+
+After:
+
+```typespec
+alias UploadDeploymentArtifactOK = OkJson<DeploymentArtifactResponse>;
+alias CommonErrors = BadRequest | Unauthorized | Forbidden;
+
+@route("/api/v1")
+namespace Deployments {
+  @route("/workspaces/{workspace}/deployments/{deployment}/artifact")
+  @put
+  op uploadDeploymentArtifact(
+    @path workspace: string,
+    @path deployment: string,
+    @header contentType: "application/octet-stream",
+    @body body: bytes,
+  ): UploadDeploymentArtifactOK | CommonErrors;
+}
+```
+
+## v0.3.2 Migration Notes
+
+- JSON IR changes from `schema_version: "v1"` to `"v2"`.
+- `request_body.schema/content_type` becomes `request_body.contents[]`.
+- `response.schema/content_type/any_of` becomes `response.contents[]`.
+- Generated non-JSON request/response types are no longer named `JSONBody` or `JSONResponse`.
+- Multi-content responses now generate media-specific concrete response names such as `ApplicationJSONResponse` and `ApplicationOctetStreamResponse`.
+- Multipart requests now generate typed multipart body structs and server-side `ParseMultipartForm` decoding.
+- `GenericRequest` inference is removed; name the TypeSpec model you want APIGen to generate.
+- v0.3.1 remains the pinned all-JSON release for users who need the old generated shape.
 
 See [`ir/CONTRACT.md`](./ir/CONTRACT.md) for the full IR contract and run `go test ./...` for the module smoke coverage.

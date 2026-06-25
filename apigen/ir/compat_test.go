@@ -12,10 +12,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestV1FixtureLoadsAndEmits(t *testing.T) {
+func TestV2FixtureLoadsAndEmits(t *testing.T) {
 	t.Helper()
 
-	path := filepath.Join("testdata", "document_v1.json")
+	path := filepath.Join("testdata", "document_v2.json")
 	doc, err := ir.Load(path)
 	require.NoError(t, err)
 	require.Equal(t, ir.CurrentSchemaVersion, doc.SchemaVersion)

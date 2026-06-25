@@ -43,6 +43,7 @@ type Field struct {
 type RequestBodySpec struct {
 	Required    bool    `json:"required,omitempty"`
 	ContentType string  `json:"content_type,omitempty"`
+	BodyKind    string  `json:"body_kind,omitempty"`
 	SchemaType  string  `json:"schema_type,omitempty"`
 	InputMode   string  `json:"input_mode,omitempty"`
 	Fields      []Field `json:"fields,omitempty"`

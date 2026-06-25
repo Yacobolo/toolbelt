@@ -15,7 +15,7 @@ func TestLoad_Valid(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v1",
+  "schema_version": "v2",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [
@@ -51,7 +51,7 @@ func TestLoad_DuplicateOperation(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v1",
+  "schema_version": "v2",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [
@@ -70,7 +70,7 @@ func TestLoad_NormalizesResponseHeaders(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v1",
+  "schema_version": "v2",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{
@@ -109,7 +109,7 @@ func TestLoad_RejectsDuplicateResponseHeaders(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v1",
+  "schema_version": "v2",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{
@@ -132,13 +132,41 @@ func TestLoad_RejectsDuplicateResponseHeaders(t *testing.T) {
 	require.ErrorContains(t, err, "duplicate header")
 }
 
+func TestLoad_RejectsDuplicateResponseStatuses(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ir.json")
+
+	require.NoError(t, os.WriteFile(path, []byte(`{
+  "schema_version": "v2",
+  "api": {"base_path": "/v1"},
+  "info": {"title": "Duck", "version": "0.1.0"},
+  "endpoints": [{
+    "method": "get",
+    "path": "/widgets/{id}",
+    "operation_id": "getWidget",
+    "responses": [{
+      "status_code": 200,
+      "description": "json"
+    }, {
+      "status_code": 200,
+      "description": "binary"
+    }]
+  }]
+}`), 0o644))
+
+	_, err := Load(path)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "duplicate response status_code 200")
+}
+
 func TestLoad_ValidatesResponseShapeMetadata(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v1",
+  "schema_version": "v2",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{
@@ -168,7 +196,7 @@ func TestLoad_AcceptsEndpointVendorExtensions(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v1",
+  "schema_version": "v2",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{
@@ -200,7 +228,7 @@ func TestLoad_RejectsNonVendorEndpointExtensions(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v1",
+  "schema_version": "v2",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{
@@ -223,7 +251,7 @@ func TestLoad_RejectsUnknownAPIGenEndpointExtensions(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v1",
+  "schema_version": "v2",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{
@@ -270,7 +298,7 @@ func TestLoad_RejectsMalformedAPIGenEndpointExtensions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Helper()
 			err := Validate(Document{
-				SchemaVersion: "v1",
+				SchemaVersion: "v2",
 				API:           API{BasePath: "/v1"},
 				Info:          Info{Title: "Duck", Version: "0.1.0"},
 				Endpoints: []Endpoint{{
@@ -291,7 +319,7 @@ func TestLoad_RejectsUnknownAPIGenResponseExtensions(t *testing.T) {
 	t.Helper()
 
 	err := Validate(Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           API{BasePath: "/v1"},
 		Info:          Info{Title: "Duck", Version: "0.1.0"},
 		Endpoints: []Endpoint{{
@@ -314,7 +342,7 @@ func TestValidate_RejectsNonJSONCompatibleEndpointExtensionValues(t *testing.T) 
 	t.Helper()
 
 	err := Validate(Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           API{BasePath: "/v1"},
 		Info:          Info{Title: "Duck", Version: "0.1.0"},
 		Endpoints: []Endpoint{{
@@ -337,7 +365,7 @@ func TestLoad_RejectsMissingBasePath(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v1",
+  "schema_version": "v2",
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{"method": "get", "path": "/healthz", "operation_id": "getHealth", "responses": [{"status_code": 200, "description": "ok"}]}]
 }`), 0o644))
@@ -354,14 +382,14 @@ func TestLoad_RejectsUnknownSchemaRef(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v1",
+  "schema_version": "v2",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{
     "method": "post",
     "path": "/widgets",
     "operation_id": "createWidget",
-    "request_body": {"schema": {"ref": "MissingRequest"}},
+    "request_body": {"contents": [{"content_type": "application/json", "body_kind": "json", "schema": {"ref": "MissingRequest"}}]},
     "responses": [{"status_code": 201, "description": "created"}]
   }]
 }`), 0o644))
@@ -378,7 +406,7 @@ func TestLoad_RejectsUnsupportedPathArrayParameter(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v1",
+  "schema_version": "v2",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{

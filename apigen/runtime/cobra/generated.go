@@ -177,6 +177,12 @@ func newGeneratedLeafCommand(spec CommandSpec, client *Client, opts RuntimeOptio
 		if spec.RequestBody.InputMode == "json" || spec.RequestBody.InputMode == "flags_or_json" {
 			cmd.Flags().String("json", "", "JSON input (raw string or @filename or - for stdin)")
 		}
+		if spec.RequestBody.InputMode == "text" {
+			cmd.Flags().String("text", "", "Text input (raw string or @filename or - for stdin)")
+		}
+		if spec.RequestBody.InputMode == "binary" || spec.RequestBody.InputMode == "file" {
+			cmd.Flags().String("file", "", "Binary/file input path (- for stdin)")
+		}
 		if spec.RequestBody.InputMode == "flags" || spec.RequestBody.InputMode == "flags_or_json" {
 			for _, field := range spec.RequestBody.Fields {
 				if _, ok := positional["body:"+field.Name]; ok {
@@ -270,7 +276,8 @@ func runGeneratedCommand(cmd *spcobra.Command, client *Client, spec CommandSpec,
 		return renderResponseBody(cmd, spec, bodyBytes, opts)
 	}
 
-	resp, err := client.Do(spec.Method, urlPath, query, body)
+	contentType, bodyKind := requestContent(spec.RequestBody)
+	resp, err := client.Do(spec.Method, urlPath, query, body, contentType, bodyKind)
 	if err != nil {
 		return err
 	}
@@ -302,6 +309,24 @@ func buildRequestBody(cmd *spcobra.Command, spec CommandSpec, argValues map[stri
 	switch requestBody.InputMode {
 	case "none":
 		return nil, nil
+	case "text":
+		textInput, _ := cmd.Flags().GetString("text")
+		if strings.TrimSpace(textInput) == "" {
+			if requestBody.Required {
+				return nil, fmt.Errorf("request body is required; use --text")
+			}
+			return nil, nil
+		}
+		return readRawStringInput(textInput)
+	case "binary", "file":
+		path, _ := cmd.Flags().GetString("file")
+		if strings.TrimSpace(path) == "" {
+			if requestBody.Required {
+				return nil, fmt.Errorf("request body is required; use --file")
+			}
+			return nil, nil
+		}
+		return readRawBytesInput(path)
 	case "json":
 		jsonInput, _ := cmd.Flags().GetString("json")
 		if strings.TrimSpace(jsonInput) == "" {
@@ -323,10 +348,13 @@ func buildRequestBody(cmd *spcobra.Command, spec CommandSpec, argValues map[stri
 		}
 
 		body := map[string]any{}
+		form := url.Values{}
 		setCount := 0
 		for _, field := range requestBody.Fields {
 			if value, ok := argValues["body:"+field.Name]; ok {
-				body[field.Name] = castStringValue(value, field.Type)
+				casted := castStringValue(value, field.Type)
+				body[field.Name] = casted
+				form.Set(field.Name, fmt.Sprint(casted))
 				setCount++
 				continue
 			}
@@ -342,16 +370,27 @@ func buildRequestBody(cmd *spcobra.Command, spec CommandSpec, argValues map[stri
 				return nil, err
 			}
 			body[field.Name] = value
+			form.Set(field.Name, fmt.Sprint(value))
 			setCount++
 		}
 
 		if requestBody.Required && setCount == 0 {
 			return nil, fmt.Errorf("request body is required")
 		}
+		if requestBody.BodyKind == "form_urlencoded" {
+			return form, nil
+		}
 		return body, nil
 	default:
 		return nil, fmt.Errorf("unsupported request body input mode %q", requestBody.InputMode)
 	}
+}
+
+func requestContent(requestBody *RequestBodySpec) (string, string) {
+	if requestBody == nil {
+		return "", ""
+	}
+	return requestBody.ContentType, requestBody.BodyKind
 }
 
 func fetchAllPages(client *Client, spec CommandSpec, path string, baseQuery url.Values) ([]byte, error) {
@@ -375,7 +414,7 @@ func fetchAllPages(client *Client, spec CommandSpec, path string, baseQuery url.
 			query.Set("page_token", pageToken)
 		}
 
-		resp, err := client.Do(spec.Method, path, query, nil)
+		resp, err := client.Do(spec.Method, path, query, nil, "", "")
 		if err != nil {
 			return nil, err
 		}
@@ -752,6 +791,35 @@ func readRawJSONInput(jsonInput string) (any, error) {
 	}
 
 	return raw, nil
+}
+
+func readRawStringInput(value string) (string, error) {
+	if value == "-" {
+		data, err := os.ReadFile("/dev/stdin")
+		if err != nil {
+			return "", fmt.Errorf("read stdin: %w", err)
+		}
+		return string(data), nil
+	}
+	if strings.HasPrefix(value, "@") {
+		data, err := os.ReadFile(value[1:])
+		if err != nil {
+			return "", fmt.Errorf("read file: %w", err)
+		}
+		return string(data), nil
+	}
+	return value, nil
+}
+
+func readRawBytesInput(path string) ([]byte, error) {
+	if path == "-" {
+		data, err := os.ReadFile("/dev/stdin")
+		if err != nil {
+			return nil, fmt.Errorf("read stdin: %w", err)
+		}
+		return data, nil
+	}
+	return os.ReadFile(path)
 }
 
 func outputFormat(cmd *spcobra.Command) OutputFormat {

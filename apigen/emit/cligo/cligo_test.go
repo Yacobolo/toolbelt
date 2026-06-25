@@ -11,7 +11,7 @@ import (
 func TestEmit(t *testing.T) {
 	t.Helper()
 	doc := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/v1"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -34,7 +34,7 @@ func TestEmit(t *testing.T) {
 				Parameters: []ir.Parameter{
 					{Name: "catalogName", In: "path", Required: true, Description: "Catalog to query", Schema: ir.SchemaRef{Type: "string"}},
 				},
-				RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "CreateQueryRequest"}},
+				RequestBody: &ir.RequestBody{Contents: []ir.BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Ref: "CreateQueryRequest"}}}},
 				Responses:   []ir.Response{{StatusCode: 200, Description: "ok"}},
 				CLI: &ir.CLI{
 					Command: []string{"query", "execute"},
@@ -51,7 +51,7 @@ func TestEmit(t *testing.T) {
 	require.Contains(t, string(b), "Description: \"Runs SQL against the default catalog\"")
 	require.Contains(t, string(b), `Path: "/v1/query"`)
 	require.Contains(t, string(b), "Parameters: []apigencobra.Param{{Name: \"catalogName\", In: \"path\", Type: \"string\", Description: \"Catalog to query\"")
-	require.Contains(t, string(b), "RequestBody: &apigencobra.RequestBodySpec")
+	require.Contains(t, string(b), `RequestBody: &apigencobra.RequestBodySpec{Required: false, ContentType: "application/json", BodyKind: "json"`)
 	require.Contains(t, string(b), "Fields: []apigencobra.Field{{Name: \"sql\", Type: \"string\", Description: \"SQL text to execute\"")
 	require.Contains(t, string(b), "Command: []string{\"query\", \"execute\"}")
 }
@@ -60,7 +60,7 @@ func TestEmit_RejectsInvalidCLI(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/v1"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{

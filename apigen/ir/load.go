@@ -11,7 +11,7 @@ import (
 )
 
 // CurrentSchemaVersion is the supported JSON IR schema version.
-const CurrentSchemaVersion = "v1"
+const CurrentSchemaVersion = "v2"
 
 // Load parses and validates an IR document from disk.
 func Load(path string) (Document, error) {
@@ -92,9 +92,7 @@ func Validate(doc Document) error {
 		if len(endpoint.Responses) == 0 {
 			return fmt.Errorf("endpoint %q must have at least one response", endpoint.OperationID)
 		}
-		if endpoint.RequestBody != nil && strings.TrimSpace(endpoint.RequestBody.ContentType) == "" {
-			endpoint.RequestBody.ContentType = "application/json"
-		}
+		seenResponseStatus := make(map[int]struct{}, len(endpoint.Responses))
 		for _, response := range endpoint.Responses {
 			if err := validateResponseExtensions(response.Extensions, fmt.Sprintf("endpoint %q response %d", endpoint.OperationID, response.StatusCode)); err != nil {
 				return err
@@ -102,6 +100,10 @@ func Validate(doc Document) error {
 			if response.StatusCode <= 0 {
 				return fmt.Errorf("endpoint %q has invalid response status_code %d", endpoint.OperationID, response.StatusCode)
 			}
+			if _, exists := seenResponseStatus[response.StatusCode]; exists {
+				return fmt.Errorf("endpoint %q has duplicate response status_code %d", endpoint.OperationID, response.StatusCode)
+			}
+			seenResponseStatus[response.StatusCode] = struct{}{}
 			if strings.TrimSpace(response.Description) == "" {
 				return fmt.Errorf("endpoint %q response %d description is required", endpoint.OperationID, response.StatusCode)
 			}
@@ -131,13 +133,8 @@ func Validate(doc Document) error {
 				}
 				seenHeaders[strings.ToLower(name)] = struct{}{}
 			}
-			if response.Schema != nil {
-				if err := validateSchemaRefExists(doc, *response.Schema, fmt.Sprintf("endpoint %q response %d schema", endpoint.OperationID, response.StatusCode)); err != nil {
-					return err
-				}
-			}
-			for idx, schemaRef := range response.AnyOf {
-				if err := validateSchemaRefExists(doc, schemaRef, fmt.Sprintf("endpoint %q response %d any_of[%d]", endpoint.OperationID, response.StatusCode, idx)); err != nil {
+			for idx, content := range response.Contents {
+				if err := validateBodyContent(doc, content, fmt.Sprintf("endpoint %q response %d contents[%d]", endpoint.OperationID, response.StatusCode, idx)); err != nil {
 					return err
 				}
 			}
@@ -349,14 +346,65 @@ func validateRequestBodySchema(doc Document, endpoint Endpoint) error {
 	if endpoint.RequestBody == nil {
 		return nil
 	}
-	ref := endpoint.RequestBody.Schema
-	if ref.Ref == "GenericRequest" {
-		if _, ok := ResolveGenericRequestBodySchemaName(doc, endpoint.OperationID); !ok {
-			return fmt.Errorf("endpoint %q generic request body schema could not be resolved", endpoint.OperationID)
-		}
-		return nil
+	if len(endpoint.RequestBody.Contents) == 0 {
+		return fmt.Errorf("endpoint %q request_body must declare at least one content", endpoint.OperationID)
 	}
-	return validateSchemaRefExists(doc, ref, fmt.Sprintf("endpoint %q request_body schema", endpoint.OperationID))
+	for idx, content := range endpoint.RequestBody.Contents {
+		if err := validateBodyContent(doc, content, fmt.Sprintf("endpoint %q request_body contents[%d]", endpoint.OperationID, idx)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateBodyContent(doc Document, content BodyContent, context string) error {
+	if strings.TrimSpace(content.ContentType) == "" {
+		return fmt.Errorf("%s content_type is required", context)
+	}
+	switch content.BodyKind {
+	case "json", "text", "binary", "file", "form_urlencoded", "multipart":
+	default:
+		return fmt.Errorf("%s has unsupported body_kind %q", context, content.BodyKind)
+	}
+	if content.Schema != nil {
+		if err := validateSchemaRefExists(doc, *content.Schema, context+" schema"); err != nil {
+			return err
+		}
+	}
+	for idx, schemaRef := range content.AnyOf {
+		if err := validateSchemaRefExists(doc, schemaRef, fmt.Sprintf("%s any_of[%d]", context, idx)); err != nil {
+			return err
+		}
+	}
+	for idx, part := range content.Parts {
+		if strings.TrimSpace(part.Name) == "" {
+			return fmt.Errorf("%s parts[%d] name is required", context, idx)
+		}
+		if strings.TrimSpace(part.BodyKind) == "" {
+			return fmt.Errorf("%s parts[%d] body_kind is required", context, idx)
+		}
+		switch part.BodyKind {
+		case "json", "text", "binary", "file":
+		default:
+			return fmt.Errorf("%s parts[%d] has unsupported body_kind %q", context, idx, part.BodyKind)
+		}
+		if part.Schema != nil {
+			if err := validateSchemaRefExists(doc, *part.Schema, fmt.Sprintf("%s parts[%d] schema", context, idx)); err != nil {
+				return err
+			}
+		}
+	}
+	switch content.BodyKind {
+	case "multipart":
+		if len(content.Parts) == 0 {
+			return fmt.Errorf("%s multipart content must declare parts", context)
+		}
+	case "json", "text", "binary", "file", "form_urlencoded":
+		if content.Schema == nil && len(content.AnyOf) == 0 {
+			return fmt.Errorf("%s %s content must declare schema or any_of", context, content.BodyKind)
+		}
+	}
+	return nil
 }
 
 func validateSchemaDefinition(doc Document, name string, schema Schema) error {
@@ -378,9 +426,6 @@ func validateSchemaDefinition(doc Document, name string, schema Schema) error {
 
 func validateSchemaRefExists(doc Document, schemaRef SchemaRef, context string) error {
 	if schemaRef.Ref != "" {
-		if schemaRef.Ref == "GenericRequest" {
-			return nil
-		}
 		name, ok := NormalizedSchemaRefName(schemaRef)
 		if !ok {
 			return fmt.Errorf("%s has invalid schema ref %q", context, schemaRef.Ref)
@@ -446,9 +491,6 @@ func Normalize(doc *Document) error {
 			return err
 		}
 		doc.Endpoints[i].CLI = normalizedCLI
-		if doc.Endpoints[i].RequestBody != nil && strings.TrimSpace(doc.Endpoints[i].RequestBody.ContentType) == "" {
-			doc.Endpoints[i].RequestBody.ContentType = "application/json"
-		}
 		for j := range doc.Endpoints[i].Parameters {
 			if doc.Endpoints[i].Parameters[j].In == "query" && doc.Endpoints[i].Parameters[j].Explode == nil {
 				explode := false
@@ -459,9 +501,6 @@ func Normalize(doc *Document) error {
 			return doc.Endpoints[i].Responses[a].StatusCode < doc.Endpoints[i].Responses[b].StatusCode
 		})
 		for j := range doc.Endpoints[i].Responses {
-			if strings.TrimSpace(doc.Endpoints[i].Responses[j].ContentType) == "" {
-				doc.Endpoints[i].Responses[j].ContentType = "application/json"
-			}
 			sort.Slice(doc.Endpoints[i].Responses[j].Headers, func(a, b int) bool {
 				return strings.ToLower(doc.Endpoints[i].Responses[j].Headers[a].Name) < strings.ToLower(doc.Endpoints[i].Responses[j].Headers[b].Name)
 			})
@@ -484,7 +523,7 @@ func validateEndpointCLI(doc Document, endpoint Endpoint, cli *CLI) error {
 	}
 
 	switch cli.BodyInput {
-	case "none", "json", "flags", "flags_or_json":
+	case "none", "json", "flags", "flags_or_json", "text", "binary", "file":
 	default:
 		return fmt.Errorf("endpoint %q cli.body_input has unsupported value %q", endpoint.OperationID, cli.BodyInput)
 	}
@@ -496,11 +535,15 @@ func validateEndpointCLI(doc Document, endpoint Endpoint, cli *CLI) error {
 	}
 
 	bodySchema, hasBodySchema := ResolveRequestBodySchema(doc, endpoint)
+	bodyContent, hasBodyContent := PrimaryRequestBodyContent(endpoint)
 	if endpoint.RequestBody == nil && cli.BodyInput != "none" {
 		return fmt.Errorf("endpoint %q cli.body_input=%q requires request_body", endpoint.OperationID, cli.BodyInput)
 	}
 	if endpoint.RequestBody != nil && (cli.BodyInput == "flags" || cli.BodyInput == "flags_or_json") && (!hasBodySchema || bodySchema.Type != "object") {
 		return fmt.Errorf("endpoint %q cli.body_input=%q requires an object request_body schema", endpoint.OperationID, cli.BodyInput)
+	}
+	if hasBodyContent && bodyContent.BodyKind == "multipart" && cli.BodyInput != "none" {
+		return fmt.Errorf("endpoint %q multipart request bodies are not supported by generated CLI", endpoint.OperationID)
 	}
 
 	parametersByLocation := map[string]map[string]struct{}{
@@ -632,10 +675,26 @@ func normalizeEndpointCLI(doc Document, endpoint Endpoint) (*CLI, error) {
 		cli.BodyInput = "none"
 	}
 	if endpoint.RequestBody != nil && cli.BodyInput == "" {
-		requestBodySchema, ok := ResolveRequestBodySchema(doc, endpoint)
-		if ok && strings.EqualFold(requestBodySchema.Type, "object") {
-			cli.BodyInput = "flags_or_json"
-		} else {
+		content, ok := PrimaryRequestBodyContent(endpoint)
+		switch {
+		case !ok:
+			cli.BodyInput = "none"
+		case content.BodyKind == "json":
+			requestBodySchema, ok := ResolveRequestBodySchema(doc, endpoint)
+			if ok && strings.EqualFold(requestBodySchema.Type, "object") {
+				cli.BodyInput = "flags_or_json"
+			} else {
+				cli.BodyInput = "json"
+			}
+		case content.BodyKind == "form_urlencoded":
+			cli.BodyInput = "flags"
+		case content.BodyKind == "text":
+			cli.BodyInput = "text"
+		case content.BodyKind == "binary":
+			cli.BodyInput = "binary"
+		case content.BodyKind == "file":
+			cli.BodyInput = "file"
+		default:
 			cli.BodyInput = "json"
 		}
 	}

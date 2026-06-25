@@ -1,5 +1,5 @@
 {
-  "schema_version": "v1",
+  "schema_version": "v2",
   "api": {
     "base_path": "/"
   },
@@ -160,18 +160,28 @@
         {
           "status_code": 200,
           "description": "The request has succeeded.",
-          "content_type": "application/json",
-          "schema": {
-            "ref": "ListTodosResponse"
-          }
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "ListTodosResponse"
+              }
+            }
+          ]
         },
         {
           "status_code": 400,
           "description": "The request is invalid.",
-          "content_type": "application/json",
-          "schema": {
-            "ref": "Error"
-          }
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "Error"
+              }
+            }
+          ]
         }
       ],
       "cli": {
@@ -218,27 +228,42 @@
       ],
       "request_body": {
         "required": true,
-        "content_type": "application/json",
-        "schema": {
-          "ref": "CreateTodoRequest"
-        }
+        "contents": [
+          {
+            "content_type": "application/json",
+            "body_kind": "json",
+            "schema": {
+              "ref": "CreateTodoRequest"
+            }
+          }
+        ]
       },
       "responses": [
         {
           "status_code": 201,
           "description": "A todo has been created.",
-          "content_type": "application/json",
-          "schema": {
-            "ref": "Todo"
-          }
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "Todo"
+              }
+            }
+          ]
         },
         {
           "status_code": 400,
           "description": "The request is invalid.",
-          "content_type": "application/json",
-          "schema": {
-            "ref": "Error"
-          }
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "Error"
+              }
+            }
+          ]
         }
       ],
       "cli": {
@@ -284,16 +309,20 @@
       "responses": [
         {
           "status_code": 204,
-          "description": "The todo has been deleted.",
-          "content_type": "application/json"
+          "description": "The todo has been deleted."
         },
         {
           "status_code": 404,
           "description": "The todo was not found.",
-          "content_type": "application/json",
-          "schema": {
-            "ref": "Error"
-          }
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "Error"
+              }
+            }
+          ]
         }
       ],
       "cli": {
@@ -337,18 +366,28 @@
         {
           "status_code": 200,
           "description": "The request has succeeded.",
-          "content_type": "application/json",
-          "schema": {
-            "ref": "Todo"
-          }
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "Todo"
+              }
+            }
+          ]
         },
         {
           "status_code": 404,
           "description": "The todo was not found.",
-          "content_type": "application/json",
-          "schema": {
-            "ref": "Error"
-          }
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "Error"
+              }
+            }
+          ]
         }
       ],
       "cli": {
@@ -395,18 +434,28 @@
         {
           "status_code": 200,
           "description": "The todo has been completed.",
-          "content_type": "application/json",
-          "schema": {
-            "ref": "Todo"
-          }
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "Todo"
+              }
+            }
+          ]
         },
         {
           "status_code": 404,
           "description": "The todo was not found.",
-          "content_type": "application/json",
-          "schema": {
-            "ref": "Error"
-          }
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "Error"
+              }
+            }
+          ]
         }
       ],
       "cli": {

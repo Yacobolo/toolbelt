@@ -7,6 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func jsonContent(ref ir.SchemaRef) []ir.BodyContent {
+	return []ir.BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &ref}}
+}
+
 func TestEmit_AliasesRequestRoots(t *testing.T) {
 	t.Helper()
 
@@ -14,7 +18,7 @@ func TestEmit_AliasesRequestRoots(t *testing.T) {
 		Schemas: map[string]ir.Schema{
 			"CreateWidgetRequest": {Type: "object"},
 		},
-		Endpoints: []ir.Endpoint{{OperationID: "createWidget", RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "CreateWidgetRequest"}}}},
+		Endpoints: []ir.Endpoint{{OperationID: "createWidget", RequestBody: &ir.RequestBody{Contents: jsonContent(ir.SchemaRef{Ref: "CreateWidgetRequest"})}}},
 	}
 
 	b, err := Emit(doc, Options{})
@@ -29,7 +33,7 @@ func TestEmit_AliasesNonStructRequestRoots(t *testing.T) {
 		Schemas: map[string]ir.Schema{
 			"SetDefaultCatalogRequest": {Type: "string"},
 		},
-		Endpoints: []ir.Endpoint{{OperationID: "setDefaultCatalog", RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "SetDefaultCatalogRequest"}}}},
+		Endpoints: []ir.Endpoint{{OperationID: "setDefaultCatalog", RequestBody: &ir.RequestBody{Contents: jsonContent(ir.SchemaRef{Ref: "SetDefaultCatalogRequest"})}}},
 	}
 
 	b, err := Emit(doc, Options{})
@@ -45,8 +49,8 @@ func TestEmit_AliasesSafeDirectResponseSchemas(t *testing.T) {
 			"SemanticModel": {},
 		},
 		Endpoints: []ir.Endpoint{
-			{OperationID: "createSemanticModel", Responses: []ir.Response{{StatusCode: 201, Schema: &ir.SchemaRef{Ref: "SemanticModel"}}}},
-			{OperationID: "createModel", Responses: []ir.Response{{StatusCode: 201, Schema: &ir.SchemaRef{Type: "string"}, Extensions: map[string]any{ir.ResponseShapeExtensionKey: map[string]any{"kind": "wrapped_json", "body_type": "Model"}}}}},
+			{OperationID: "createSemanticModel", Responses: []ir.Response{{StatusCode: 201, Contents: jsonContent(ir.SchemaRef{Ref: "SemanticModel"})}}},
+			{OperationID: "createModel", Responses: []ir.Response{{StatusCode: 201, Contents: jsonContent(ir.SchemaRef{Type: "string"}), Extensions: map[string]any{ir.ResponseShapeExtensionKey: map[string]any{"kind": "wrapped_json", "body_type": "Model"}}}}},
 		},
 	}
 
@@ -71,7 +75,7 @@ func TestEmit_EmitsAPIGenOwnedGenericResponse(t *testing.T) {
 			},
 		},
 		Endpoints: []ir.Endpoint{
-			{OperationID: "listWidgets", Responses: []ir.Response{{StatusCode: 200, Schema: &ir.SchemaRef{Ref: "GenericResponse"}}}},
+			{OperationID: "listWidgets", Responses: []ir.Response{{StatusCode: 200, Contents: jsonContent(ir.SchemaRef{Ref: "GenericResponse"})}}},
 		},
 	}
 
@@ -100,7 +104,7 @@ func TestEmit_PreservesSchemaRootWhenResponseShapeMetadataExists(t *testing.T) {
 		Endpoints: []ir.Endpoint{
 			{OperationID: "listTags", Responses: []ir.Response{{
 				StatusCode: 200,
-				Schema:     &ir.SchemaRef{Ref: "GenericResponse"},
+				Contents:   jsonContent(ir.SchemaRef{Ref: "GenericResponse"}),
 				Extensions: map[string]any{ir.ResponseShapeExtensionKey: map[string]any{"kind": "wrapped_json", "body_type": "PaginatedTags"}},
 			}}},
 		},
@@ -135,8 +139,8 @@ func TestEmit_ApigenOwnedSchemaNames(t *testing.T) {
 			},
 		},
 		Endpoints: []ir.Endpoint{
-			{OperationID: "getHealth", Responses: []ir.Response{{StatusCode: 200, Schema: &ir.SchemaRef{Ref: "HealthResponse"}}}},
-			{OperationID: "executeQuery", Responses: []ir.Response{{StatusCode: 200, Schema: &ir.SchemaRef{Ref: "QueryResponse"}}}},
+			{OperationID: "getHealth", Responses: []ir.Response{{StatusCode: 200, Contents: jsonContent(ir.SchemaRef{Ref: "HealthResponse"})}}},
+			{OperationID: "executeQuery", Responses: []ir.Response{{StatusCode: 200, Contents: jsonContent(ir.SchemaRef{Ref: "QueryResponse"})}}},
 		},
 	}
 
@@ -154,13 +158,10 @@ func TestEmit_FailsForUnresolvedRequestBodySchema(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		Schemas: map[string]ir.Schema{
-			"GenericRequest": {Type: "object"},
-		},
 		Endpoints: []ir.Endpoint{
 			{
 				OperationID: "createWidget",
-				RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "GenericRequest"}},
+				RequestBody: &ir.RequestBody{Contents: jsonContent(ir.SchemaRef{Type: "object"})},
 			},
 		},
 	}

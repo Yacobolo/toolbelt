@@ -14,7 +14,7 @@ func TestEmitYAML(t *testing.T) {
 	t.Helper()
 
 	docIR := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		Info:          ir.Info{Title: "test", Version: "1.0.0"},
 		Schemas: map[string]ir.Schema{
 			"Item": {
@@ -53,15 +53,19 @@ func TestEmitYAML(t *testing.T) {
 				Responses: []ir.Response{{
 					StatusCode:  200,
 					Description: "ok",
-					Example: map[string]any{
-						"id": "item_123",
-					},
 					Headers: []ir.Header{{
 						Name:        "X-RateLimit-Remaining",
 						Description: "Requests left in the current window.",
 						Schema:      ir.SchemaRef{Type: "integer", Format: "int32"},
 					}},
-					Schema: &ir.SchemaRef{Ref: "Item"},
+					Contents: []ir.BodyContent{{
+						ContentType: "application/json",
+						BodyKind:    "json",
+						Schema:      &ir.SchemaRef{Ref: "Item"},
+						Example: map[string]any{
+							"id": "item_123",
+						},
+					}},
 				}},
 			},
 		},
@@ -93,11 +97,44 @@ func TestEmitYAML(t *testing.T) {
 	require.Contains(t, string(b), "example:")
 }
 
+func TestEmitYAML_EmitsMultipleContentKinds(t *testing.T) {
+	t.Helper()
+
+	docIR := ir.Document{
+		SchemaVersion: "v2",
+		Info:          ir.Info{Title: "test", Version: "1.0.0"},
+		Endpoints: []ir.Endpoint{{
+			Method:      "get",
+			Path:        "/artifact",
+			OperationID: "getArtifact",
+			Responses: []ir.Response{{
+				StatusCode:  200,
+				Description: "ok",
+				Contents: []ir.BodyContent{
+					{ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Type: "string"}},
+					{ContentType: "application/octet-stream", BodyKind: "binary", Schema: &ir.SchemaRef{Type: "string", Format: "binary"}},
+				},
+			}},
+		}},
+	}
+
+	b, err := EmitYAML(docIR, Options{})
+	require.NoError(t, err)
+
+	loader := openapi3.NewLoader()
+	doc, err := loader.LoadFromData(b)
+	require.NoError(t, err)
+	content := doc.Paths.Value("/artifact").Get.Responses.Value("200").Value.Content
+	require.NotNil(t, content.Get("application/json"))
+	require.NotNil(t, content.Get("application/octet-stream"))
+	require.Equal(t, "binary", content.Get("application/octet-stream").Schema.Value.Format)
+}
+
 func TestEmitYAML_UsesAPIBasePathForVisibleRoutes(t *testing.T) {
 	t.Helper()
 
 	docIR := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/v1"},
 		Info:          ir.Info{Title: "test", Version: "1.0.0"},
 		Endpoints: []ir.Endpoint{

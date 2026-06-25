@@ -12,6 +12,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func jsonContent(ref ir.SchemaRef) []ir.BodyContent {
+	return []ir.BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &ref}}
+}
+
 func TestRunCLI_TopLevelHelp(t *testing.T) {
 	t.Helper()
 
@@ -62,7 +66,7 @@ func TestGenerateArtifacts(t *testing.T) {
 	irPath := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(irPath, []byte(`{
-  "schema_version": "v1",
+  "schema_version": "v2",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0", "description": "test"},
   "servers": [{"url": "https://localhost:8080", "description": "local"}],
@@ -82,7 +86,7 @@ func TestGenerateArtifacts(t *testing.T) {
       "operation_id": "getHealth",
       "summary": "Health check",
       "tags": ["system"],
-      "responses": [{"status_code": 200, "description": "ok", "schema": {"ref": "HealthResponse"}}]
+      "responses": [{"status_code": 200, "description": "ok", "contents": [{"content_type": "application/json", "body_kind": "json", "schema": {"ref": "HealthResponse"}}]}]
     }
   ]
 }`), 0o644))
@@ -186,7 +190,10 @@ func TestCompileTypeSpec_GeneratesIRAndOpenAPI(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "APIGen Todo Example", doc.Info.Title)
 	require.Len(t, doc.Endpoints, 5)
-	require.Equal(t, "CreateTodoRequest", doc.Endpoints[1].RequestBody.Schema.Ref)
+	content, ok := ir.PrimaryRequestBodyContent(doc.Endpoints[1])
+	require.True(t, ok)
+	require.NotNil(t, content.Schema)
+	require.Equal(t, "CreateTodoRequest", content.Schema.Ref)
 	require.Equal(t, []string{"todos", "create"}, doc.Endpoints[1].CLI.Command)
 	require.FileExists(t, openAPIPath)
 }
@@ -483,12 +490,11 @@ func TestGenerateServer_FailsForUnnamedRequestBodySchema(t *testing.T) {
 
 	dir := t.TempDir()
 	doc := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/v1"},
 		Info:          ir.Info{Title: "Widget API", Version: "1.0.0"},
 		OpenAPI:       ir.OpenAPI{Version: "3.0.0"},
 		Schemas: map[string]ir.Schema{
-			"GenericRequest": {Type: "object"},
 			"Widget": {
 				Type: "object",
 				Properties: map[string]ir.SchemaProperty{
@@ -502,8 +508,8 @@ func TestGenerateServer_FailsForUnnamedRequestBodySchema(t *testing.T) {
 				Method:      "post",
 				Path:        "/widgets",
 				OperationID: "createWidget",
-				RequestBody: &ir.RequestBody{Schema: ir.SchemaRef{Ref: "GenericRequest"}},
-				Responses:   []ir.Response{{StatusCode: 201, Description: "created", Schema: &ir.SchemaRef{Ref: "Widget"}}},
+				RequestBody: &ir.RequestBody{Contents: jsonContent(ir.SchemaRef{Type: "object"})},
+				Responses:   []ir.Response{{StatusCode: 201, Description: "created", Contents: jsonContent(ir.SchemaRef{Ref: "Widget"})}},
 			},
 		},
 	}
@@ -514,7 +520,7 @@ func TestGenerateServer_FailsForUnnamedRequestBodySchema(t *testing.T) {
 
 	err := generateServer(doc, serverPath, "api", requestModelsPath, "api", canonicalOpenAPIPath)
 	require.Error(t, err)
-	require.ErrorContains(t, err, "generic request body schema could not be resolved")
+	require.ErrorContains(t, err, "requires a named IR schema")
 	require.ErrorContains(t, err, "createWidget")
 }
 

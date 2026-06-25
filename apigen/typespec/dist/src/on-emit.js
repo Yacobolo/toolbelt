@@ -225,7 +225,7 @@ function buildDocument(program, builder, service, options) {
     const securitySchemes = collectSecuritySchemes(authentication.schemes);
     const endpoints = service.operations.map((operation) => endpoint(program, builder, operation, authentication.operationsAuth.get(operation.operation), defaultSecurity));
     return prune({
-        schema_version: "v1",
+        schema_version: "v2",
         api: { base_path: options["base-path"] ?? "/" },
         info: prune({
             title: info.title ?? serviceInfo?.title ?? "API",
@@ -264,7 +264,7 @@ function endpoint(program, builder, operation, operationAuth, defaultSecurity) {
         tags: getAllTags(program, operation.operation),
         parameters: operation.parameters.parameters.map((parameter) => endpointParameter(program, builder, parameter)),
         request_body: requestBody(builder, operation.parameters.body),
-        responses: operation.responses.map((response) => endpointResponse(program, builder, response)),
+        responses: endpointResponses(program, builder, operation.responses),
         cli: cliMetadata(program, operation),
         security: operationSecurity(builder, operation, operationAuth, defaultSecurity),
     });
@@ -449,21 +449,34 @@ function requestBody(builder, body) {
     if (!body) {
         return undefined;
     }
-    if (body.bodyKind !== "single") {
-        builder.unsupportedType(body.type, "request body");
-        return undefined;
-    }
     return prune({
         required: body.property ? !body.property.optional : true,
-        content_type: body.contentTypes[0],
-        schema: builder.namedSchemaRef(body.type, "request body"),
+        contents: bodyContents(builder, body, "request body"),
     });
+}
+function endpointResponses(program, builder, responses) {
+    const byStatus = new Map();
+    const order = [];
+    for (const httpResponse of responses) {
+        const response = endpointResponse(program, builder, httpResponse);
+        const existing = byStatus.get(response.status_code);
+        if (!existing) {
+            byStatus.set(response.status_code, response);
+            order.push(response.status_code);
+            continue;
+        }
+        existing.description = existing.description || response.description;
+        existing.headers = mergeHeaders(existing.headers, response.headers);
+        existing.contents = mergeContents(existing.contents, response.contents);
+        existing.extensions = mergeResponseExtensions(existing.extensions, response.extensions);
+    }
+    return order.map((status) => byStatus.get(status));
 }
 function endpointResponse(program, builder, response) {
     if (typeof response.statusCodes !== "number") {
         builder.unsupportedResponseStatus(response);
     }
-    const content = response.responses[0];
+    const firstContent = response.responses[0];
     const shape = response.type.kind === "Model" ? getResponseShape({ program }, response.type) : undefined;
     const extensions = shape
         ? {
@@ -476,11 +489,120 @@ function endpointResponse(program, builder, response) {
     return prune({
         status_code: typeof response.statusCodes === "number" ? response.statusCodes : 0,
         description: response.description ?? "The request has completed.",
-        headers: content ? responseHeaders(program, builder, content) : undefined,
-        content_type: content?.body?.contentTypes[0],
-        schema: content?.body ? builder.schemaRef(content.body.type, "response body") : undefined,
+        headers: firstContent ? responseHeaders(program, builder, firstContent) : undefined,
+        contents: responseContents(builder, response.responses),
         extensions,
     });
+}
+function mergeHeaders(left, right) {
+    if (!left || left.length === 0) {
+        return right;
+    }
+    if (!right || right.length === 0) {
+        return left;
+    }
+    const output = [...left];
+    const seen = new Set(left.map((header) => header.name.toLowerCase()));
+    for (const header of right) {
+        const key = header.name.toLowerCase();
+        if (seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+        output.push(header);
+    }
+    return output;
+}
+function mergeContents(left, right) {
+    if (!left || left.length === 0) {
+        return right;
+    }
+    if (!right || right.length === 0) {
+        return left;
+    }
+    const output = [...left];
+    for (const content of right) {
+        output.push(content);
+    }
+    return output;
+}
+function mergeResponseExtensions(left, right) {
+    if (!left || Object.keys(left).length === 0) {
+        return right;
+    }
+    if (!right || Object.keys(right).length === 0) {
+        return left;
+    }
+    return { ...left, ...right };
+}
+function responseContents(builder, contents) {
+    const output = [];
+    for (const content of contents) {
+        if (!content.body) {
+            continue;
+        }
+        output.push(...bodyContents(builder, content.body, "response body"));
+    }
+    return output.length > 0 ? output : undefined;
+}
+function bodyContents(builder, body, context) {
+    switch (body.bodyKind) {
+        case "single":
+            return body.contentTypes.map((contentType) => prune({
+                content_type: contentType,
+                body_kind: bodyKindForSingle(body.type, contentType),
+                schema: schemaRefForContent(builder, body.type, contentType, context),
+            }));
+        case "file":
+            return body.contentTypes.map((contentType) => prune({
+                content_type: contentType,
+                body_kind: "file",
+                schema: fileSchemaRef(body.isText),
+            }));
+        case "multipart":
+            return body.contentTypes.map((contentType) => prune({
+                content_type: contentType,
+                body_kind: "multipart",
+                parts: body.parts.map((part, idx) => multipartPart(builder, part, idx)),
+            }));
+    }
+}
+function multipartPart(builder, part, idx) {
+    const bodyKind = part.body.bodyKind === "file" ? "file" : bodyKindForSingle(part.body.type, part.body.contentTypes[0] ?? "application/json");
+    const schema = part.body.bodyKind === "file"
+        ? fileSchemaRef(part.body.isText)
+        : schemaRefForContent(builder, part.body.type, part.body.contentTypes[0] ?? "application/json", `multipart part ${part.name ?? idx}`);
+    return prune({
+        name: part.name ?? `part${idx + 1}`,
+        required: !part.optional,
+        description: "property" in part && part.property ? getDoc(builder.program, part.property) : undefined,
+        content_type: part.body.contentTypes[0],
+        body_kind: bodyKind,
+        schema,
+    });
+}
+function bodyKindForSingle(type, contentType) {
+    const normalized = contentType.toLowerCase();
+    if (normalized === "application/x-www-form-urlencoded") {
+        return "form_urlencoded";
+    }
+    if (normalized.startsWith("text/")) {
+        return "text";
+    }
+    if (normalized === "application/octet-stream" || isBytesType(type)) {
+        return "binary";
+    }
+    return "json";
+}
+function schemaRefForContent(builder, type, contentType, context) {
+    const kind = bodyKindForSingle(type, contentType);
+    if ((kind === "binary" || kind === "file") && isBytesType(type)) {
+        return { type: "string", format: "binary" };
+    }
+    return builder.schemaRef(type, context);
+}
+function fileSchemaRef(isText) {
+    return isText ? { type: "string" } : { type: "string", format: "binary" };
 }
 function responseHeaders(program, builder, content) {
     if (!content.headers) {
@@ -583,6 +705,17 @@ function scalarSchemaRef(scalar) {
         }
     }
     return { type: "string" };
+}
+function isBytesType(type) {
+    if (type.kind !== "Scalar") {
+        return false;
+    }
+    for (let current = type; current; current = current.baseScalar) {
+        if (current.name === "bytes") {
+            return true;
+        }
+    }
+    return false;
 }
 function enumValues(type) {
     return [...type.members.values()].map((member) => String(member.value ?? member.name));

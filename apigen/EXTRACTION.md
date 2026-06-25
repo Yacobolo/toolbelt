@@ -7,7 +7,7 @@ This repo remains the source of truth for APIGen while the following stay green 
 - the bundled example fixture under `apigen/example` compiles its source API spec to OpenAPI + JSON IR
 - the fixture generates Go server and CLI code using APIGen
 - the fixture builds against `github.com/Yacobolo/toolbelt/apigen/runtime/chi` and `github.com/Yacobolo/toolbelt/apigen/runtime/cobra`
-- JSON IR `v1` remains documented and fixture-tested
+- JSON IR `v2` remains documented and fixture-tested
 
 Current module target:
 
@@ -17,6 +17,6 @@ Current module target:
 The intended boundary is:
 
 - keep JSON IR as the compatibility boundary between TypeSpec authoring and Go emitters
-- keep split-package compat output bound to IR-owned `GenSchema...` symbols, not server-only `Gen<Operation>IDJSONBody` aliases
+- keep split-package compat output bound to IR-owned `GenSchema...` symbols, not server-only `Gen<Operation>Body` aliases
 - keep canonical OpenAPI as the published contract artifact, including repo-owned extensions such as `x-authz`
 - keep repo-local invocation concerns in thin CLI/task wiring around the nested module, not the library packages
