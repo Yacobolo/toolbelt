@@ -33,6 +33,7 @@ func TestEmit(t *testing.T) {
 				Tags:        []string{"query"},
 				Parameters: []ir.Parameter{
 					{Name: "catalogName", In: "path", Required: true, Description: "Catalog to query", Schema: ir.SchemaRef{Type: "string"}},
+					{Name: "accept", In: "header", Required: true, Description: "Accepted response media type", Schema: ir.SchemaRef{Type: "string", Enum: []string{"application/json", "application/octet-stream"}}},
 				},
 				RequestBody: &ir.RequestBody{Contents: []ir.BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Ref: "CreateQueryRequest"}}}},
 				Responses:   []ir.Response{{StatusCode: 200, Description: "ok"}},
@@ -51,6 +52,7 @@ func TestEmit(t *testing.T) {
 	require.Contains(t, string(b), "Description: \"Runs SQL against the default catalog\"")
 	require.Contains(t, string(b), `Path: "/v1/query"`)
 	require.Contains(t, string(b), "Parameters: []apigencobra.Param{{Name: \"catalogName\", In: \"path\", Type: \"string\", Description: \"Catalog to query\"")
+	require.Contains(t, string(b), `{Name: "accept", In: "header", Type: "string", Description: "Accepted response media type", Required: true, Enum: []string{"application/json", "application/octet-stream"}}`)
 	require.Contains(t, string(b), `RequestBody: &apigencobra.RequestBodySpec{Required: false, ContentType: "application/json", BodyKind: "json"`)
 	require.Contains(t, string(b), "Fields: []apigencobra.Field{{Name: \"sql\", Type: \"string\", Description: \"SQL text to execute\"")
 	require.Contains(t, string(b), "Command: []string{\"query\", \"execute\"}")

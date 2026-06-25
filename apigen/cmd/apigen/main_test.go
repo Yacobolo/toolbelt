@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,6 +15,20 @@ import (
 
 func jsonContent(ref ir.SchemaRef) []ir.BodyContent {
 	return []ir.BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &ref}}
+}
+
+type apigenIntegrationResult struct {
+	Root                 string
+	IRPath               string
+	OpenAPIPath          string
+	ServerPath           string
+	RequestModelsPath    string
+	CLIPath              string
+	Document             ir.Document
+	OpenAPIContent       string
+	ServerContent        string
+	RequestModelsContent string
+	CLIContent           string
 }
 
 func TestRunCLI_TopLevelHelp(t *testing.T) {
@@ -238,6 +253,360 @@ op listWidgets(): Widget;
 	require.FileExists(t, openAPIPath)
 }
 
+func TestCompileTypeSpecAndGenerateServer_SupportsInlineBinaryRequestBody(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	setupManagedTypeSpecCache(t)
+	typeSpecDir := filepath.Join(dir, "typespec")
+	require.NoError(t, os.MkdirAll(typeSpecDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(typeSpecDir, "main.tsp"), []byte(`import "@typespec/http";
+import "@typespec/openapi";
+import "@yacobolo/apigen";
+
+using Http;
+using TypeSpec.OpenAPI;
+
+@service(#{ title: "Artifact API" })
+@info(#{ version: "1.0.0" })
+namespace ArtifactAPI;
+
+model DeploymentArtifactResponse {
+  deploymentId: string;
+  sizeBytes: int64;
+}
+
+model OkJson<T> {
+  ...OkResponse;
+  ...Body<T>;
+}
+
+@route("/workspaces/{workspace}/deployments/{deployment}/artifact")
+@put
+op uploadDeploymentArtifact(
+  @path workspace: string,
+  @path deployment: string,
+  @header contentType: "application/octet-stream",
+  @body body: bytes,
+): OkJson<DeploymentArtifactResponse>;
+`), 0o644))
+	irPath := filepath.Join(dir, "json-ir.json")
+	openAPIPath := filepath.Join(dir, "openapi.yaml")
+	serverPath := filepath.Join(dir, "server.apigen.gen.go")
+	requestModelsPath := filepath.Join(dir, "request_models.gen.go")
+
+	require.NoError(t, compileTypeSpec(typeSpecDir, irPath, openAPIPath))
+	doc, err := loadDocument(irPath)
+	require.NoError(t, err)
+	require.NoError(t, generateServer(doc, serverPath, "api", requestModelsPath, "api", openAPIPath))
+
+	content, ok := ir.PrimaryRequestBodyContent(doc.Endpoints[0])
+	require.True(t, ok)
+	require.Equal(t, "application/octet-stream", content.ContentType)
+	require.Equal(t, "binary", content.BodyKind)
+	require.Contains(t, mustReadString(t, serverPath), "type GenUploadDeploymentArtifactBody = []byte")
+	require.NotContains(t, mustReadString(t, requestModelsPath), "DeploymentArtifactUploadRequest")
+}
+
+func TestRunCLI_AllIntegratesInlineBinaryRequestBody(t *testing.T) {
+	t.Helper()
+
+	result := runAPIGenManifestIntegration(t, `import "@typespec/http";
+import "@typespec/openapi";
+import "@yacobolo/apigen";
+
+using Http;
+using TypeSpec.OpenAPI;
+
+@service(#{ title: "Artifact API" })
+@info(#{ version: "1.0.0" })
+namespace ArtifactAPI;
+
+model DeploymentArtifactResponse {
+  deploymentId: string;
+  sizeBytes: int64;
+}
+
+model OkJson<T> {
+  ...OkResponse;
+  ...Body<T>;
+}
+
+@route("/workspaces/{workspace}/deployments/{deployment}/artifact")
+@put
+op uploadDeploymentArtifact(
+  @path workspace: string,
+  @path deployment: string,
+  @header contentType: "application/octet-stream",
+  @body body: bytes,
+): OkJson<DeploymentArtifactResponse>;
+`)
+
+	content, ok := ir.PrimaryRequestBodyContent(result.Document.Endpoints[0])
+	require.True(t, ok)
+	require.Equal(t, "application/octet-stream", content.ContentType)
+	require.Equal(t, "binary", content.BodyKind)
+	require.Contains(t, result.OpenAPIContent, "application/octet-stream")
+	require.Contains(t, result.ServerContent, "type GenUploadDeploymentArtifactBody = []byte")
+	require.NotContains(t, result.RequestModelsContent, "DeploymentArtifactUploadRequest")
+}
+
+func TestRunCLI_AllIntegratesJSONCRUDPipeline(t *testing.T) {
+	t.Helper()
+
+	result := runAPIGenManifestIntegration(t, `import "@typespec/http";
+import "@typespec/openapi";
+import "@yacobolo/apigen";
+
+using Http;
+using TypeSpec.OpenAPI;
+
+@service(#{ title: "Widget API" })
+@info(#{ version: "1.0.0" })
+namespace WidgetAPI;
+
+model Error {
+  code: int32;
+  message: string;
+}
+
+model Widget {
+  id: string;
+  name: string;
+}
+
+model WidgetList {
+  data: Widget[];
+}
+
+model CreateWidgetRequest {
+  name: string;
+}
+
+model OkJson<T> {
+  ...OkResponse;
+  ...Body<T>;
+}
+
+model CreatedJson<T> {
+  ...CreatedResponse;
+  ...Body<T>;
+}
+
+model BadRequest {
+  ...BadRequestResponse;
+  ...Body<Error>;
+}
+
+@route("/widgets")
+@get
+@apigen.cli(#{ command: #["widgets", "list"], output: #{ mode: "collection", tableColumns: #["id", "name"] } })
+op listWidgets(@query limit?: int32): OkJson<WidgetList> | BadRequest;
+
+@route("/widgets")
+@post
+@apigen.cli(#{ command: #["widgets", "create"], bodyInput: "flags_or_json", args: #[#{ source: "body", name: "name" }], output: #{ mode: "detail" } })
+op createWidget(@body body: CreateWidgetRequest): CreatedJson<Widget> | BadRequest;
+
+@route("/widgets/{id}")
+@get
+@apigen.cli(#{ command: #["widgets", "get"], args: #[#{ source: "path", name: "id" }], output: #{ mode: "detail" } })
+op getWidget(@path id: string): OkJson<Widget> | BadRequest;
+`)
+
+	require.Len(t, result.Document.Endpoints, 3)
+	require.Contains(t, result.OpenAPIContent, "/widgets:")
+	require.Contains(t, result.ServerContent, "type GenCreateWidgetBody = GenSchemaCreateWidgetRequest")
+	require.Contains(t, result.ServerContent, "type GenListWidgetsParams struct")
+	require.Contains(t, result.CLIContent, `Command: []string{"widgets", "list"}`)
+	require.Contains(t, result.CLIContent, `Command: []string{"widgets", "create"}`)
+	require.Contains(t, result.CLIContent, `Args: []apigencobra.ArgBinding{{Source: "body", Name: "name"`)
+}
+
+func TestRunCLI_AllIntegratesTransportNativeRequestBodies(t *testing.T) {
+	t.Helper()
+
+	result := runAPIGenManifestIntegration(t, `import "@typespec/http";
+import "@typespec/openapi";
+import "@yacobolo/apigen";
+
+using Http;
+using TypeSpec.OpenAPI;
+
+@service(#{ title: "Transport API" })
+@info(#{ version: "1.0.0" })
+namespace TransportAPI;
+
+model Artifact {
+  id: string;
+}
+
+model OkJson<T> {
+  ...OkResponse;
+  ...Body<T>;
+}
+
+@route("/artifacts/{id}/text")
+@put
+@apigen.cli(#{ command: #["artifacts", "replace-text"], args: #[#{ source: "path", name: "id" }] })
+op replaceText(@path id: string, @header contentType: "text/plain", @body body: string): OkJson<Artifact>;
+
+@route("/artifacts/{id}/blob")
+@put
+@apigen.cli(#{ command: #["artifacts", "replace-blob"], args: #[#{ source: "path", name: "id" }] })
+op replaceBlob(@path id: string, @header contentType: "application/octet-stream", @body body: bytes): OkJson<Artifact>;
+
+@route("/artifacts/{id}/file")
+@put
+@apigen.cli(#{ command: #["artifacts", "replace-file"], args: #[#{ source: "path", name: "id" }] })
+op replaceFile(@path id: string, @bodyRoot body: File<"application/octet-stream", bytes>): OkJson<Artifact>;
+`)
+
+	require.Contains(t, result.OpenAPIContent, "text/plain")
+	require.Contains(t, result.OpenAPIContent, "application/octet-stream")
+	require.Contains(t, result.ServerContent, "type GenReplaceTextBody = string")
+	require.Contains(t, result.ServerContent, "type GenReplaceBlobBody = []byte")
+	require.Contains(t, result.ServerContent, "type GenReplaceFileBody = GenFile")
+	require.Contains(t, result.ServerContent, "Reader      io.ReadCloser")
+	require.NotContains(t, result.RequestModelsContent, "ReplaceTextRequest")
+	require.NotContains(t, result.RequestModelsContent, "ReplaceBlobRequest")
+	require.NotContains(t, result.RequestModelsContent, "ReplaceFileRequest")
+}
+
+func TestRunCLI_AllIntegratesSharedRouteContentNegotiation(t *testing.T) {
+	t.Helper()
+
+	result := runAPIGenManifestIntegration(t, `import "@typespec/http";
+import "@typespec/openapi";
+import "@yacobolo/apigen";
+
+using Http;
+using TypeSpec.OpenAPI;
+
+@service(#{ title: "Negotiation API" })
+@info(#{ version: "1.0.0" })
+namespace NegotiationAPI;
+
+model Artifact {
+  id: string;
+}
+
+model JsonArtifact {
+  ...OkResponse;
+  @header contentType: "application/json";
+  ...Body<Artifact>;
+}
+
+model BinaryArtifact {
+  ...OkResponse;
+  @header contentType: "application/octet-stream";
+  ...Body<bytes>;
+}
+
+@sharedRoute
+@route("/artifacts/{id}")
+@get
+@apigen.cli(#{ command: #["artifacts", "get"], args: #[#{ source: "path", name: "id" }] })
+op getArtifactJson(@path id: string, @header accept: "application/json"): JsonArtifact;
+
+@sharedRoute
+@route("/artifacts/{id}")
+@get
+@apigen.cli(#{ command: #["artifacts", "get"], args: #[#{ source: "path", name: "id" }] })
+op getArtifactBinary(@path id: string, @header accept: "application/octet-stream"): BinaryArtifact;
+`)
+
+	require.Len(t, result.Document.Endpoints, 1)
+	endpoint := result.Document.Endpoints[0]
+	require.Equal(t, "getArtifactJson", endpoint.OperationID)
+	require.Len(t, endpoint.Parameters, 2)
+	require.Equal(t, "accept", endpoint.Parameters[1].Name)
+	require.Equal(t, []string{"application/json", "application/octet-stream"}, endpoint.Parameters[1].Schema.Enum)
+	require.Len(t, endpoint.Responses, 1)
+	require.Len(t, endpoint.Responses[0].Contents, 2)
+	require.Contains(t, result.ServerContent, "type GenGetArtifactJsonHeaders struct")
+	require.Contains(t, result.ServerContent, "Accept string")
+	require.Contains(t, result.ServerContent, "GenGetArtifactJson200ApplicationJSONResponse")
+	require.Contains(t, result.ServerContent, "GenGetArtifactJson200ApplicationOctetStreamResponse")
+	require.Contains(t, result.CLIContent, `Name: "accept", In: "header"`)
+	require.Contains(t, result.CLIContent, `Enum: []string{"application/json", "application/octet-stream"}`)
+}
+
+func TestRunCLI_AllIntegratesMultipartFormAndMixed(t *testing.T) {
+	t.Helper()
+
+	result := runAPIGenManifestIntegration(t, `import "@typespec/http";
+import "@typespec/openapi";
+import "@yacobolo/apigen";
+
+using Http;
+using TypeSpec.OpenAPI;
+
+@service(#{ title: "Multipart API" })
+@info(#{ version: "1.0.0" })
+namespace MultipartAPI;
+
+model Metadata {
+  name: string;
+}
+
+model Artifact {
+  id: string;
+}
+
+model OkJson<T> {
+  ...OkResponse;
+  ...Body<T>;
+}
+
+@route("/multipart")
+@post
+@apigen.cli(#{ command: #["artifacts", "upload"] })
+op uploadMultipart(@multipartBody body: {
+  metadata: HttpPart<Metadata>;
+  note?: HttpPart<string>;
+  tags: HttpPart<string>[];
+  blob: HttpPart<bytes>;
+  artifact: HttpPart<File<"application/octet-stream", bytes>>;
+}): OkJson<Artifact>;
+
+@route("/mixed")
+@post
+@apigen.cli(#{ command: #["artifacts", "upload-mixed"] })
+op uploadMixed(@header contentType: "multipart/mixed", @multipartBody body: [
+  HttpPart<string>,
+  HttpPart<File<"application/octet-stream", bytes>, #{ name: "payload" }>,
+]): OkJson<Artifact>;
+`)
+
+	formEndpoint := integrationEndpoint(t, result.Document, "uploadMultipart")
+	formContent, ok := ir.PrimaryRequestBodyContent(formEndpoint)
+	require.True(t, ok)
+	require.Equal(t, "multipart/form-data", formContent.ContentType)
+	require.Len(t, formContent.Parts, 5)
+	require.True(t, formContent.Parts[2].Repeated)
+	require.Equal(t, "binary", formContent.Parts[3].BodyKind)
+	require.Equal(t, "file", formContent.Parts[4].BodyKind)
+	require.Contains(t, result.ServerContent, "type GenUploadMultipartMultipartBody struct")
+	require.Contains(t, result.ServerContent, "Tags     []string")
+	require.Contains(t, result.ServerContent, "Artifact GenFile")
+	require.Contains(t, result.CLIContent, `InputMode: "multipart"`)
+	require.Contains(t, result.CLIContent, `Name: "tags", WireName: "tags", PartKind: "model", Repeated: true`)
+	require.Contains(t, result.OpenAPIContent, "multipart/form-data")
+	require.Contains(t, result.OpenAPIContent, "encoding:")
+
+	mixedEndpoint := integrationEndpoint(t, result.Document, "uploadMixed")
+	mixedContent, ok := ir.PrimaryRequestBodyContent(mixedEndpoint)
+	require.True(t, ok)
+	require.Equal(t, "multipart/mixed", mixedContent.ContentType)
+	require.Len(t, mixedContent.Parts, 2)
+	require.Equal(t, "tuple", mixedContent.Parts[0].PartKind)
+	require.Contains(t, result.OpenAPIContent, "x-apigen-multipart-kind: mixed")
+	require.Contains(t, result.OpenAPIContent, "x-apigen-multipart-parts:")
+	require.Contains(t, result.ServerContent, "part1Parts := apigenMultipartPartsByIndex(parts, 0)")
+	require.Contains(t, result.ServerContent, "part2Parts := apigenMultipartPartsByIndex(parts, 1)")
+}
+
 func TestCompileTypeSpec_PreservesOutputsWhenToolchainUnavailable(t *testing.T) {
 	t.Helper()
 
@@ -253,6 +622,188 @@ func TestCompileTypeSpec_PreservesOutputsWhenToolchainUnavailable(t *testing.T) 
 	require.ErrorContains(t, err, "typespec compiler not found")
 	require.Equal(t, `{"existing":true}`, strings.TrimSpace(mustReadString(t, irPath)))
 	require.Equal(t, "existing: true", strings.TrimSpace(mustReadString(t, openAPIPath)))
+}
+
+func TestRunCLI_TypeSpecCompileFailurePreservesOutputsForUnsupportedConstructs(t *testing.T) {
+	t.Helper()
+
+	tests := []struct {
+		name       string
+		source     string
+		diagnostic string
+	}{
+		{
+			name: "cookie parameter",
+			source: `import "@typespec/http";
+import "@typespec/openapi";
+import "@yacobolo/apigen";
+
+using Http;
+using TypeSpec.OpenAPI;
+
+@service(#{ title: "Cookie API" })
+@info(#{ version: "1.0.0" })
+namespace CookieAPI;
+
+@route("/widgets")
+@get
+op listWidgets(@cookie session: string): string;
+`,
+			diagnostic: "cookie parameters are not supported",
+		},
+		{
+			name: "basic auth",
+			source: `import "@typespec/http";
+import "@typespec/openapi";
+import "@yacobolo/apigen";
+
+using Http;
+using TypeSpec.OpenAPI;
+
+@service(#{ title: "Basic API" })
+@info(#{ version: "1.0.0" })
+@useAuth(BasicAuth)
+namespace BasicAPI;
+
+@route("/widgets")
+@get
+op listWidgets(): string;
+`,
+			diagnostic: "http Basic authentication is not supported",
+		},
+		{
+			name: "oauth auth",
+			source: `import "@typespec/http";
+import "@typespec/openapi";
+import "@yacobolo/apigen";
+
+using Http;
+using TypeSpec.OpenAPI;
+
+alias MyOAuth2<Scopes extends string[]> = OAuth2Auth<[
+  {
+    type: OAuth2FlowType.implicit;
+    authorizationUrl: "https://auth.example/authorize";
+    scopes: Scopes;
+  }
+]>;
+
+@service(#{ title: "OAuth API" })
+@info(#{ version: "1.0.0" })
+@useAuth(MyOAuth2<["read"]>)
+namespace OAuthAPI {
+
+@route("/widgets")
+@get
+op listWidgets(): string;
+}
+`,
+			diagnostic: "oauth2 authentication is not supported",
+		},
+		{
+			name: "non X-API-Key header auth",
+			source: `import "@typespec/http";
+import "@typespec/openapi";
+import "@yacobolo/apigen";
+
+using Http;
+using TypeSpec.OpenAPI;
+
+alias CustomKey = ApiKeyAuth<ApiKeyLocation.header, "X-Custom-Key">;
+
+@service(#{ title: "Custom Key API" })
+@info(#{ version: "1.0.0" })
+@useAuth(CustomKey)
+namespace CustomKeyAPI {
+
+@route("/widgets")
+@get
+op listWidgets(): string;
+}
+`,
+			diagnostic: "header API key name X-Custom-Key is not supported",
+		},
+		{
+			name: "incompatible shared route bodies",
+			source: `import "@typespec/http";
+import "@typespec/openapi";
+import "@yacobolo/apigen";
+
+using Http;
+using TypeSpec.OpenAPI;
+
+@service(#{ title: "Shared Route API" })
+@info(#{ version: "1.0.0" })
+namespace SharedRouteAPI;
+
+model Widget {
+  id: string;
+}
+
+@sharedRoute
+@route("/widgets")
+@post
+op createJson(@header contentType: "application/json", @body body: Widget): string;
+
+@sharedRoute
+@route("/widgets")
+@post
+op createText(@header contentType: "text/plain", @body body: string): string;
+`,
+			diagnostic: "incompatible request bodies",
+		},
+		{
+			name: "incompatible duplicate response content",
+			source: `import "@typespec/http";
+import "@typespec/openapi";
+import "@yacobolo/apigen";
+
+using Http;
+using TypeSpec.OpenAPI;
+
+@service(#{ title: "Duplicate Content API" })
+@info(#{ version: "1.0.0" })
+namespace DuplicateContentAPI;
+
+model Widget {
+  id: string;
+}
+
+model OtherWidget {
+  name: string;
+}
+
+model WidgetResponse {
+  ...OkResponse;
+  @header contentType: "application/json";
+  ...Body<Widget>;
+}
+
+model OtherWidgetResponse {
+  ...OkResponse;
+  @header contentType: "application/json";
+  ...Body<OtherWidget>;
+}
+
+@sharedRoute
+@route("/widgets/{id}")
+@get
+op getWidgetA(@path id: string, @header accept: "application/json"): WidgetResponse;
+
+@sharedRoute
+@route("/widgets/{id}")
+@get
+op getWidgetB(@path id: string, @header accept: "application/vnd.widget+json"): OtherWidgetResponse;
+`,
+			diagnostic: "incompatible response content for status 200 and content type application/json",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runTypeSpecCompileFailurePreservesOutputs(t, tc.source, tc.diagnostic)
+		})
+	}
 }
 
 func TestResolveTypeSpecPackage_UsesDevelopmentOverride(t *testing.T) {
@@ -524,6 +1075,59 @@ func TestGenerateServer_FailsForUnnamedRequestBodySchema(t *testing.T) {
 	require.ErrorContains(t, err, "createWidget")
 }
 
+func TestGenerateServer_AllowsInlineBinaryRequestBody(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	doc := ir.Document{
+		SchemaVersion: "v2",
+		API:           ir.API{BasePath: "/v1"},
+		Info:          ir.Info{Title: "Artifact API", Version: "1.0.0"},
+		OpenAPI:       ir.OpenAPI{Version: "3.0.0"},
+		Schemas: map[string]ir.Schema{
+			"DeploymentArtifactResponse": {
+				Type: "object",
+				Properties: map[string]ir.SchemaProperty{
+					"deploymentId": {Schema: ir.SchemaRef{Type: "string"}},
+					"sizeBytes":    {Schema: ir.SchemaRef{Type: "integer", Format: "int64"}},
+				},
+				Required: []string{"deploymentId", "sizeBytes"},
+			},
+		},
+		Endpoints: []ir.Endpoint{
+			{
+				Method:      "put",
+				Path:        "/workspaces/{workspace}/deployments/{deployment}/artifact",
+				OperationID: "uploadDeploymentArtifact",
+				Parameters: []ir.Parameter{
+					{Name: "workspace", In: "path", Required: true, Schema: ir.SchemaRef{Type: "string"}},
+					{Name: "deployment", In: "path", Required: true, Schema: ir.SchemaRef{Type: "string"}},
+					{Name: "Content-Type", In: "header", Required: true, Schema: ir.SchemaRef{Type: "string", Enum: []string{"application/octet-stream"}}},
+				},
+				RequestBody: &ir.RequestBody{Required: true, Contents: []ir.BodyContent{{
+					ContentType: "application/octet-stream",
+					BodyKind:    "binary",
+					Schema:      &ir.SchemaRef{Type: "string", Format: "binary"},
+				}}},
+				Responses: []ir.Response{{StatusCode: 200, Description: "uploaded", Contents: jsonContent(ir.SchemaRef{Ref: "DeploymentArtifactResponse"})}},
+			},
+		},
+	}
+
+	canonicalOpenAPIPath := writeCanonicalOpenAPI(t, dir, doc)
+	serverPath := filepath.Join(dir, "server.apigen.gen.go")
+	requestModelsPath := filepath.Join(dir, "request_models.gen.go")
+
+	require.NoError(t, generateServer(doc, serverPath, "api", requestModelsPath, "api", canonicalOpenAPIPath))
+	serverContent := mustReadString(t, serverPath)
+	requestModelsContent := mustReadString(t, requestModelsPath)
+
+	require.Contains(t, serverContent, "type GenUploadDeploymentArtifactBody = []byte")
+	require.Contains(t, serverContent, "Body       *GenUploadDeploymentArtifactBody")
+	require.Contains(t, requestModelsContent, "type GenSchemaDeploymentArtifactResponse = DeploymentArtifactResponse")
+	require.NotContains(t, requestModelsContent, "DeploymentArtifactUploadRequest")
+}
+
 func writeMinimalTypeSpecContract(t *testing.T, typeSpecDir string, pathPrefix string, title string, version string) {
 	t.Helper()
 
@@ -547,6 +1151,159 @@ model Widget {
 op listWidgets(): Widget;
 `
 	require.NoError(t, os.WriteFile(filepath.Join(typeSpecDir, "main.tsp"), []byte(source), 0o644))
+}
+
+func runAPIGenManifestIntegration(t *testing.T, source string) apigenIntegrationResult {
+	t.Helper()
+
+	root := t.TempDir()
+	realHome := os.Getenv("HOME")
+	setupManagedTypeSpecCache(t)
+
+	typeSpecDir := filepath.Join(root, "api", "typespec")
+	require.NoError(t, os.MkdirAll(typeSpecDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(typeSpecDir, "main.tsp"), []byte(source), 0o644))
+
+	manifestPath := filepath.Join(root, "apigen.targets.yaml")
+	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
+  - name: integration
+    typespec_dir: api/typespec
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      dir: internal/api
+      package: api
+      server_file: server.apigen.gen.go
+      request_models_file: request_models.gen.go
+    cli_out:
+      dir: cmd/cli/gen
+      package: gen
+      file: apigen_registry.gen.go
+`), 0o644))
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCLI([]string{"typespec-compile", "-manifest", manifestPath, "-target", "integration"}, &stdout, &stderr)
+	require.Equal(t, 0, code, stderr.String())
+	require.Empty(t, stderr.String())
+
+	stdout.Reset()
+	stderr.Reset()
+	code = runCLI([]string{"all", "-manifest", manifestPath, "-target", "integration"}, &stdout, &stderr)
+	require.Equal(t, 0, code, stderr.String())
+	require.Empty(t, stderr.String())
+
+	result := apigenIntegrationResult{
+		Root:              root,
+		IRPath:            filepath.Join(root, "api", "gen", "json-ir.json"),
+		OpenAPIPath:       filepath.Join(root, "api", "gen", "openapi.yaml"),
+		ServerPath:        filepath.Join(root, "internal", "api", "server.apigen.gen.go"),
+		RequestModelsPath: filepath.Join(root, "internal", "api", "request_models.gen.go"),
+		CLIPath:           filepath.Join(root, "cmd", "cli", "gen", "apigen_registry.gen.go"),
+	}
+	require.FileExists(t, result.IRPath)
+	require.FileExists(t, result.OpenAPIPath)
+	require.FileExists(t, result.ServerPath)
+	require.FileExists(t, result.RequestModelsPath)
+	require.FileExists(t, result.CLIPath)
+
+	doc, err := loadDocument(result.IRPath)
+	require.NoError(t, err)
+	result.Document = doc
+	result.OpenAPIContent = mustReadString(t, result.OpenAPIPath)
+	result.ServerContent = mustReadString(t, result.ServerPath)
+	result.RequestModelsContent = mustReadString(t, result.RequestModelsPath)
+	result.CLIContent = mustReadString(t, result.CLIPath)
+
+	compileGeneratedIntegrationPackages(t, result, realHome)
+	return result
+}
+
+func compileGeneratedIntegrationPackages(t *testing.T, result apigenIntegrationResult, realHome string) {
+	t.Helper()
+
+	require.NoError(t, os.WriteFile(filepath.Join(result.Root, "go.mod"), []byte(`module generatedintegration
+
+go 1.25.8
+
+require github.com/Yacobolo/toolbelt/apigen v0.0.0
+
+replace github.com/Yacobolo/toolbelt/apigen => `+apigenModuleRoot(t)+`
+`), 0o644))
+	if !strings.Contains(result.RequestModelsContent, "type Error struct") {
+		require.NoError(t, os.WriteFile(filepath.Join(result.Root, "internal", "api", "app_types_test.go"), []byte(`package api
+
+type Error struct {
+	Code int32
+	Message string
+}
+`), 0o644))
+	}
+
+	cmd := exec.Command("go", "test", "-mod=mod", "./...")
+	cmd.Dir = result.Root
+	if realHome != "" {
+		cmd.Env = append(os.Environ(), "HOME="+realHome, "GOMODCACHE="+filepath.Join(realHome, "go", "pkg", "mod"))
+	}
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
+}
+
+func runTypeSpecCompileFailurePreservesOutputs(t *testing.T, source string, expectedDiagnostic string) {
+	t.Helper()
+
+	root := t.TempDir()
+	setupManagedTypeSpecCache(t)
+	typeSpecDir := filepath.Join(root, "api", "typespec")
+	require.NoError(t, os.MkdirAll(typeSpecDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(typeSpecDir, "main.tsp"), []byte(source), 0o644))
+
+	irPath := filepath.Join(root, "api", "gen", "json-ir.json")
+	openAPIPath := filepath.Join(root, "api", "gen", "openapi.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(irPath), 0o755))
+	require.NoError(t, os.WriteFile(irPath, []byte(`{"stale":true}`), 0o644))
+	require.NoError(t, os.WriteFile(openAPIPath, []byte("stale: true\n"), 0o644))
+
+	manifestPath := filepath.Join(root, "apigen.targets.yaml")
+	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
+  - name: invalid
+    typespec_dir: api/typespec
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      dir: internal/api
+`), 0o644))
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCLI([]string{"typespec-compile", "-manifest", manifestPath, "-target", "invalid"}, &stdout, &stderr)
+	require.Equal(t, 1, code)
+	require.Empty(t, stdout.String())
+	require.Contains(t, stderr.String(), expectedDiagnostic)
+	require.Equal(t, `{"stale":true}`, strings.TrimSpace(mustReadString(t, irPath)))
+	require.Equal(t, "stale: true", strings.TrimSpace(mustReadString(t, openAPIPath)))
+}
+
+func integrationEndpoint(t *testing.T, doc ir.Document, operationID string) ir.Endpoint {
+	t.Helper()
+
+	for _, endpoint := range doc.Endpoints {
+		if endpoint.OperationID == operationID {
+			return endpoint
+		}
+	}
+	t.Fatalf("operation %q not found", operationID)
+	return ir.Endpoint{}
+}
+
+func apigenModuleRoot(t *testing.T) string {
+	t.Helper()
+
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	root, err := filepath.Abs(filepath.Join(wd, "..", ".."))
+	require.NoError(t, err)
+	return root
 }
 
 func mustReadString(t *testing.T, path string) string {
