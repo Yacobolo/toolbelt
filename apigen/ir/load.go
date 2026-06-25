@@ -3,6 +3,7 @@ package ir
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -75,6 +76,9 @@ func Validate(doc Document) error {
 		if strings.TrimSpace(endpoint.OperationID) == "" {
 			return fmt.Errorf("endpoint operation_id is required")
 		}
+		if err := validateEndpointExtensions(endpoint.Extensions, fmt.Sprintf("endpoint %q", endpoint.OperationID)); err != nil {
+			return err
+		}
 		for _, parameter := range endpoint.Parameters {
 			if err := validateParameterSchema(doc, endpoint, parameter); err != nil {
 				return err
@@ -92,6 +96,9 @@ func Validate(doc Document) error {
 			endpoint.RequestBody.ContentType = "application/json"
 		}
 		for _, response := range endpoint.Responses {
+			if err := validateResponseExtensions(response.Extensions, fmt.Sprintf("endpoint %q response %d", endpoint.OperationID, response.StatusCode)); err != nil {
+				return err
+			}
 			if response.StatusCode <= 0 {
 				return fmt.Errorf("endpoint %q has invalid response status_code %d", endpoint.OperationID, response.StatusCode)
 			}
@@ -184,6 +191,102 @@ func Validate(doc Document) error {
 	}
 
 	return nil
+}
+
+func validateEndpointExtensions(extensions map[string]any, context string) error {
+	for key, value := range extensions {
+		if !strings.HasPrefix(key, "x-") {
+			return fmt.Errorf("%s extension %q must start with \"x-\"", context, key)
+		}
+		switch key {
+		case "x-authz":
+			if err := validateAuthzExtension(value); err != nil {
+				return fmt.Errorf("%s extension %q: %w", context, key, err)
+			}
+		case "x-apigen-manual":
+			if _, ok := value.(bool); !ok {
+				return fmt.Errorf("%s extension %q: x-apigen-manual must be boolean", context, key)
+			}
+		default:
+			if strings.HasPrefix(key, "x-apigen-") {
+				return fmt.Errorf("%s unsupported APIGen-owned extension %q", context, key)
+			}
+		}
+		if err := validateJSONCompatibleExtensionValue(value); err != nil {
+			return fmt.Errorf("%s extension %q: %w", context, key, err)
+		}
+	}
+	return nil
+}
+
+func validateResponseExtensions(extensions map[string]any, context string) error {
+	for key, value := range extensions {
+		if !strings.HasPrefix(key, "x-") {
+			return fmt.Errorf("%s extension %q must start with \"x-\"", context, key)
+		}
+		if key != ResponseShapeExtensionKey {
+			if strings.HasPrefix(key, "x-apigen-") {
+				return fmt.Errorf("%s unsupported APIGen-owned extension %q", context, key)
+			}
+			return fmt.Errorf("%s unsupported response extension %q", context, key)
+		}
+		if err := validateJSONCompatibleExtensionValue(value); err != nil {
+			return fmt.Errorf("%s extension %q: %w", context, key, err)
+		}
+	}
+	return nil
+}
+
+func validateAuthzExtension(value any) error {
+	extension, ok := value.(map[string]any)
+	if !ok {
+		return fmt.Errorf("x-authz must be an object")
+	}
+	mode, ok := extension["mode"]
+	if !ok {
+		return fmt.Errorf("x-authz.mode is required")
+	}
+	if _, ok := mode.(string); !ok {
+		return fmt.Errorf("x-authz.mode must be string")
+	}
+	return nil
+}
+
+func validateJSONCompatibleExtensionValue(value any) error {
+	switch typed := value.(type) {
+	case nil, string, bool:
+		return nil
+	case float64:
+		if math.IsInf(typed, 0) || math.IsNaN(typed) {
+			return fmt.Errorf("number must be finite")
+		}
+		return nil
+	case float32:
+		if math.IsInf(float64(typed), 0) || math.IsNaN(float64(typed)) {
+			return fmt.Errorf("number must be finite")
+		}
+		return nil
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return nil
+	case []any:
+		for _, item := range typed {
+			if err := validateJSONCompatibleExtensionValue(item); err != nil {
+				return err
+			}
+		}
+		return nil
+	case []string:
+		return nil
+	case map[string]any:
+		for _, item := range typed {
+			if err := validateJSONCompatibleExtensionValue(item); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported JSON value type %T", value)
+	}
 }
 
 func validateParameterSchema(doc Document, endpoint Endpoint, parameter Parameter) error {

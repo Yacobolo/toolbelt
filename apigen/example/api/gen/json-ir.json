@@ -6,12 +6,20 @@
   "info": {
     "title": "APIGen Todo Example",
     "version": "0.1.0",
-    "description": "Small in-memory todo API authored in CUE to showcase APIGen generation and strict server wiring."
+    "description": "Small in-memory todo API authored in TypeSpec to showcase APIGen generation and strict server wiring."
   },
   "openapi": {
     "version": "3.0.0",
     "tag_order": [
       "Todos"
+    ],
+    "security": [
+      {
+        "BearerAuth": []
+      },
+      {
+        "ApiKeyAuth": []
+      }
     ],
     "security_schemes": {
       "ApiKeyAuth": {
@@ -186,6 +194,17 @@
         },
         "pagination": {
           "items_field": "data"
+        }
+      },
+      "extensions": {
+        "x-agent": {
+          "enabled": true,
+          "name": "list_todos",
+          "risk": "read",
+          "tags": [
+            "todos",
+            "read"
+          ]
         }
       }
     },

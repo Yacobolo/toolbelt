@@ -1,6 +1,6 @@
 targets:
   - name: example
-    cue_dir: api/cue
+    typespec_dir: api/typespec
     ir_out: api/gen/json-ir.json
     openapi_out: api/gen/openapi.yaml
     go_out:

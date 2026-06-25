@@ -2,7 +2,7 @@ openapi: 3.0.0
 info:
   title: APIGen Todo Example
   version: 0.1.0
-  description: Small in-memory todo API authored in CUE to showcase APIGen generation and strict server wiring.
+  description: Small in-memory todo API authored in TypeSpec to showcase APIGen generation and strict server wiring.
 tags:
   - name: Todos
     description: Todo lifecycle endpoints for the APIGen example.
@@ -43,6 +43,13 @@ paths:
                 message: example
       tags:
         - Todos
+      x-agent:
+        enabled: true
+        name: list_todos
+        risk: read
+        tags:
+          - todos
+          - read
     post:
       operationId: createTodo
       summary: Create todo
@@ -167,6 +174,9 @@ paths:
                 message: example
       tags:
         - Todos
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
 components:
   schemas:
     CreateTodoRequest:

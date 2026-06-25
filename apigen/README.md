@@ -8,10 +8,10 @@ Module path: `github.com/Yacobolo/toolbelt/apigen`
 
 APIGen has two contract layers:
 
-- CUE authoring input for humans
+- TypeSpec authoring input for humans
 - JSON IR `v1` for generators
 
-Canonical OpenAPI is the published API artifact. JSON IR is the compatibility boundary between the compiler and the Go emitters. Repo-owned OpenAPI extensions such as `x-authz` are preserved there.
+Canonical OpenAPI is the published API artifact. JSON IR is the compatibility boundary between TypeSpec and the Go emitters. Repo-owned OpenAPI extensions such as `x-authz` are preserved there.
 
 ## CLI
 
@@ -23,8 +23,7 @@ go run ./cmd/apigen --help
 
 Commands:
 
-- `cue-compile`: CUE -> JSON IR + OpenAPI
-- `cue-bootstrap`: JSON IR -> starter CUE files
+- `typespec-compile`: TypeSpec -> JSON IR + OpenAPI
 - `openapi`: JSON IR -> OpenAPI
 - `server`: JSON IR -> server + request models
 - `cli`: JSON IR -> Cobra registry
@@ -37,7 +36,7 @@ Recommended grouped manifest shape:
 ```yaml
 targets:
   - name: example
-    cue_dir: api/cue
+    typespec_dir: api/typespec
     ir_out: api/gen/json-ir.json
     openapi_out: api/gen/openapi.yaml
     go_out:
@@ -48,7 +47,7 @@ targets:
 
 Manifest target fields:
 
-- `cue_dir`
+- `typespec_dir`
 - `ir_out`
 - `openapi_out`
 - `go_out.dir`
@@ -73,7 +72,7 @@ Supported packages:
 
 Package roles:
 
-- `cuegen`: compile and bootstrap CUE
+- `typespec`: TypeSpec emitter package used by `typespec-compile`
 - `ir`: versioned generator contract
 - `emit/*`: OpenAPI, server, request-model, and CLI emitters
 - `runtime/*`: thin runtime helpers used by generated code
@@ -83,14 +82,51 @@ Public packages must stay isolated from sibling `toolbelt` packages outside `api
 
 ## Using It
 
-Typical flow:
+Recommended TypeSpec flow:
 
-1. Author API contracts in CUE.
-2. Run `cue-compile` to produce JSON IR and canonical OpenAPI.
+1. Author API contracts in TypeSpec.
+2. Run `typespec-compile` to produce JSON IR and canonical OpenAPI.
 3. Run `all` to generate server, request-model, and CLI outputs.
 4. Build your service against `runtime/chi` and your CLI against `runtime/cobra`.
 
 The runnable reference showcase lives in `example/`. It is a small todo app with checked-in `json-ir`, OpenAPI, server transport, request-model aliases, CLI registry metadata, handwritten strict handlers, and a generated Cobra CLI.
+
+The in-repo TypeSpec emitter lives in `typespec/` with a checked-in `package-lock.json`. Use `npm ci` there for reproducible local TypeSpec development; `typespec-compile` also bootstraps that pinned toolchain when needed.
+
+## Operation Vendor Extensions
+
+Use TypeSpec's native OpenAPI extension decorator to attach downstream-owned operation metadata:
+
+```typespec
+using TypeSpec.OpenAPI;
+
+@extension("x-agent", #{
+  enabled: true,
+  name: "list_workspace_assets",
+  risk: "read",
+  tags: #["workspace", "lineage"],
+})
+@route("/workspaces")
+@get
+op listWorkspaces(): Workspace[];
+```
+
+APIGen preserves operation-level `x-*` extensions through TypeSpec -> JSON IR -> canonical OpenAPI -> generated Go operation contracts. Extension values must be JSON-compatible: `null`, strings, booleans, finite numbers, arrays, and objects.
+
+Generated server packages expose extensions through `GenOperationContract.Extensions`:
+
+```go
+contract, ok := gen.GetAPIGenOperationContract("listWorkspaces")
+if ok {
+	agent, _ := contract.Extensions["x-agent"].(map[string]any)
+	enabled, _ := agent["enabled"].(bool)
+	_ = enabled
+}
+```
+
+Accessors return defensive copies, so callers may filter or reshape extension metadata without mutating generated global state. APIGen does not interpret downstream extension semantics; policy such as agent allowlists, risk handling, auth checks, and workspace scoping belongs in the consuming application.
+
+APIGen-owned extension keys are reserved. Use APIGen decorators for `x-authz` and `x-apigen-*` metadata instead of generic `@extension`.
 
 Install as a dependency with:
 
@@ -100,7 +136,7 @@ go get github.com/Yacobolo/toolbelt/apigen
 
 ## Contract Notes
 
-JSON IR currently supports schema version `v1`. Required root fields are `schema_version`, `info.title`, `info.version`, and at least one endpoint. Supported endpoint extensions include `x-authz` and `x-apigen-manual`; supported response extensions include `x-apigen-response-shape`.
+JSON IR currently supports schema version `v1`. Required root fields are `schema_version`, `info.title`, `info.version`, and at least one endpoint. Endpoint extensions preserve operation-level `x-*` vendor metadata; APIGen-owned endpoint extensions include `x-authz` and `x-apigen-manual`. Supported response extensions include `x-apigen-response-shape`.
 
 Generated request bodies are contract-first:
 

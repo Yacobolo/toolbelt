@@ -3,22 +3,26 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"go/format"
 	"io"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 
-	"github.com/Yacobolo/toolbelt/apigen/cuegen"
 	cligoemit "github.com/Yacobolo/toolbelt/apigen/emit/cligo"
 	openapiemit "github.com/Yacobolo/toolbelt/apigen/emit/openapi"
 	requestmodelgoemit "github.com/Yacobolo/toolbelt/apigen/emit/requestmodelgo"
 	servergoemit "github.com/Yacobolo/toolbelt/apigen/emit/servergo"
 	"github.com/Yacobolo/toolbelt/apigen/ir"
+	typespecbundle "github.com/Yacobolo/toolbelt/apigen/typespec"
 	"go.yaml.in/yaml/v4"
 )
 
@@ -27,8 +31,7 @@ type commandConfig struct {
 	IROut                string
 	OpenAPIOut           string
 	CanonicalOpenAPIPath string
-	CueDir               string
-	CueOutDir            string
+	TypeSpecDir          string
 	ServerOut            string
 	ServerPackage        string
 	RequestModelsOut     string
@@ -57,7 +60,7 @@ type cliOutputSpec struct {
 
 type targetSpec struct {
 	Name                 string         `yaml:"name"`
-	CueDir               string         `yaml:"cue_dir"`
+	TypeSpecDir          string         `yaml:"typespec_dir"`
 	IROut                string         `yaml:"ir_out"`
 	OpenAPIOut           string         `yaml:"openapi_out"`
 	ServerOut            string         `yaml:"server_out"`
@@ -75,10 +78,17 @@ type targetSpec struct {
 
 var goPackagePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 
+const typeSpecPackageDirEnv = "APIGEN_TYPESPEC_PACKAGE_DIR"
+
+type typeSpecPackage struct {
+	Dir     string
+	Managed bool
+}
+
 func (target *targetSpec) UnmarshalYAML(unmarshal func(any) error) error {
 	type rawTargetSpec struct {
 		Name                 string        `yaml:"name"`
-		CueDir               string        `yaml:"cue_dir"`
+		TypeSpecDir          string        `yaml:"typespec_dir"`
 		IROut                string        `yaml:"ir_out"`
 		OpenAPIOut           string        `yaml:"openapi_out"`
 		ServerOut            string        `yaml:"server_out"`
@@ -100,7 +110,7 @@ func (target *targetSpec) UnmarshalYAML(unmarshal func(any) error) error {
 
 	*target = targetSpec{
 		Name:                 raw.Name,
-		CueDir:               raw.CueDir,
+		TypeSpecDir:          raw.TypeSpecDir,
 		IROut:                raw.IROut,
 		OpenAPIOut:           raw.OpenAPIOut,
 		ServerOut:            raw.ServerOut,
@@ -160,11 +170,10 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 	manifestPath := fs.String("manifest", "", "optional APIGen target manifest path")
 	targetName := fs.String("target", "", "manifest target name")
 	irPath := fs.String("ir", "gen/json-ir.json", "input JSON IR path")
-	irOut := fs.String("ir-out", "gen/json-ir.json", "output JSON IR path for CUE compilation")
+	irOut := fs.String("ir-out", "gen/json-ir.json", "output JSON IR path for TypeSpec compilation")
 	openapiOut := fs.String("openapi-out", "gen/openapi.yaml", "output OpenAPI YAML path for optional debug/compat emission")
 	canonicalOpenAPIPath := fs.String("canonical-openapi", "gen/openapi.yaml", "canonical OpenAPI YAML path to embed into generated server code")
-	cueDir := fs.String("cue-dir", "api/cue", "input CUE API source directory")
-	cueOutDir := fs.String("cue-out-dir", "api/cue", "output CUE API source directory")
+	typeSpecDir := fs.String("typespec-dir", "api/typespec", "input TypeSpec API source directory")
 	serverOut := fs.String("server-out", "internal/api/server.apigen.gen.go", "output server Go path")
 	serverPackage := fs.String("server-package", "api", "generated server Go package name")
 	requestModelsOut := fs.String("request-models-out", "internal/api/gen_request_models.gen.go", "output APIGen request models Go path")
@@ -183,8 +192,7 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 		IROut:                *irOut,
 		OpenAPIOut:           *openapiOut,
 		CanonicalOpenAPIPath: *canonicalOpenAPIPath,
-		CueDir:               *cueDir,
-		CueOutDir:            *cueOutDir,
+		TypeSpecDir:          *typeSpecDir,
 		ServerOut:            *serverOut,
 		ServerPackage:        *serverPackage,
 		RequestModelsOut:     *requestModelsOut,
@@ -206,13 +214,9 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 		if err := generateOpenAPI(doc, config.OpenAPIOut); err != nil {
 			return failf(stderr, "generate openapi: %v", err)
 		}
-	case "cue-compile":
-		if err := compileCUE(config.CueDir, config.IROut, config.OpenAPIOut); err != nil {
-			return failf(stderr, "compile cue: %v", err)
-		}
-	case "cue-bootstrap":
-		if err := bootstrapCUE(config.IRPath, config.CueOutDir); err != nil {
-			return failf(stderr, "bootstrap cue: %v", err)
+	case "typespec-compile":
+		if err := compileTypeSpec(config.TypeSpecDir, config.IROut, config.OpenAPIOut); err != nil {
+			return failf(stderr, "compile typespec: %v", err)
 		}
 	case "server":
 		doc, err := loadDocument(config.IRPath)
@@ -264,8 +268,7 @@ func resolveCommandConfig(command string, manifestPath string, targetName string
 	}
 
 	config := defaults
-	config.CueDir = target.CueDir
-	config.CueOutDir = target.CueDir
+	config.TypeSpecDir = target.TypeSpecDir
 	config.IRPath = target.IROut
 	config.IROut = target.IROut
 	config.OpenAPIOut = target.OpenAPIOut
@@ -337,7 +340,7 @@ func resolveTargetPaths(target targetSpec, baseDir string) targetSpec {
 	if target.CLIOutGroup != nil {
 		target.CLIOutGroup.Dir = resolveManifestPath(baseDir, target.CLIOutGroup.Dir)
 	}
-	target.CueDir = resolveManifestPath(baseDir, target.CueDir)
+	target.TypeSpecDir = resolveManifestPath(baseDir, target.TypeSpecDir)
 	target.IROut = resolveManifestPath(baseDir, target.IROut)
 	target.OpenAPIOut = resolveManifestPath(baseDir, target.OpenAPIOut)
 	return target
@@ -355,13 +358,9 @@ func resolveManifestPath(baseDir string, value string) string {
 
 func validateCommandConfig(command string, config commandConfig) error {
 	switch command {
-	case "cue-compile":
-		if config.CueDir == "" || config.IROut == "" || config.OpenAPIOut == "" {
-			return fmt.Errorf("manifest target must declare cue_dir, ir_out, and openapi_out")
-		}
-	case "cue-bootstrap":
-		if config.IRPath == "" || config.CueOutDir == "" {
-			return fmt.Errorf("manifest target must declare cue_dir and ir_out")
+	case "typespec-compile":
+		if config.TypeSpecDir == "" || config.IROut == "" || config.OpenAPIOut == "" {
+			return fmt.Errorf("manifest target must declare typespec_dir, ir_out, and openapi_out")
 		}
 	case "openapi":
 		if config.IRPath == "" || config.OpenAPIOut == "" {
@@ -420,6 +419,9 @@ func validateTargetSpec(target targetSpec) error {
 	if target.usesLegacyGoOut() || target.usesLegacyCLIOut() {
 		return fmt.Errorf("target %q uses legacy flat manifest fields that are not supported in apigen 0.2.0", target.Name)
 	}
+	if strings.TrimSpace(target.TypeSpecDir) == "" {
+		return fmt.Errorf("target %q typespec_dir is required", target.Name)
+	}
 	if !target.usesGroupedGoOut() {
 		return fmt.Errorf("target %q must declare go_out", target.Name)
 	}
@@ -443,24 +445,217 @@ func inferOrValidateManifestPackage(fieldName string, explicit string, dir strin
 	return packageName, nil
 }
 
-func compileCUE(cueDir string, irOutPath string, openAPIOutPath string) error {
-	bundle, err := cuegen.CompileDir(cueDir)
+func compileTypeSpec(typeSpecDir string, irOutPath string, openAPIOutPath string) error {
+	absTypeSpecDir, err := filepath.Abs(typeSpecDir)
+	if err != nil {
+		return fmt.Errorf("resolve typespec dir: %w", err)
+	}
+	absIROutPath, err := filepath.Abs(irOutPath)
+	if err != nil {
+		return fmt.Errorf("resolve ir output path: %w", err)
+	}
+	absOpenAPIOutPath, err := filepath.Abs(openAPIOutPath)
+	if err != nil {
+		return fmt.Errorf("resolve openapi output path: %w", err)
+	}
+
+	pkg, err := resolveTypeSpecPackage()
 	if err != nil {
 		return err
 	}
-	if err := cuegen.WriteBundle(bundle, irOutPath, openAPIOutPath); err != nil {
+	if err := ensureTypeSpecToolchain(pkg); err != nil {
+		return err
+	}
+
+	tempIRPath, err := tempOutputPath(absIROutPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tempIRPath) }()
+	tempOpenAPIPath, err := tempOutputPath(absOpenAPIOutPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tempOpenAPIPath) }()
+
+	tsp := filepath.Join(pkg.Dir, "node_modules", "@typespec", "compiler", "cmd", "tsp.js")
+	cmd := exec.Command(
+		"node",
+		tsp,
+		"compile",
+		absTypeSpecDir,
+		"--import",
+		pkg.Dir,
+		"--emit",
+		pkg.Dir,
+		"--option",
+		"@yacobolo/apigen.output-file="+tempIRPath,
+		"--option",
+		"@yacobolo/apigen.base-path=/",
+	)
+	cmd.Dir = pkg.Dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("run tsp compile: %w\n%s", err, strings.TrimSpace(string(output)))
+	}
+
+	doc, err := loadDocument(tempIRPath)
+	if err != nil {
+		return err
+	}
+	if err := writeJSONDocument(tempIRPath, doc); err != nil {
+		return err
+	}
+	if err := generateOpenAPI(doc, tempOpenAPIPath); err != nil {
+		return err
+	}
+	if err := replaceFile(tempIRPath, absIROutPath); err != nil {
+		return err
+	}
+	if err := replaceFile(tempOpenAPIPath, absOpenAPIOutPath); err != nil {
 		return err
 	}
 	return nil
 }
 
-func bootstrapCUE(irPath string, cueOutDir string) error {
-	doc, err := loadDocument(irPath)
-	if err != nil {
-		return err
+func resolveTypeSpecPackage() (typeSpecPackage, error) {
+	if override := strings.TrimSpace(os.Getenv(typeSpecPackageDirEnv)); override != "" {
+		dir, err := filepath.Abs(override)
+		if err != nil {
+			return typeSpecPackage{}, fmt.Errorf("resolve %s: %w", typeSpecPackageDirEnv, err)
+		}
+		return typeSpecPackage{Dir: dir}, nil
 	}
-	if err := cuegen.Bootstrap(doc, cueOutDir); err != nil {
-		return err
+	cacheRoot, err := os.UserCacheDir()
+	if err != nil {
+		return typeSpecPackage{}, fmt.Errorf("resolve user cache dir: %w", err)
+	}
+	return installBundledTypeSpecPackage(cacheRoot)
+}
+
+func installBundledTypeSpecPackage(cacheRoot string) (typeSpecPackage, error) {
+	hash, err := bundledTypeSpecPackageHash()
+	if err != nil {
+		return typeSpecPackage{}, err
+	}
+	packageDir := filepath.Join(cacheRoot, "apigen", "typespec", hash)
+	marker := filepath.Join(packageDir, ".apigen-bundle-sha256")
+	if content, err := os.ReadFile(marker); err == nil && strings.TrimSpace(string(content)) == hash {
+		return typeSpecPackage{Dir: packageDir, Managed: true}, nil
+	}
+	if err := os.RemoveAll(packageDir); err != nil {
+		return typeSpecPackage{}, fmt.Errorf("clear typespec package cache: %w", err)
+	}
+	if err := fs.WalkDir(typespecbundle.Package, ".", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == "." {
+			return nil
+		}
+		target := filepath.Join(packageDir, filepath.FromSlash(path))
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o750)
+		}
+		content, err := typespecbundle.Package.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read bundled typespec package file %q: %w", path, err)
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+			return fmt.Errorf("create bundled typespec package directory: %w", err)
+		}
+		if err := os.WriteFile(target, content, 0o600); err != nil {
+			return fmt.Errorf("write bundled typespec package file %q: %w", path, err)
+		}
+		return nil
+	}); err != nil {
+		return typeSpecPackage{}, fmt.Errorf("install bundled typespec package: %w", err)
+	}
+	if err := os.WriteFile(marker, []byte(hash+"\n"), 0o600); err != nil {
+		return typeSpecPackage{}, fmt.Errorf("write typespec package cache marker: %w", err)
+	}
+	return typeSpecPackage{Dir: packageDir, Managed: true}, nil
+}
+
+func bundledTypeSpecPackageHash() (string, error) {
+	hash := sha256.New()
+	if err := fs.WalkDir(typespecbundle.Package, ".", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		content, err := typespecbundle.Package.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read bundled typespec package file %q: %w", path, err)
+		}
+		hash.Write([]byte(path))
+		hash.Write([]byte{0})
+		hash.Write(content)
+		hash.Write([]byte{0})
+		return nil
+	}); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil))[:16], nil
+}
+
+func ensureTypeSpecToolchain(pkg typeSpecPackage) error {
+	tsp := filepath.Join(pkg.Dir, "node_modules", "@typespec", "compiler", "cmd", "tsp.js")
+	if _, err := os.Stat(tsp); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("stat typespec compiler: %w", err)
+		}
+		if !pkg.Managed {
+			return fmt.Errorf("typespec compiler not found in %s; run npm ci or unset %s to use the bundled cache", pkg.Dir, typeSpecPackageDirEnv)
+		}
+		if err := runTypeSpecPackageCommand(pkg.Dir, "npm", "ci", "--omit=dev"); err != nil {
+			return err
+		}
+	}
+	dist := filepath.Join(pkg.Dir, "dist", "src", "index.js")
+	if _, err := os.Stat(dist); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("stat apigen typespec emitter: %w", err)
+		}
+		return fmt.Errorf("apigen typespec emitter not found in %s; run npm run build before using %s", pkg.Dir, typeSpecPackageDirEnv)
+	}
+	return nil
+}
+
+func runTypeSpecPackageCommand(dir string, name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s %s: %w\n%s", name, strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func tempOutputPath(finalPath string) (string, error) {
+	if err := os.MkdirAll(filepath.Dir(finalPath), 0o750); err != nil {
+		return "", fmt.Errorf("create output directory: %w", err)
+	}
+	file, err := os.CreateTemp(filepath.Dir(finalPath), "."+filepath.Base(finalPath)+".*.tmp")
+	if err != nil {
+		return "", fmt.Errorf("create temp output for %s: %w", finalPath, err)
+	}
+	path := file.Name()
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("close temp output for %s: %w", finalPath, err)
+	}
+	if err := os.Remove(path); err != nil {
+		return "", fmt.Errorf("prepare temp output for %s: %w", finalPath, err)
+	}
+	return path, nil
+}
+
+func replaceFile(tempPath string, finalPath string) error {
+	if err := os.Rename(tempPath, finalPath); err != nil {
+		return fmt.Errorf("replace output %s: %w", finalPath, err)
 	}
 	return nil
 }
@@ -540,6 +735,14 @@ func loadDocument(path string) (ir.Document, error) {
 	return doc, nil
 }
 
+func writeJSONDocument(path string, doc ir.Document) error {
+	content, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal ir document: %w", err)
+	}
+	return writeFile(path, content)
+}
+
 func writeFile(outPath string, content []byte) error {
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o750); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
@@ -574,15 +777,14 @@ func topLevelUsage() string {
   apigen <command> [flags]
 
 Commands:
-  cue-compile    CUE -> JSON IR + OpenAPI
-  cue-bootstrap  JSON IR -> starter CUE files
+  typespec-compile TypeSpec -> JSON IR + OpenAPI
   openapi        JSON IR -> OpenAPI
   server         JSON IR -> server + request models
   cli            JSON IR -> Cobra registry
   all            JSON IR -> all Go outputs
 
 Examples:
-  apigen cue-compile -cue-dir api/cue -ir-out gen/json-ir.json -openapi-out gen/openapi.yaml
+  apigen typespec-compile -typespec-dir api/typespec -ir-out gen/json-ir.json -openapi-out gen/openapi.yaml
   apigen all -ir gen/json-ir.json -canonical-openapi gen/openapi.yaml -server-out internal/api/server.apigen.gen.go
 
 Use "apigen <command> -h" for command-specific flags.

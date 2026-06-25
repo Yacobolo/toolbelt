@@ -22,7 +22,9 @@ func TestRunCLI_TopLevelHelp(t *testing.T) {
 	require.Equal(t, 0, code)
 	require.Contains(t, stdout.String(), "Usage:")
 	require.Contains(t, stdout.String(), "apigen <command> [flags]")
-	require.Contains(t, stdout.String(), "cue-compile")
+	require.Contains(t, stdout.String(), "typespec-compile")
+	require.NotContains(t, stdout.String(), "cue-compile")
+	require.NotContains(t, stdout.String(), "cue-bootstrap")
 	require.Contains(t, stdout.String(), `Use "apigen <command> -h" for command-specific flags.`)
 	require.Empty(t, stderr.String())
 }
@@ -38,6 +40,20 @@ func TestRunCLI_NoArgsShowsUsage(t *testing.T) {
 	require.Empty(t, stdout.String())
 	require.Contains(t, stderr.String(), "Usage:")
 	require.Contains(t, stderr.String(), "apigen <command> [flags]")
+}
+
+func TestRunCLI_RemovedCUECommandsFailUnsupported(t *testing.T) {
+	t.Helper()
+
+	for _, command := range []string{"cue-compile", "cue-bootstrap"} {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+
+		code := runCLI([]string{command}, &stdout, &stderr)
+		require.Equal(t, 1, code)
+		require.Empty(t, stdout.String())
+		require.Contains(t, stderr.String(), `unsupported command "`+command+`"`)
+	}
 }
 
 func TestGenerateArtifacts(t *testing.T) {
@@ -102,7 +118,7 @@ func TestResolveCommandConfig_GroupedManifestTarget(t *testing.T) {
 	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
 	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
   - name: example
-    cue_dir: api/cue
+    typespec_dir: api/typespec
     ir_out: api/gen/json-ir.json
     openapi_out: api/gen/openapi.yaml
     go_out:
@@ -113,7 +129,7 @@ func TestResolveCommandConfig_GroupedManifestTarget(t *testing.T) {
 
 	config, err := resolveCommandConfig("all", manifestPath, "example", commandConfig{})
 	require.NoError(t, err)
-	require.Equal(t, filepath.Join(dir, "api", "cue"), config.CueDir)
+	require.Equal(t, filepath.Join(dir, "api", "typespec"), config.TypeSpecDir)
 	require.Equal(t, filepath.Join(dir, "api", "gen", "json-ir.json"), config.IRPath)
 	require.Equal(t, filepath.Join(dir, "api", "gen", "openapi.yaml"), config.CanonicalOpenAPIPath)
 	require.Equal(t, filepath.Join(dir, "internal", "api", "gen", "server.apigen.gen.go"), config.ServerOut)
@@ -125,6 +141,118 @@ func TestResolveCommandConfig_GroupedManifestTarget(t *testing.T) {
 	require.True(t, config.GenerateCLI)
 }
 
+func TestResolveCommandConfig_TypeSpecCompileRequiresTypeSpecDir(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
+	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
+  - name: example
+    typespec_dir: api/typespec
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      dir: internal/api/gen
+`), 0o644))
+
+	config, err := resolveCommandConfig("typespec-compile", manifestPath, "example", commandConfig{})
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(dir, "api", "typespec"), config.TypeSpecDir)
+
+	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
+  - name: example
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      dir: internal/api/gen
+`), 0o644))
+	_, err = resolveCommandConfig("typespec-compile", manifestPath, "example", commandConfig{})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "typespec_dir")
+}
+
+func TestCompileTypeSpec_GeneratesIRAndOpenAPI(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	setupManagedTypeSpecCache(t)
+	irPath := filepath.Join(dir, "json-ir.json")
+	openAPIPath := filepath.Join(dir, "openapi.yaml")
+	fixtureDir := filepath.Join("..", "..", "typespec", "test", "fixtures", "todo")
+
+	require.NoError(t, compileTypeSpec(fixtureDir, irPath, openAPIPath))
+
+	doc, err := loadDocument(irPath)
+	require.NoError(t, err)
+	require.Equal(t, "APIGen Todo Example", doc.Info.Title)
+	require.Len(t, doc.Endpoints, 5)
+	require.Equal(t, "CreateTodoRequest", doc.Endpoints[1].RequestBody.Schema.Ref)
+	require.Equal(t, []string{"todos", "create"}, doc.Endpoints[1].CLI.Command)
+	require.FileExists(t, openAPIPath)
+}
+
+func TestCompileTypeSpec_PreservesOutputsWhenToolchainUnavailable(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	t.Setenv(typeSpecPackageDirEnv, filepath.Join(dir, "missing-typespec-package"))
+	irPath := filepath.Join(dir, "json-ir.json")
+	openAPIPath := filepath.Join(dir, "openapi.yaml")
+	require.NoError(t, os.WriteFile(irPath, []byte(`{"existing":true}`), 0o644))
+	require.NoError(t, os.WriteFile(openAPIPath, []byte("existing: true\n"), 0o644))
+
+	err := compileTypeSpec(filepath.Join("..", "..", "typespec", "test", "fixtures", "todo"), irPath, openAPIPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "typespec compiler not found")
+	require.Equal(t, `{"existing":true}`, strings.TrimSpace(mustReadString(t, irPath)))
+	require.Equal(t, "existing: true", strings.TrimSpace(mustReadString(t, openAPIPath)))
+}
+
+func TestResolveTypeSpecPackage_UsesDevelopmentOverride(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	t.Setenv(typeSpecPackageDirEnv, dir)
+
+	pkg, err := resolveTypeSpecPackage()
+	require.NoError(t, err)
+	require.Equal(t, mustAbs(t, dir), pkg.Dir)
+	require.False(t, pkg.Managed)
+}
+
+func TestInstallBundledTypeSpecPackage_UsesWritableCache(t *testing.T) {
+	t.Helper()
+
+	cacheRoot := t.TempDir()
+	pkg, err := installBundledTypeSpecPackage(cacheRoot)
+	require.NoError(t, err)
+
+	require.True(t, strings.HasPrefix(pkg.Dir, filepath.Join(cacheRoot, "apigen", "typespec")+string(os.PathSeparator)))
+	require.True(t, pkg.Managed)
+	require.FileExists(t, filepath.Join(pkg.Dir, "package.json"))
+	require.FileExists(t, filepath.Join(pkg.Dir, "package-lock.json"))
+	require.FileExists(t, filepath.Join(pkg.Dir, "lib", "main.tsp"))
+	require.FileExists(t, filepath.Join(pkg.Dir, "dist", "src", "index.js"))
+}
+
+func TestCompileTypeSpec_FailurePreservesExistingOutputs(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	setupManagedTypeSpecCache(t)
+	irPath := filepath.Join(dir, "json-ir.json")
+	openAPIPath := filepath.Join(dir, "openapi.yaml")
+	require.NoError(t, os.WriteFile(irPath, []byte(`{"stale":true}`), 0o644))
+	require.NoError(t, os.WriteFile(openAPIPath, []byte("stale: true\n"), 0o644))
+
+	fixtureDir := filepath.Join("..", "..", "typespec", "test", "fixtures", "invalid")
+	err := compileTypeSpec(fixtureDir, irPath, openAPIPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "requires request body to resolve to a named model schema")
+	require.Equal(t, `{"stale":true}`, strings.TrimSpace(mustReadString(t, irPath)))
+	require.Equal(t, "stale: true", strings.TrimSpace(mustReadString(t, openAPIPath)))
+}
+
 func TestResolveCommandConfig_GroupedManifestOverrides(t *testing.T) {
 	t.Helper()
 
@@ -132,7 +260,7 @@ func TestResolveCommandConfig_GroupedManifestOverrides(t *testing.T) {
 	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
 	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
   - name: example
-    cue_dir: api/cue
+    typespec_dir: api/typespec
     ir_out: api/gen/json-ir.json
     openapi_out: api/gen/openapi.yaml
     go_out:
@@ -163,7 +291,7 @@ func TestResolveCommandConfig_GroupedManifestWithoutCLI(t *testing.T) {
 	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
 	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
   - name: example
-    cue_dir: api/cue
+    typespec_dir: api/typespec
     ir_out: api/gen/json-ir.json
     openapi_out: api/gen/openapi.yaml
     go_out:
@@ -187,7 +315,7 @@ func TestResolveCommandConfig_GroupedManifestRejectsLegacyFields(t *testing.T) {
 	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
 	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
   - name: example
-    cue_dir: api/cue
+    typespec_dir: api/typespec
     ir_out: api/gen/json-ir.json
     openapi_out: api/gen/openapi.yaml
     server_out: internal/api/server.apigen.gen.go
@@ -207,7 +335,7 @@ func TestResolveCommandConfig_GroupedManifestRejectsStringCLIOut(t *testing.T) {
 	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
 	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
   - name: example
-    cue_dir: api/cue
+    typespec_dir: api/typespec
     ir_out: api/gen/json-ir.json
     openapi_out: api/gen/openapi.yaml
     go_out:
@@ -227,7 +355,7 @@ func TestResolveCommandConfig_GroupedManifestRejectsInvalidInferredPackage(t *te
 	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
 	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
   - name: example
-    cue_dir: api/cue
+    typespec_dir: api/typespec
     ir_out: api/gen/json-ir.json
     openapi_out: api/gen/openapi.yaml
     go_out:
@@ -243,13 +371,14 @@ func TestMultiTargetManifest_GeneratesVersionedArtifacts(t *testing.T) {
 	t.Helper()
 
 	root := t.TempDir()
-	writeMinimalContract(t, filepath.Join(root, "api", "v1", "cue"), "/v1", "Widget API", "1.0.0")
-	writeMinimalContract(t, filepath.Join(root, "api", "v2", "cue"), "/v2", "Widget API v2", "2.0.0")
+	setupManagedTypeSpecCache(t)
+	writeMinimalTypeSpecContract(t, filepath.Join(root, "api", "v1", "typespec"), "/v1", "Widget API", "1.0.0")
+	writeMinimalTypeSpecContract(t, filepath.Join(root, "api", "v2", "typespec"), "/v2", "Widget API v2", "2.0.0")
 
 	manifestPath := filepath.Join(root, "apigen.targets.yaml")
 	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
   - name: v1
-    cue_dir: api/v1/cue
+    typespec_dir: api/v1/typespec
     ir_out: internal/api/v1/gen/json-ir.json
     openapi_out: internal/api/v1/gen/openapi.yaml
     go_out:
@@ -262,7 +391,7 @@ func TestMultiTargetManifest_GeneratesVersionedArtifacts(t *testing.T) {
       package: genv1
       file: apigen_v1_registry.gen.go
   - name: v2
-    cue_dir: api/v2/cue
+    typespec_dir: api/v2/typespec
     ir_out: internal/api/v2/gen/json-ir.json
     openapi_out: internal/api/v2/gen/openapi.yaml
     go_out:
@@ -274,11 +403,11 @@ func TestMultiTargetManifest_GeneratesVersionedArtifacts(t *testing.T) {
 
 	v1Config, err := resolveCommandConfig("all", manifestPath, "v1", commandConfig{})
 	require.NoError(t, err)
-	require.NoError(t, compileCUE(v1Config.CueDir, v1Config.IROut, v1Config.OpenAPIOut))
+	require.NoError(t, compileTypeSpec(v1Config.TypeSpecDir, v1Config.IROut, v1Config.OpenAPIOut))
 
 	v1Doc, err := loadDocument(v1Config.IRPath)
 	require.NoError(t, err)
-	require.Equal(t, "/v1", v1Doc.API.BasePath)
+	require.Equal(t, "Widget API", v1Doc.Info.Title)
 	require.NoError(t, generateServer(v1Doc, v1Config.ServerOut, v1Config.ServerPackage, v1Config.RequestModelsOut, v1Config.RequestModelsPackage, v1Config.CanonicalOpenAPIPath))
 	require.NoError(t, generateCLI(v1Doc, v1Config.CLIOut, v1Config.CLIPackage))
 
@@ -292,11 +421,11 @@ func TestMultiTargetManifest_GeneratesVersionedArtifacts(t *testing.T) {
 	v2Config, err := resolveCommandConfig("all", manifestPath, "v2", commandConfig{})
 	require.NoError(t, err)
 	require.False(t, v2Config.GenerateCLI)
-	require.NoError(t, compileCUE(v2Config.CueDir, v2Config.IROut, v2Config.OpenAPIOut))
+	require.NoError(t, compileTypeSpec(v2Config.TypeSpecDir, v2Config.IROut, v2Config.OpenAPIOut))
 
 	v2Doc, err := loadDocument(v2Config.IRPath)
 	require.NoError(t, err)
-	require.Equal(t, "/v2", v2Doc.API.BasePath)
+	require.Equal(t, "Widget API v2", v2Doc.Info.Title)
 	require.NoError(t, generateServer(v2Doc, v2Config.ServerOut, v2Config.ServerPackage, v2Config.RequestModelsOut, v2Config.RequestModelsPackage, v2Config.CanonicalOpenAPIPath))
 
 	v2OpenAPI := mustReadString(t, v2Config.OpenAPIOut)
@@ -344,87 +473,33 @@ func TestGenerateServer_FailsForUnnamedRequestBodySchema(t *testing.T) {
 
 	err := generateServer(doc, serverPath, "api", requestModelsPath, "api", canonicalOpenAPIPath)
 	require.Error(t, err)
-	require.ErrorContains(t, err, "request body generation")
+	require.ErrorContains(t, err, "generic request body schema could not be resolved")
 	require.ErrorContains(t, err, "createWidget")
 }
 
-func writeMinimalContract(t *testing.T, cueDir string, basePath string, title string, version string) {
+func writeMinimalTypeSpecContract(t *testing.T, typeSpecDir string, pathPrefix string, title string, version string) {
 	t.Helper()
 
-	require.NoError(t, os.MkdirAll(cueDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(cueDir, "schema.cue"), []byte(`package api
+	require.NoError(t, os.MkdirAll(typeSpecDir, 0o755))
+	source := `using Http;
+using TypeSpec.OpenAPI;
 
-#Source: {
-	schema_version: string
-	api: {
-		base_path: string
-	}
-	info: {
-		title: string
-		version: string
-	}
-	openapi?: _
-	schemas: [string]: _
-	endpoints: [..._]
-}
-`), 0o644))
+@service(#{ title: "` + title + `" })
+@info(#{ version: "` + version + `" })
+namespace WidgetAPI;
 
-	apiCUE := `package api
-
-schema_version: "v1"
-
-api: {
-	base_path: "` + basePath + `"
+model Widget {
+  id: string;
+  name: string;
 }
 
-info: {
-	title:   "` + title + `"
-	version: "` + version + `"
-}
-
-openapi: {
-	version: "3.0.0"
-}
-
-schemas: {
-	"Widget": {
-		type: "object"
-		properties: {
-			"id": {
-				schema: {
-					type: "string"
-				}
-			}
-			"name": {
-				schema: {
-					type: "string"
-				}
-			}
-		}
-		required: ["id", "name"]
-	}
-}
-
-endpoints: [
-	{
-		method:       "get"
-		path:         "/widgets"
-		operation_id: "listWidgets"
-		summary:      "List widgets"
-		cli: {
-			command: ["widgets", "list"]
-		}
-		responses: [{
-			status_code: 200
-			description: "ok"
-			schema: {
-				ref: "Widget"
-			}
-		}]
-	},
-]
+@route("` + pathPrefix + `/widgets")
+@get
+@summary("List widgets")
+@apigen.cli(#{ command: #["widgets", "list"] })
+op listWidgets(): Widget;
 `
-	require.NoError(t, os.WriteFile(filepath.Join(cueDir, "api.cue"), []byte(apiCUE), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(typeSpecDir, "main.tsp"), []byte(source), 0o644))
 }
 
 func mustReadString(t *testing.T, path string) string {
@@ -433,6 +508,23 @@ func mustReadString(t *testing.T, path string) string {
 	content, err := os.ReadFile(path)
 	require.NoError(t, err)
 	return strings.TrimSpace(string(content))
+}
+
+func mustAbs(t *testing.T, path string) string {
+	t.Helper()
+
+	abs, err := filepath.Abs(path)
+	require.NoError(t, err)
+	return abs
+}
+
+func setupManagedTypeSpecCache(t *testing.T) {
+	t.Helper()
+
+	t.Setenv(typeSpecPackageDirEnv, "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
 }
 
 func writeCanonicalOpenAPI(t *testing.T, dir string, doc ir.Document) string {

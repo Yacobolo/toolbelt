@@ -41,6 +41,15 @@ func TestEmitYAML(t *testing.T) {
 				Parameters: []ir.Parameter{
 					{Name: "id", In: "path", Required: true, Schema: ir.SchemaRef{Type: "string"}, Example: "item_123"},
 				},
+				Extensions: map[string]any{
+					"x-agent": map[string]any{
+						"enabled": true,
+						"name":    "get_item",
+						"score":   1.5,
+						"tags":    []any{"items", "read"},
+						"nested":  map[string]any{"nullable": nil, "count": 3},
+					},
+				},
 				Responses: []ir.Response{{
 					StatusCode:  200,
 					Description: "ok",
@@ -68,6 +77,9 @@ func TestEmitYAML(t *testing.T) {
 	require.Equal(t, "getItem", doc.Paths.Value("/items/{id}").Get.OperationID)
 	require.Equal(t, "item_123", doc.Paths.Value("/items/{id}").Get.Parameters[0].Value.Example)
 	require.Equal(t, "item_123", doc.Components.Schemas["Item"].Value.Example.(map[string]any)["id"])
+	require.Equal(t, true, doc.Paths.Value("/items/{id}").Get.Extensions["x-agent"].(map[string]any)["enabled"])
+	require.Equal(t, []any{"items", "read"}, doc.Paths.Value("/items/{id}").Get.Extensions["x-agent"].(map[string]any)["tags"])
+	require.Equal(t, nil, doc.Paths.Value("/items/{id}").Get.Extensions["x-agent"].(map[string]any)["nested"].(map[string]any)["nullable"])
 	headers := doc.Paths.Value("/items/{id}").Get.Responses.Value("200").Value.Headers
 	require.Contains(t, headers, "X-RateLimit-Remaining")
 	require.Equal(t, openapi3.Types{"integer"}, *headers["X-RateLimit-Remaining"].Value.Schema.Value.Type)

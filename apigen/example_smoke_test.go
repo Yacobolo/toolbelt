@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestExample_CUEToGeneratedBuildAndRun(t *testing.T) {
+func TestExample_TypeSpecToGeneratedBuildAndRun(t *testing.T) {
 	t.Helper()
 
 	cwd, err := os.Getwd()
@@ -52,7 +52,7 @@ func TestExample_CUEToGeneratedBuildAndRun(t *testing.T) {
 		"go",
 		"run",
 		"./cmd/apigen",
-		"cue-compile",
+		"typespec-compile",
 		"-manifest", manifestPath,
 		"-target", "example",
 	)

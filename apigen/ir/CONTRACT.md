@@ -38,7 +38,9 @@ Each endpoint must define:
 Endpoint routes are unique by `lower(method) + " " + path`.
 `operation_id` values are unique across the document.
 
-Supported endpoint-level extensions in current consumers:
+Endpoint-level `extensions` preserve operation vendor metadata. Generic extensions must use OpenAPI-style `x-*` keys and JSON-compatible values.
+
+APIGen-owned endpoint extensions in current consumers:
 
 - `x-authz`
 - `x-apigen-manual`
