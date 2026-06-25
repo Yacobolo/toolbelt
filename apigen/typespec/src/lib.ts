@@ -15,6 +15,24 @@ export const $lib = createTypeSpecLibrary({
         default: paramMessage`Unsupported response status '${"status"}' for operation '${"operation"}'. APIGen IR v1 requires concrete numeric status codes.`,
       },
     },
+    "unsupported-inline-enum": {
+      severity: "error",
+      messages: {
+        default: paramMessage`Unsupported inline enum-like union in ${"context"}. APIGen IR v1 requires a named enum schema.`,
+      },
+    },
+    "unsupported-auth": {
+      severity: "error",
+      messages: {
+        default: paramMessage`Unsupported authentication shape in ${"context"}. ${"reason"}`,
+      },
+    },
+    "multiple-services": {
+      severity: "error",
+      messages: {
+        default: paramMessage`APIGen TypeSpec emitter requires exactly one TypeSpec service, found ${"count"}.`,
+      },
+    },
     "unnamed-schema": {
       severity: "error",
       messages: {

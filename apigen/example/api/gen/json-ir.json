@@ -13,6 +13,14 @@
     "tag_order": [
       "Todos"
     ],
+    "security": [
+      {
+        "BearerAuth": []
+      },
+      {
+        "ApiKeyAuth": []
+      }
+    ],
     "security_schemes": {
       "ApiKeyAuth": {
         "type": "apiKey",

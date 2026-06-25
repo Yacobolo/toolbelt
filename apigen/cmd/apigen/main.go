@@ -3,16 +3,18 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"go/format"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 
 	"github.com/Yacobolo/toolbelt/apigen/cuegen"
@@ -21,6 +23,7 @@ import (
 	requestmodelgoemit "github.com/Yacobolo/toolbelt/apigen/emit/requestmodelgo"
 	servergoemit "github.com/Yacobolo/toolbelt/apigen/emit/servergo"
 	"github.com/Yacobolo/toolbelt/apigen/ir"
+	typespecbundle "github.com/Yacobolo/toolbelt/apigen/typespec"
 	"go.yaml.in/yaml/v4"
 )
 
@@ -78,6 +81,13 @@ type targetSpec struct {
 }
 
 var goPackagePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
+
+const typeSpecPackageDirEnv = "APIGEN_TYPESPEC_PACKAGE_DIR"
+
+type typeSpecPackage struct {
+	Dir     string
+	Managed bool
+}
 
 func (target *targetSpec) UnmarshalYAML(unmarshal func(any) error) error {
 	type rawTargetSpec struct {
@@ -486,30 +496,37 @@ func compileTypeSpec(typeSpecDir string, irOutPath string, openAPIOutPath string
 		return fmt.Errorf("resolve openapi output path: %w", err)
 	}
 
-	packageDir, err := typeSpecPackageDir()
-	if err != nil {
+	if err := removeFileIfExists(absIROutPath); err != nil {
 		return err
 	}
-	if err := ensureTypeSpecToolchain(packageDir); err != nil {
+	if err := removeFileIfExists(absOpenAPIOutPath); err != nil {
 		return err
 	}
 
-	tsp := filepath.Join(packageDir, "node_modules", "@typespec", "compiler", "cmd", "tsp.js")
+	pkg, err := resolveTypeSpecPackage()
+	if err != nil {
+		return err
+	}
+	if err := ensureTypeSpecToolchain(pkg); err != nil {
+		return err
+	}
+
+	tsp := filepath.Join(pkg.Dir, "node_modules", "@typespec", "compiler", "cmd", "tsp.js")
 	cmd := exec.Command(
 		"node",
 		tsp,
 		"compile",
 		absTypeSpecDir,
 		"--import",
-		packageDir,
+		pkg.Dir,
 		"--emit",
-		packageDir,
+		pkg.Dir,
 		"--option",
 		"@yacobolo/apigen.output-file="+absIROutPath,
 		"--option",
 		"@yacobolo/apigen.base-path=/",
 	)
-	cmd.Dir = packageDir
+	cmd.Dir = pkg.Dir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("run tsp compile: %w\n%s", err, strings.TrimSpace(string(output)))
@@ -528,32 +545,115 @@ func compileTypeSpec(typeSpecDir string, irOutPath string, openAPIOutPath string
 	return nil
 }
 
-func typeSpecPackageDir() (string, error) {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		return "", fmt.Errorf("locate apigen source root")
+func resolveTypeSpecPackage() (typeSpecPackage, error) {
+	if override := strings.TrimSpace(os.Getenv(typeSpecPackageDirEnv)); override != "" {
+		dir, err := filepath.Abs(override)
+		if err != nil {
+			return typeSpecPackage{}, fmt.Errorf("resolve %s: %w", typeSpecPackageDirEnv, err)
+		}
+		return typeSpecPackage{Dir: dir}, nil
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "typespec")), nil
+	cacheRoot, err := os.UserCacheDir()
+	if err != nil {
+		return typeSpecPackage{}, fmt.Errorf("resolve user cache dir: %w", err)
+	}
+	return installBundledTypeSpecPackage(cacheRoot)
 }
 
-func ensureTypeSpecToolchain(packageDir string) error {
-	tsp := filepath.Join(packageDir, "node_modules", "@typespec", "compiler", "cmd", "tsp.js")
+func installBundledTypeSpecPackage(cacheRoot string) (typeSpecPackage, error) {
+	hash, err := bundledTypeSpecPackageHash()
+	if err != nil {
+		return typeSpecPackage{}, err
+	}
+	packageDir := filepath.Join(cacheRoot, "apigen", "typespec", hash)
+	marker := filepath.Join(packageDir, ".apigen-bundle-sha256")
+	if content, err := os.ReadFile(marker); err == nil && strings.TrimSpace(string(content)) == hash {
+		return typeSpecPackage{Dir: packageDir, Managed: true}, nil
+	}
+	if err := os.RemoveAll(packageDir); err != nil {
+		return typeSpecPackage{}, fmt.Errorf("clear typespec package cache: %w", err)
+	}
+	if err := fs.WalkDir(typespecbundle.Package, ".", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == "." {
+			return nil
+		}
+		target := filepath.Join(packageDir, filepath.FromSlash(path))
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o750)
+		}
+		content, err := typespecbundle.Package.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read bundled typespec package file %q: %w", path, err)
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+			return fmt.Errorf("create bundled typespec package directory: %w", err)
+		}
+		if err := os.WriteFile(target, content, 0o600); err != nil {
+			return fmt.Errorf("write bundled typespec package file %q: %w", path, err)
+		}
+		return nil
+	}); err != nil {
+		return typeSpecPackage{}, fmt.Errorf("install bundled typespec package: %w", err)
+	}
+	if err := os.WriteFile(marker, []byte(hash+"\n"), 0o600); err != nil {
+		return typeSpecPackage{}, fmt.Errorf("write typespec package cache marker: %w", err)
+	}
+	return typeSpecPackage{Dir: packageDir, Managed: true}, nil
+}
+
+func bundledTypeSpecPackageHash() (string, error) {
+	hash := sha256.New()
+	if err := fs.WalkDir(typespecbundle.Package, ".", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		content, err := typespecbundle.Package.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read bundled typespec package file %q: %w", path, err)
+		}
+		hash.Write([]byte(path))
+		hash.Write([]byte{0})
+		hash.Write(content)
+		hash.Write([]byte{0})
+		return nil
+	}); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil))[:16], nil
+}
+
+func ensureTypeSpecToolchain(pkg typeSpecPackage) error {
+	tsp := filepath.Join(pkg.Dir, "node_modules", "@typespec", "compiler", "cmd", "tsp.js")
 	if _, err := os.Stat(tsp); err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("stat typespec compiler: %w", err)
 		}
-		if err := runTypeSpecPackageCommand(packageDir, "npm", "ci"); err != nil {
+		if !pkg.Managed {
+			return fmt.Errorf("typespec compiler not found in %s; run npm ci or unset %s to use the bundled cache", pkg.Dir, typeSpecPackageDirEnv)
+		}
+		if err := runTypeSpecPackageCommand(pkg.Dir, "npm", "ci", "--omit=dev"); err != nil {
 			return err
 		}
 	}
-	dist := filepath.Join(packageDir, "dist", "src", "index.js")
+	dist := filepath.Join(pkg.Dir, "dist", "src", "index.js")
 	if _, err := os.Stat(dist); err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("stat apigen typespec emitter: %w", err)
 		}
-		if err := runTypeSpecPackageCommand(packageDir, "npm", "run", "build"); err != nil {
-			return err
-		}
+		return fmt.Errorf("apigen typespec emitter not found in %s; run npm run build before using %s", pkg.Dir, typeSpecPackageDirEnv)
+	}
+	return nil
+}
+
+func removeFileIfExists(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove stale output %s: %w", path, err)
 	}
 	return nil
 }

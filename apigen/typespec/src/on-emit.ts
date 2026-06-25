@@ -6,11 +6,13 @@ import {
   getSummary,
   isArrayModelType,
   isRecordModelType,
+  walkPropertiesInherited,
   type EmitContext,
   type Enum,
   type Model,
   type ModelProperty,
   type Namespace,
+  type Operation,
   type Program,
   type Scalar,
   type Type,
@@ -19,7 +21,10 @@ import {
 import {
   getAllHttpServices,
   getServers,
+  resolveAuthentication,
+  type AuthenticationReference,
   type HttpAuth,
+  type HttpAuthRef,
   type HttpOperation,
   type HttpOperationParameter,
   type HttpOperationResponse,
@@ -38,6 +43,7 @@ interface Document {
   openapi?: {
     version?: string;
     tag_order?: string[];
+    security?: Record<string, string[]>[];
     security_schemes?: Record<string, SecurityScheme>;
   };
   servers?: Server[];
@@ -136,7 +142,9 @@ interface SchemaRef {
 
 class IRBuilder {
   readonly schemas = new Map<string, Model>();
+  readonly enums = new Map<string, Enum>();
   private readonly emittedSchemas = new Set<string>();
+  private readonly emittedEnums = new Set<string>();
   private failed = false;
 
   constructor(private readonly program: Program) {}
@@ -166,12 +174,18 @@ class IRBuilder {
       return scalarSchemaRef(type);
     }
     if (type.kind === "Enum") {
-      return { type: "string", enum: enumValues(type) } as SchemaRef;
+      if (type.name !== "") {
+        this.enums.set(type.name, type);
+        return { ref: type.name };
+      }
+      this.unsupported(type, context);
+      return { type: "string" };
     }
     if (type.kind === "Union") {
       const enumValuesForUnion = stringLiteralUnionValues(type);
       if (enumValuesForUnion) {
-        return { type: "string", enum: enumValuesForUnion } as SchemaRef;
+        this.report("unsupported-inline-enum", { context }, type);
+        return { type: "string" };
       }
     }
     if (type.kind === "String") {
@@ -192,6 +206,10 @@ class IRBuilder {
       this.schemas.set(type.name, type);
       return { ref: type.name };
     }
+    if (type.kind === "Enum" && type.name !== "") {
+      this.enums.set(type.name, type);
+      return { ref: type.name };
+    }
     this.report("unnamed-schema", { context }, type);
     return { type: "object" };
   }
@@ -200,15 +218,34 @@ class IRBuilder {
     this.unsupported(type, context);
   }
 
+  unsupportedAuth(context: string, reason: string, target: Type | Operation | Namespace) {
+    this.report("unsupported-auth", { context, reason }, target);
+  }
+
+  unsupportedResponseStatus(response: HttpOperationResponse) {
+    this.report(
+      "unsupported-response-status",
+      { status: JSON.stringify(response.statusCodes), operation: response.type.kind },
+      response.type,
+    );
+  }
+
   emitSchemas(): Record<string, Schema> | undefined {
     const output: Record<string, Schema> = {};
     while (true) {
-      const next = [...this.schemas.values()].find((model) => !this.emittedSchemas.has(model.name));
-      if (!next) {
-        break;
+      const nextModel = [...this.schemas.values()].find((model) => !this.emittedSchemas.has(model.name));
+      if (nextModel) {
+        this.emittedSchemas.add(nextModel.name);
+        output[nextModel.name] = this.schema(nextModel);
+        continue;
       }
-      this.emittedSchemas.add(next.name);
-      output[next.name] = this.schema(next);
+      const nextEnum = [...this.enums.values()].find((type) => !this.emittedEnums.has(type.name));
+      if (nextEnum) {
+        this.emittedEnums.add(nextEnum.name);
+        output[nextEnum.name] = this.enumSchema(nextEnum);
+        continue;
+      }
+      break;
     }
     return Object.keys(output).length > 0 ? output : undefined;
   }
@@ -221,20 +258,33 @@ class IRBuilder {
     if (doc) {
       schema.description = doc;
     }
-    if (model.properties.size > 0) {
+    const properties = [...walkPropertiesInherited(model)];
+    if (properties.length > 0) {
       schema.properties = {};
       schema.property_order = [];
       schema.required = [];
-      for (const [name, property] of model.properties) {
-        schema.properties[name] = this.schemaProperty(property);
-        schema.property_order.push(name);
+      for (const property of properties) {
+        schema.properties[property.name] = this.schemaProperty(property);
+        schema.property_order.push(property.name);
         if (!property.optional) {
-          schema.required.push(name);
+          schema.required.push(property.name);
         }
       }
       if (schema.required.length === 0) {
         delete schema.required;
       }
+    }
+    return schema;
+  }
+
+  private enumSchema(type: Enum): Schema {
+    const schema: Schema = {
+      type: "string",
+      enum: enumValues(type),
+    };
+    const doc = getDoc(this.program, type);
+    if (doc) {
+      schema.description = doc;
     }
     return schema;
   }
@@ -285,6 +335,14 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
   if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
     return;
   }
+  if (services.length !== 1) {
+    reportDiagnostic(context.program, {
+      code: "multiple-services",
+      format: { count: String(services.length) },
+      target: context.program.getGlobalNamespaceType(),
+    });
+    return;
+  }
 
   const service = services[0];
   const builder = new IRBuilder(context.program);
@@ -314,8 +372,12 @@ function buildDocument(
     url: server.url,
     ...(server.description ? { description: server.description } : {}),
   }));
-  const securitySchemes = collectSecuritySchemes(service);
-  const endpoints = service.operations.map((operation) => endpoint(program, builder, operation));
+  const authentication = resolveAuthentication(service);
+  const defaultSecurity = authRequirements(builder, authentication.defaultAuth, namespace, "service authentication", true);
+  const securitySchemes = collectSecuritySchemes(authentication.schemes);
+  const endpoints = service.operations.map((operation) =>
+    endpoint(program, builder, operation, authentication.operationsAuth.get(operation.operation), defaultSecurity),
+  );
 
   return prune({
     schema_version: "v1",
@@ -328,6 +390,7 @@ function buildDocument(
     openapi: prune({
       version: "3.0.0",
       tag_order: tags.map((tag) => tag.name),
+      security: defaultSecurity,
       security_schemes: Object.keys(securitySchemes).length > 0 ? securitySchemes : undefined,
     }),
     servers: servers.length > 0 ? servers : undefined,
@@ -336,7 +399,13 @@ function buildDocument(
   }) as Document;
 }
 
-function endpoint(program: Program, builder: IRBuilder, operation: HttpOperation): Endpoint {
+function endpoint(
+  program: Program,
+  builder: IRBuilder,
+  operation: HttpOperation,
+  operationAuth: AuthenticationReference | undefined,
+  defaultSecurity: Record<string, string[]>[] | undefined,
+): Endpoint {
   const extensions: Record<string, unknown> = {};
   const authz = getAuthz({ program }, operation.operation);
   if (authz !== undefined) {
@@ -357,6 +426,7 @@ function endpoint(program: Program, builder: IRBuilder, operation: HttpOperation
     request_body: requestBody(builder, operation.parameters.body),
     responses: operation.responses.map((response) => endpointResponse(program, builder, response)),
     cli: cliMetadata(program, operation),
+    security: operationSecurity(builder, operation, operationAuth, defaultSecurity),
     extensions: Object.keys(extensions).length > 0 ? extensions : undefined,
   }) as Endpoint;
 }
@@ -445,11 +515,7 @@ function endpointResponse(
   response: HttpOperationResponse,
 ): Response {
   if (typeof response.statusCodes !== "number") {
-    reportDiagnostic(program, {
-      code: "unsupported-response-status",
-      format: { status: JSON.stringify(response.statusCodes), operation: response.type.kind },
-      target: response.type,
-    } as any);
+    builder.unsupportedResponseStatus(response);
   }
   const content = response.responses[0];
   const shape = response.type.kind === "Model" ? getResponseShape({ program }, response.type) : undefined;
@@ -463,7 +529,7 @@ function endpointResponse(
     : undefined;
 
   return prune({
-    status_code: typeof response.statusCodes === "number" ? response.statusCodes : 500,
+    status_code: typeof response.statusCodes === "number" ? response.statusCodes : 0,
     description: response.description ?? "The request has completed.",
     headers: content ? responseHeaders(program, builder, content) : undefined,
     content_type: content?.body?.contentTypes[0],
@@ -491,14 +557,82 @@ function responseHeaders(
   return headers.length > 0 ? headers : undefined;
 }
 
-function collectSecuritySchemes(service: HttpService): Record<string, SecurityScheme> {
+function collectSecuritySchemes(auths: readonly HttpAuth[]): Record<string, SecurityScheme> {
   const schemes: Record<string, SecurityScheme> = {};
-  for (const option of service.authentication?.options ?? []) {
-    for (const scheme of option.schemes) {
-      schemes[scheme.id] = securityScheme(scheme);
+  for (const auth of auths) {
+    if (auth.type === "noAuth") {
+      continue;
     }
+    schemes[auth.id] = securityScheme(auth);
   }
   return schemes;
+}
+
+function operationSecurity(
+  builder: IRBuilder,
+  operation: HttpOperation,
+  operationAuth: AuthenticationReference | undefined,
+  defaultSecurity: Record<string, string[]>[] | undefined,
+): Record<string, string[]>[] | undefined {
+  if (!operationAuth) {
+    return undefined;
+  }
+  const security = authRequirements(
+    builder,
+    operationAuth,
+    operation.operation,
+    `operation ${operation.operation.name} authentication`,
+    defaultSecurity === undefined,
+  );
+  if (sameSecurity(security, defaultSecurity)) {
+    return undefined;
+  }
+  return security;
+}
+
+function authRequirements(
+  builder: IRBuilder,
+  auth: AuthenticationReference,
+  target: Type | Operation | Namespace,
+  context: string,
+  allowNoAuth: boolean,
+): Record<string, string[]>[] | undefined {
+  const requirements: Record<string, string[]>[] = [];
+  for (const option of auth.options) {
+    const requirement: Record<string, string[]> = {};
+    for (const ref of option.all) {
+      if (ref.kind === "noAuth") {
+        if (allowNoAuth) {
+          continue;
+        }
+        builder.unsupportedAuth(
+          context,
+          "APIGen IR v1 does not support NoAuth operation overrides for secured services.",
+          target,
+        );
+        continue;
+      }
+      requirement[ref.auth.id] = authScopes(ref);
+    }
+    if (Object.keys(requirement).length > 0) {
+      requirements.push(requirement);
+    }
+  }
+  return requirements.length > 0 ? requirements : undefined;
+}
+
+function authScopes(ref: HttpAuthRef): string[] {
+  if (ref.kind === "oauth2") {
+    return [...ref.scopes];
+  }
+  return [];
+}
+
+function sameSecurity(
+  left: Record<string, string[]>[] | undefined,
+  right: Record<string, string[]>[] | undefined,
+): boolean {
+  return JSON.stringify(left ?? []) === JSON.stringify(right ?? []);
 }
 
 function securityScheme(scheme: HttpAuth): SecurityScheme {
@@ -568,6 +702,9 @@ function prune<T>(value: T): T {
     return value.filter((item) => item !== undefined).map((item) => prune(item)) as T;
   }
   if (value && typeof value === "object") {
+    if (isSecurityRequirementObject(value)) {
+      return value;
+    }
     const output: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value)) {
       if (child === undefined) {
@@ -581,4 +718,9 @@ function prune<T>(value: T): T {
     return output as T;
   }
   return value;
+}
+
+function isSecurityRequirementObject(value: object): value is Record<string, string[]> {
+  const entries = Object.entries(value);
+  return entries.length > 0 && entries.every(([, child]) => Array.isArray(child));
 }

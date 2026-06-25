@@ -167,6 +167,9 @@ paths:
                 message: example
       tags:
         - Todos
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
 components:
   schemas:
     CreateTodoRequest:

@@ -1,0 +1,72 @@
+export declare const $lib: import("@typespec/compiler").TypeSpecLibrary<{
+    "unsupported-type": {
+        readonly default: import("@typespec/compiler").CallableMessage<["kind", "context"]>;
+    };
+    "unsupported-response-status": {
+        readonly default: import("@typespec/compiler").CallableMessage<["status", "operation"]>;
+    };
+    "unsupported-inline-enum": {
+        readonly default: import("@typespec/compiler").CallableMessage<["context"]>;
+    };
+    "unsupported-auth": {
+        readonly default: import("@typespec/compiler").CallableMessage<["context", "reason"]>;
+    };
+    "multiple-services": {
+        readonly default: import("@typespec/compiler").CallableMessage<["count"]>;
+    };
+    "unnamed-schema": {
+        readonly default: import("@typespec/compiler").CallableMessage<["context"]>;
+    };
+    "missing-output-file": {
+        readonly default: "The APIGen emitter option 'output-file' is required.";
+    };
+}, Record<string, any>, never>;
+export declare const reportDiagnostic: <C extends "unsupported-type" | "unsupported-response-status" | "unsupported-inline-enum" | "unsupported-auth" | "multiple-services" | "unnamed-schema" | "missing-output-file", M extends keyof {
+    "unsupported-type": {
+        readonly default: import("@typespec/compiler").CallableMessage<["kind", "context"]>;
+    };
+    "unsupported-response-status": {
+        readonly default: import("@typespec/compiler").CallableMessage<["status", "operation"]>;
+    };
+    "unsupported-inline-enum": {
+        readonly default: import("@typespec/compiler").CallableMessage<["context"]>;
+    };
+    "unsupported-auth": {
+        readonly default: import("@typespec/compiler").CallableMessage<["context", "reason"]>;
+    };
+    "multiple-services": {
+        readonly default: import("@typespec/compiler").CallableMessage<["count"]>;
+    };
+    "unnamed-schema": {
+        readonly default: import("@typespec/compiler").CallableMessage<["context"]>;
+    };
+    "missing-output-file": {
+        readonly default: "The APIGen emitter option 'output-file' is required.";
+    };
+}[C]>(program: import("@typespec/compiler").Program, diag: import("@typespec/compiler").DiagnosticReport<{
+    "unsupported-type": {
+        readonly default: import("@typespec/compiler").CallableMessage<["kind", "context"]>;
+    };
+    "unsupported-response-status": {
+        readonly default: import("@typespec/compiler").CallableMessage<["status", "operation"]>;
+    };
+    "unsupported-inline-enum": {
+        readonly default: import("@typespec/compiler").CallableMessage<["context"]>;
+    };
+    "unsupported-auth": {
+        readonly default: import("@typespec/compiler").CallableMessage<["context", "reason"]>;
+    };
+    "multiple-services": {
+        readonly default: import("@typespec/compiler").CallableMessage<["count"]>;
+    };
+    "unnamed-schema": {
+        readonly default: import("@typespec/compiler").CallableMessage<["context"]>;
+    };
+    "missing-output-file": {
+        readonly default: "The APIGen emitter option 'output-file' is required.";
+    };
+}, C, M>) => void;
+export interface EmitterOptions {
+    "output-file"?: string;
+    "base-path"?: string;
+}

@@ -162,6 +162,7 @@ func TestCompileTypeSpec_GeneratesIRAndOpenAPI(t *testing.T) {
 	t.Helper()
 
 	dir := t.TempDir()
+	t.Setenv(typeSpecPackageDirEnv, mustAbs(t, filepath.Join("..", "..", "typespec")))
 	irPath := filepath.Join(dir, "json-ir.json")
 	openAPIPath := filepath.Join(dir, "openapi.yaml")
 	fixtureDir := filepath.Join("..", "..", "typespec", "test", "fixtures", "todo")
@@ -175,6 +176,51 @@ func TestCompileTypeSpec_GeneratesIRAndOpenAPI(t *testing.T) {
 	require.Equal(t, "CreateTodoRequest", doc.Endpoints[1].RequestBody.Schema.Ref)
 	require.Equal(t, []string{"todos", "create"}, doc.Endpoints[1].CLI.Command)
 	require.FileExists(t, openAPIPath)
+}
+
+func TestResolveTypeSpecPackage_UsesDevelopmentOverride(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	t.Setenv(typeSpecPackageDirEnv, dir)
+
+	pkg, err := resolveTypeSpecPackage()
+	require.NoError(t, err)
+	require.Equal(t, mustAbs(t, dir), pkg.Dir)
+	require.False(t, pkg.Managed)
+}
+
+func TestInstallBundledTypeSpecPackage_UsesWritableCache(t *testing.T) {
+	t.Helper()
+
+	cacheRoot := t.TempDir()
+	pkg, err := installBundledTypeSpecPackage(cacheRoot)
+	require.NoError(t, err)
+
+	require.True(t, strings.HasPrefix(pkg.Dir, filepath.Join(cacheRoot, "apigen", "typespec")+string(os.PathSeparator)))
+	require.True(t, pkg.Managed)
+	require.FileExists(t, filepath.Join(pkg.Dir, "package.json"))
+	require.FileExists(t, filepath.Join(pkg.Dir, "package-lock.json"))
+	require.FileExists(t, filepath.Join(pkg.Dir, "lib", "main.tsp"))
+	require.FileExists(t, filepath.Join(pkg.Dir, "dist", "src", "index.js"))
+}
+
+func TestCompileTypeSpec_FailureRemovesStaleOutputs(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	t.Setenv(typeSpecPackageDirEnv, mustAbs(t, filepath.Join("..", "..", "typespec")))
+	irPath := filepath.Join(dir, "json-ir.json")
+	openAPIPath := filepath.Join(dir, "openapi.yaml")
+	require.NoError(t, os.WriteFile(irPath, []byte(`{"stale":true}`), 0o644))
+	require.NoError(t, os.WriteFile(openAPIPath, []byte("stale: true\n"), 0o644))
+
+	fixtureDir := filepath.Join("..", "..", "typespec", "test", "fixtures", "invalid")
+	err := compileTypeSpec(fixtureDir, irPath, openAPIPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "requires request body to resolve to a named model schema")
+	require.NoFileExists(t, irPath)
+	require.NoFileExists(t, openAPIPath)
 }
 
 func TestResolveCommandConfig_GroupedManifestOverrides(t *testing.T) {
@@ -485,6 +531,14 @@ func mustReadString(t *testing.T, path string) string {
 	content, err := os.ReadFile(path)
 	require.NoError(t, err)
 	return strings.TrimSpace(string(content))
+}
+
+func mustAbs(t *testing.T, path string) string {
+	t.Helper()
+
+	abs, err := filepath.Abs(path)
+	require.NoError(t, err)
+	return abs
 }
 
 func writeCanonicalOpenAPI(t *testing.T, dir string, doc ir.Document) string {
