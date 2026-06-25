@@ -344,6 +344,78 @@ describe("APIGen TypeSpec emitter", () => {
     ]);
   });
 
+  it("deduplicates identical same-status content variants", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Duplicate Content API" })
+      namespace DuplicateContentAPI;
+
+      model Widget {
+        id: string;
+      }
+
+      model JsonWidget {
+        ...OkResponse;
+        ...Body<Widget>;
+      }
+
+      @route("/widgets/{id}")
+      @sharedRoute
+      @get
+      op getWidgetA(@path id: string, @header accept: "application/json"): JsonWidget;
+
+      @route("/widgets/{id}")
+      @sharedRoute
+      @get
+      op getWidgetB(@path id: string, @header accept: "application/vnd.widget+json"): JsonWidget;
+    `);
+
+    expect(doc.endpoints[0].responses[0].contents).toEqual([
+      { content_type: "application/json", body_kind: "json", schema: { ref: "Widget" } },
+    ]);
+  });
+
+  it("fails without writing IR for incompatible same-status content variants with the same media type", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Duplicate Content API" })
+        namespace DuplicateContentAPI;
+
+        model Widget {
+          id: string;
+        }
+
+        model OtherWidget {
+          name: string;
+        }
+
+        model WidgetResponse {
+          ...OkResponse;
+          ...Body<Widget>;
+        }
+
+        model OtherWidgetResponse {
+          ...OkResponse;
+          ...Body<OtherWidget>;
+        }
+
+        @route("/widgets/{id}")
+        @sharedRoute
+        @get
+        op getWidgetA(@path id: string, @header accept: "application/json"): WidgetResponse;
+
+        @route("/widgets/{id}")
+        @sharedRoute
+        @get
+        op getWidgetB(@path id: string, @header accept: "application/vnd.widget+json"): OtherWidgetResponse;
+      `,
+      "incompatible response content for status 200 and content type application/json",
+    );
+  });
+
   it("fails without writing IR when shared-route operations disagree on APIGen metadata", async () => {
     await expectCompileFails(
       `
@@ -563,6 +635,53 @@ describe("APIGen TypeSpec emitter", () => {
         }
       `,
       "oauth2 authentication is not supported",
+    );
+  });
+
+  it("fails without writing IR for non-runtime-compatible auth schemes", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Basic Auth API" })
+        @useAuth(BasicAuth)
+        namespace BasicAuthAPI {
+          @route("/widgets")
+          @get
+          op list(): string;
+        }
+      `,
+      "http Basic authentication is not supported",
+    );
+
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Custom API Key API" })
+        @useAuth(ApiKeyAuth<ApiKeyLocation.header, "X-Custom-Key">)
+        namespace CustomAPIKeyAPI {
+          @route("/widgets")
+          @get
+          op list(): string;
+        }
+      `,
+      "header API key name X-Custom-Key is not supported",
+    );
+
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Query API Key API" })
+        @useAuth(ApiKeyAuth<ApiKeyLocation.query, "api_key">)
+        namespace QueryAPIKeyAPI {
+          @route("/widgets")
+          @get
+          op list(): string;
+        }
+      `,
+      "apiKey authentication in query is not supported",
     );
   });
 

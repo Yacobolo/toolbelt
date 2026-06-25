@@ -41,6 +41,10 @@ Each endpoint may contain at most one response entry per `status_code`; multiple
 
 Endpoint-level `extensions` preserve operation vendor metadata. Generic extensions must use OpenAPI-style `x-*` keys and JSON-compatible values.
 
+Endpoint parameters support `path`, `query`, and `header` locations. Other locations, including `cookie`, are rejected by IR validation until all generated surfaces support them consistently.
+
+Supported security schemes in v0.3.2 are HTTP Bearer auth and `ApiKeyAuth<ApiKeyLocation.header, "X-API-Key">`. Unsupported schemes fail closed before IR emission.
+
 APIGen-owned endpoint extensions in current consumers:
 
 - `x-authz`
@@ -66,6 +70,8 @@ Supported `body_kind` values:
 
 Schema-bearing content uses `schema`. Multiple response alternatives may use `any_of`. Multipart content uses `parts`. `SchemaRef.enum` is supported for inline string-literal parameter schemas such as coalesced `Accept` headers.
 
+Within a single request body or response, `contents[].content_type` values must be unique case-insensitively. TypeSpec emission deduplicates identical duplicate variants, but rejects incompatible same-status variants that reuse the same media type.
+
 JSON `bytes` values are represented as `type: string`, `format: byte`. Raw binary/file payloads are represented as `type: string`, `format: binary`.
 
 Generated Go treats raw `bytes` as `[]byte`. TypeSpec `Http.File` uses generated `GenFile`, which supports both simple `Contents []byte` and streaming `Reader io.ReadCloser` payloads plus `ContentType`, optional `Filename`, and optional `Size` metadata.
@@ -87,6 +93,8 @@ Each multipart part defines:
 Named `multipart/form-data` parts use `wire_name`. Unnamed `multipart/mixed` tuple parts are positional and keep stable generated names such as `part1`, `part2`. `HttpPart<T[]>` is a single JSON-array part; `HttpPart<T>[]` is repeated parts.
 
 Generated CLI metadata includes ordered multipart part specs so runtime/cobra can accept repeated `--part name=value`, `--part name=@file`, or `--part name=-` flags. For `multipart/mixed`, tuple parts are addressed by generated names such as `part1` and `part2` and emitted in IR order.
+
+Generated server decoding is strict. Unknown form-data part names, duplicate non-repeated form-data parts, and extra mixed tuple parts produce `400` responses. Repeated form-data parts are collected in request order for that part. Mixed tuple parts decode by wire order and do not use optional part names for reordering.
 
 Canonical OpenAPI emits ordinary object schemas and `encoding` for `multipart/form-data`. For `multipart/mixed`, OpenAPI 3.0 receives best-effort schema output plus APIGen vendor metadata:
 

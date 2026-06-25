@@ -133,6 +133,9 @@ func Validate(doc Document) error {
 				}
 				seenHeaders[strings.ToLower(name)] = struct{}{}
 			}
+			if err := validateUniqueContentTypes(response.Contents, fmt.Sprintf("endpoint %q response %d", endpoint.OperationID, response.StatusCode)); err != nil {
+				return err
+			}
 			for idx, content := range response.Contents {
 				if err := validateBodyContent(doc, content, fmt.Sprintf("endpoint %q response %d contents[%d]", endpoint.OperationID, response.StatusCode, idx)); err != nil {
 					return err
@@ -290,6 +293,11 @@ func validateParameterSchema(doc Document, endpoint Endpoint, parameter Paramete
 	if parameter.In == "" {
 		return fmt.Errorf("endpoint %q parameter %q location is required", endpoint.OperationID, parameter.Name)
 	}
+	switch parameter.In {
+	case "path", "query", "header":
+	default:
+		return fmt.Errorf("endpoint %q parameter %q has unsupported parameter location %q", endpoint.OperationID, parameter.Name, parameter.In)
+	}
 
 	schemaType, format, err := resolvedParameterSchemaType(doc, parameter.Schema, fmt.Sprintf("endpoint %q parameter %q", endpoint.OperationID, parameter.Name))
 	if err != nil {
@@ -349,10 +357,28 @@ func validateRequestBodySchema(doc Document, endpoint Endpoint) error {
 	if len(endpoint.RequestBody.Contents) == 0 {
 		return fmt.Errorf("endpoint %q request_body must declare at least one content", endpoint.OperationID)
 	}
+	if err := validateUniqueContentTypes(endpoint.RequestBody.Contents, fmt.Sprintf("endpoint %q request_body", endpoint.OperationID)); err != nil {
+		return err
+	}
 	for idx, content := range endpoint.RequestBody.Contents {
 		if err := validateBodyContent(doc, content, fmt.Sprintf("endpoint %q request_body contents[%d]", endpoint.OperationID, idx)); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateUniqueContentTypes(contents []BodyContent, context string) error {
+	seen := make(map[string]struct{}, len(contents))
+	for idx, content := range contents {
+		key := strings.ToLower(strings.TrimSpace(content.ContentType))
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			return fmt.Errorf("%s has duplicate content_type %q at contents[%d]", context, content.ContentType, idx)
+		}
+		seen[key] = struct{}{}
 	}
 	return nil
 }
@@ -558,12 +584,15 @@ func validateEndpointCLI(doc Document, endpoint Endpoint, cli *CLI) error {
 		return fmt.Errorf("endpoint %q cli.body_input=%q requires an object request_body schema", endpoint.OperationID, cli.BodyInput)
 	}
 	parametersByLocation := map[string]map[string]struct{}{
-		"path":  {},
-		"query": {},
-		"body":  {},
+		"path":   {},
+		"query":  {},
+		"header": {},
+		"body":   {},
 	}
 	for _, parameter := range endpoint.Parameters {
-		parametersByLocation[parameter.In][parameter.Name] = struct{}{}
+		if _, ok := parametersByLocation[parameter.In]; ok {
+			parametersByLocation[parameter.In][parameter.Name] = struct{}{}
+		}
 	}
 	if hasBodySchema && bodySchema.Type == "object" {
 		for name := range bodySchema.Properties {
@@ -574,7 +603,7 @@ func validateEndpointCLI(doc Document, endpoint Endpoint, cli *CLI) error {
 	seenArgs := make(map[string]struct{}, len(cli.Args))
 	for _, arg := range cli.Args {
 		switch arg.Source {
-		case "path", "query", "body":
+		case "path", "query", "header", "body":
 		default:
 			return fmt.Errorf("endpoint %q cli.args source %q is unsupported", endpoint.OperationID, arg.Source)
 		}

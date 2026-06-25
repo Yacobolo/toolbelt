@@ -90,6 +90,9 @@ class IRBuilder {
     unsupportedResponseStatus(response) {
         this.report("unsupported-response-status", { status: JSON.stringify(response.statusCodes), operation: response.type.kind }, response.type);
     }
+    unsupportedResponseContent(response, status, contentType) {
+        this.report("unsupported-response-content", { operation: response.type.kind, status: String(status), contentType }, response.type);
+    }
     reservedExtension(key, target) {
         this.report("reserved-extension", { key }, target);
     }
@@ -643,7 +646,7 @@ function endpointResponses(program, builder, responses) {
         }
         existing.description = existing.description || response.description;
         existing.headers = mergeHeaders(existing.headers, response.headers);
-        existing.contents = mergeContents(existing.contents, response.contents);
+        existing.contents = mergeContents(builder, httpResponse, response.status_code, existing.contents, response.contents);
         existing.extensions = mergeResponseExtensions(existing.extensions, response.extensions);
     }
     return order.map((status) => byStatus.get(status));
@@ -689,7 +692,7 @@ function mergeHeaders(left, right) {
     }
     return output;
 }
-function mergeContents(left, right) {
+function mergeContents(builder, response, statusCode, left, right) {
     if (!left || left.length === 0) {
         return right;
     }
@@ -701,9 +704,16 @@ function mergeContents(left, right) {
         if (output.some((existing) => JSON.stringify(existing) === JSON.stringify(content))) {
             continue;
         }
+        if (output.some((existing) => sameContentType(existing.content_type, content.content_type))) {
+            builder.unsupportedResponseContent(response, statusCode, content.content_type);
+            continue;
+        }
         output.push(content);
     }
     return output;
+}
+function sameContentType(left, right) {
+    return left.trim().toLowerCase() === right.trim().toLowerCase();
 }
 function mergeResponseExtensions(left, right) {
     if (!left || Object.keys(left).length === 0) {
@@ -867,16 +877,24 @@ function authRequirements(builder, auth, target, context, allowNoAuth) {
 }
 function isSupportedAuth(auth) {
     if (auth.type === "http") {
-        return true;
+        return auth.scheme.toLowerCase() === "bearer";
     }
     if (auth.type === "apiKey") {
-        return auth.in === "header";
+        return auth.in === "header" && auth.name === "X-API-Key";
     }
     return false;
 }
 function unsupportedAuthReason(auth) {
-    if (auth.type === "apiKey" && auth.in !== "header") {
-        return `apiKey authentication in ${auth.in} is not supported by APIGen v0.3.2.`;
+    if (auth.type === "http") {
+        return `http ${auth.scheme} authentication is not supported by APIGen v0.3.2. Use Bearer HTTP auth.`;
+    }
+    if (auth.type === "apiKey") {
+        if (auth.in !== "header") {
+            return `apiKey authentication in ${auth.in} is not supported by APIGen v0.3.2. Use ApiKeyAuth<ApiKeyLocation.header, "X-API-Key">.`;
+        }
+        if (auth.name !== "X-API-Key") {
+            return `header API key name ${auth.name} is not supported by APIGen v0.3.2. Use X-API-Key.`;
+        }
     }
     return `${auth.type} authentication is not supported by APIGen v0.3.2.`;
 }

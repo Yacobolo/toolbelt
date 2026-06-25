@@ -303,8 +303,12 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 			signature += ", " + lowerCamelName(p.Name) + " " + pathParamTypeName(p)
 		}
 		queryParams := endpointQueryParams(endpoint)
+		headerParams := endpointHeaderParams(endpoint)
 		if len(queryParams) > 0 {
 			signature += ", params Gen" + name + "Params"
+		}
+		if len(headerParams) > 0 {
+			signature += ", headers Gen" + name + "Headers"
 		}
 		signature += ")\n"
 		b.WriteString(signature)
@@ -326,7 +330,8 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 
 		pathParams := endpointPathParams(endpoint)
 		queryParams := endpointQueryParams(endpoint)
-		if len(pathParams) > 0 || len(queryParams) > 0 {
+		headerParams := endpointHeaderParams(endpoint)
+		if len(pathParams) > 0 || len(queryParams) > 0 || len(headerParams) > 0 {
 			b.WriteString("\t\tvar err error\n")
 		}
 
@@ -360,6 +365,21 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 				b.WriteString("\t\t}\n")
 			}
 		}
+		if len(headerParams) > 0 {
+			b.WriteString("\t\tvar headers Gen" + name + "Headers\n")
+			for _, p := range headerParams {
+				fieldName := exportedName(p.Name)
+				required := "false"
+				if p.Required {
+					required = "true"
+				}
+				b.WriteString("\t\terr = apigenchi.BindHeaderParameter(r.Header, \"" + p.Name + "\", " + required + ", &headers." + fieldName + ")\n")
+				b.WriteString("\t\tif err != nil {\n")
+				b.WriteString("\t\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
+				b.WriteString("\t\t\treturn true\n")
+				b.WriteString("\t\t}\n")
+			}
+		}
 
 		call := "\t\tdispatcher." + name + "(w, r"
 		for _, p := range pathParams {
@@ -367,6 +387,9 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		}
 		if len(queryParams) > 0 {
 			call += ", params"
+		}
+		if len(headerParams) > 0 {
+			call += ", headers"
 		}
 		call += ")\n"
 		b.WriteString(call)
@@ -605,6 +628,35 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 			b.WriteString("\t}\n")
 			b.WriteString("\treturn []apigenMultipartPart{parts[index]}\n")
 			b.WriteString("}\n\n")
+			b.WriteString("type apigenMultipartRule struct {\n")
+			b.WriteString("\tRepeated bool\n")
+			b.WriteString("}\n\n")
+			b.WriteString("func validateAPIGenMultipartParts(parts []apigenMultipartPart, namedRules map[string]apigenMultipartRule, positionalLimit int) error {\n")
+			b.WriteString("\tif positionalLimit > 0 && len(namedRules) == 0 {\n")
+			b.WriteString("\t\tif len(parts) > positionalLimit {\n")
+			b.WriteString("\t\t\treturn fmt.Errorf(\"unexpected multipart mixed part at index %d\", positionalLimit+1)\n")
+			b.WriteString("\t\t}\n")
+			b.WriteString("\t\treturn nil\n")
+			b.WriteString("\t}\n")
+			b.WriteString("\tseen := map[string]int{}\n")
+			b.WriteString("\tfor idx, part := range parts {\n")
+			b.WriteString("\t\tif part.Name == \"\" {\n")
+			b.WriteString("\t\t\tif idx >= positionalLimit {\n")
+			b.WriteString("\t\t\t\treturn fmt.Errorf(\"unexpected multipart mixed part at index %d\", idx+1)\n")
+			b.WriteString("\t\t\t}\n")
+			b.WriteString("\t\t\tcontinue\n")
+			b.WriteString("\t\t}\n")
+			b.WriteString("\t\trule, ok := namedRules[part.Name]\n")
+			b.WriteString("\t\tif !ok {\n")
+			b.WriteString("\t\t\treturn fmt.Errorf(\"unexpected multipart part %q\", part.Name)\n")
+			b.WriteString("\t\t}\n")
+			b.WriteString("\t\tseen[part.Name]++\n")
+			b.WriteString("\t\tif seen[part.Name] > 1 && !rule.Repeated {\n")
+			b.WriteString("\t\t\treturn fmt.Errorf(\"duplicate multipart part %q\", part.Name)\n")
+			b.WriteString("\t\t}\n")
+			b.WriteString("\t}\n")
+			b.WriteString("\treturn nil\n")
+			b.WriteString("}\n\n")
 			if hasFileBodies {
 				b.WriteString("func genFileFromMultipartPart(part apigenMultipartPart, defaultContentType string) GenFile {\n")
 				b.WriteString("\tcontentType := part.ContentType\n")
@@ -632,10 +684,23 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		name := exportedName(endpoint.OperationID)
 		pathParams := endpointPathParams(endpoint)
 		queryParams := endpointQueryParams(endpoint)
+		headerParams := endpointHeaderParams(endpoint)
 		if len(queryParams) > 0 {
 			b.WriteString("// Gen" + name + "Params represents the APIGen strict query parameter contract for " + name + ".\n")
 			b.WriteString("type Gen" + name + "Params struct {\n")
 			for _, p := range queryParams {
+				fieldType := schemaTypeName(p.Schema)
+				if !p.Required {
+					fieldType = "*" + fieldType
+				}
+				b.WriteString("\t" + exportedName(p.Name) + " " + fieldType + "\n")
+			}
+			b.WriteString("}\n\n")
+		}
+		if len(headerParams) > 0 {
+			b.WriteString("// Gen" + name + "Headers represents the APIGen strict header parameter contract for " + name + ".\n")
+			b.WriteString("type Gen" + name + "Headers struct {\n")
+			for _, p := range headerParams {
 				fieldType := schemaTypeName(p.Schema)
 				if !p.Required {
 					fieldType = "*" + fieldType
@@ -651,6 +716,9 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		}
 		if len(queryParams) > 0 {
 			b.WriteString("\tParams Gen" + name + "Params\n")
+		}
+		if len(headerParams) > 0 {
+			b.WriteString("\tHeaders Gen" + name + "Headers\n")
 		}
 		if endpoint.RequestBody != nil {
 			b.WriteString("\tBody *Gen" + name + "Body\n")
@@ -711,6 +779,7 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		name := exportedName(endpoint.OperationID)
 		pathParams := endpointPathParams(endpoint)
 		queryParams := endpointQueryParams(endpoint)
+		headerParams := endpointHeaderParams(endpoint)
 
 		sig := "func (b genStrictBridge) " + name + "(w http.ResponseWriter, r *http.Request"
 		for _, p := range pathParams {
@@ -718,6 +787,9 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		}
 		if len(queryParams) > 0 {
 			sig += ", params Gen" + name + "Params"
+		}
+		if len(headerParams) > 0 {
+			sig += ", headers Gen" + name + "Headers"
 		}
 		sig += ") {\n"
 		b.WriteString(sig)
@@ -730,6 +802,9 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		}
 		if len(queryParams) > 0 {
 			b.WriteString("\trequest.Params = params\n")
+		}
+		if len(headerParams) > 0 {
+			b.WriteString("\trequest.Headers = headers\n")
 		}
 
 		if endpoint.RequestBody != nil {
@@ -778,6 +853,10 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 				b.WriteString("\t\t\treturn\n")
 				b.WriteString("\t\t}\n")
 				b.WriteString("\t\tdefer cleanupAPIGenMultipartParts(parts)\n")
+				b.WriteString("\t\tif err := validateAPIGenMultipartParts(parts, " + renderMultipartNamedRuleMap(content) + ", " + strconv.Itoa(renderMultipartPositionalLimit(content)) + "); err != nil {\n")
+				b.WriteString("\t\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
+				b.WriteString("\t\t\treturn\n")
+				b.WriteString("\t\t}\n")
 				if err := emitMultipartDecode(&b, doc, name, content); err != nil {
 					return nil, err
 				}
@@ -851,7 +930,7 @@ func emitMultipartDecode(b *strings.Builder, doc ir.Document, operationName stri
 		localName := lowerCamelName(part.Name)
 		partsName := localName + "Parts"
 		wireName := part.WireName
-		if wireName == "" {
+		if wireName == "" || strings.EqualFold(content.ContentType, "multipart/mixed") {
 			b.WriteString("\t" + partsName + " := apigenMultipartPartsByIndex(parts, " + strconv.Itoa(idx) + ")\n")
 		} else {
 			b.WriteString("\t" + partsName + " := apigenMultipartPartsByName(parts, " + strconv.Quote(wireName) + ")\n")
@@ -956,7 +1035,7 @@ func multipartPartTypeName(doc ir.Document, part ir.MultipartPart) (string, erro
 func renderMultipartFileNameMap(content ir.BodyContent) string {
 	values := make([]string, 0)
 	for _, part := range content.Parts {
-		if part.BodyKind == "file" && part.WireName != "" {
+		if part.BodyKind == "file" && part.WireName != "" && !strings.EqualFold(content.ContentType, "multipart/mixed") {
 			values = append(values, strconv.Quote(part.WireName)+": true")
 		}
 	}
@@ -970,7 +1049,7 @@ func renderMultipartFileNameMap(content ir.BodyContent) string {
 func renderMultipartFileIndexMap(content ir.BodyContent) string {
 	values := make([]string, 0)
 	for idx, part := range content.Parts {
-		if part.BodyKind == "file" && part.WireName == "" {
+		if part.BodyKind == "file" && (part.WireName == "" || strings.EqualFold(content.ContentType, "multipart/mixed")) {
 			values = append(values, strconv.Itoa(idx)+": true")
 		}
 	}
@@ -978,6 +1057,37 @@ func renderMultipartFileIndexMap(content ir.BodyContent) string {
 		return "map[int]bool{}"
 	}
 	return "map[int]bool{" + strings.Join(values, ", ") + "}"
+}
+
+func renderMultipartNamedRuleMap(content ir.BodyContent) string {
+	if strings.EqualFold(content.ContentType, "multipart/mixed") {
+		return "map[string]apigenMultipartRule{}"
+	}
+	values := make([]string, 0)
+	for _, part := range content.Parts {
+		if part.WireName == "" {
+			continue
+		}
+		values = append(values, strconv.Quote(part.WireName)+": {Repeated: "+strconv.FormatBool(part.Repeated)+"}")
+	}
+	if len(values) == 0 {
+		return "map[string]apigenMultipartRule{}"
+	}
+	sort.Strings(values)
+	return "map[string]apigenMultipartRule{" + strings.Join(values, ", ") + "}"
+}
+
+func renderMultipartPositionalLimit(content ir.BodyContent) int {
+	if strings.EqualFold(content.ContentType, "multipart/mixed") {
+		return len(content.Parts)
+	}
+	limit := 0
+	for idx, part := range content.Parts {
+		if part.WireName == "" {
+			limit = idx + 1
+		}
+	}
+	return limit
 }
 
 func emitOperationResponse(b *strings.Builder, doc ir.Document, operationName string, response ir.Response) {
@@ -1386,6 +1496,16 @@ func endpointQueryParams(endpoint ir.Endpoint) []ir.Parameter {
 	var out []ir.Parameter
 	for _, p := range endpoint.Parameters {
 		if strings.EqualFold(p.In, "query") {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func endpointHeaderParams(endpoint ir.Endpoint) []ir.Parameter {
+	var out []ir.Parameter
+	for _, p := range endpoint.Parameters {
+		if strings.EqualFold(p.In, "header") {
 			out = append(out, p)
 		}
 	}

@@ -51,6 +51,11 @@ func NewClient(baseURL, apiKey, token string) *Client {
 
 // Do issues an authenticated HTTP request against the generated API surface.
 func (c *Client) Do(method, path string, query url.Values, body any, contentType string, bodyKind string) (*http.Response, error) {
+	return c.DoWithHeaders(method, path, query, nil, body, contentType, bodyKind)
+}
+
+// DoWithHeaders issues an authenticated HTTP request with generated header parameter values.
+func (c *Client) DoWithHeaders(method, path string, query url.Values, headers http.Header, body any, contentType string, bodyKind string) (*http.Response, error) {
 	baseURL := strings.TrimRight(c.BaseURL, "/")
 	if baseURL == "" {
 		baseURL = "http://localhost:8080"
@@ -113,12 +118,21 @@ func (c *Client) Do(method, path string, query url.Values, body any, contentType
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Accept", "application/json")
-	if body != nil {
-		if strings.TrimSpace(contentType) == "" {
-			contentType = "application/json"
+	for name, values := range headers {
+		for _, value := range values {
+			req.Header.Add(name, value)
 		}
-		req.Header.Set("Content-Type", contentType)
+	}
+	if req.Header.Get("Accept") == "" {
+		req.Header.Set("Accept", "application/json")
+	}
+	if body != nil {
+		if req.Header.Get("Content-Type") == "" {
+			if strings.TrimSpace(contentType) == "" {
+				contentType = "application/json"
+			}
+			req.Header.Set("Content-Type", contentType)
+		}
 	}
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)

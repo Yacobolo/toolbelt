@@ -15,6 +15,12 @@ export const $lib = createTypeSpecLibrary({
         default: paramMessage`Unsupported response status '${"status"}' for operation '${"operation"}'. APIGen IR v2 requires concrete numeric status codes.`,
       },
     },
+    "unsupported-response-content": {
+      severity: "error",
+      messages: {
+        default: paramMessage`Unsupported response content for operation '${"operation"}': incompatible response content for status ${"status"} and content type ${"contentType"}. APIGen IR v2 requires one concrete content entry per status/content type.`,
+      },
+    },
     "unsupported-inline-enum": {
       severity: "error",
       messages: {

@@ -73,6 +73,26 @@ func BindQueryParameter(values url.Values, name string, required bool, dest any)
 	return nil
 }
 
+// BindHeaderParameter decodes one HTTP header into the provided destination.
+func BindHeaderParameter(values http.Header, name string, required bool, dest any) error {
+	rawValues, ok := values[http.CanonicalHeaderKey(name)]
+	if !ok || len(rawValues) == 0 {
+		rawValues = values[name]
+	}
+	if len(rawValues) == 0 {
+		if required {
+			return fmt.Errorf("missing required header parameter %q", name)
+		}
+		return nil
+	}
+
+	if err := bindParameterValues(dest, rawValues); err != nil {
+		return fmt.Errorf("invalid header parameter %q: %w", name, err)
+	}
+
+	return nil
+}
+
 // SafeIntToInt32 converts an int to int32 while clamping to the int32 range.
 func SafeIntToInt32(v int) int32 {
 	if v > math.MaxInt32 {

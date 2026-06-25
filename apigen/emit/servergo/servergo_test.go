@@ -337,7 +337,7 @@ func TestEmit_DoesNotMutateInputDocument(t *testing.T) {
 	require.Equal(t, "/a", doc.Endpoints[1].Path)
 }
 
-func TestEmit_GeneratesPathAndQueryBinding(t *testing.T) {
+func TestEmit_GeneratesPathQueryAndHeaderBinding(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
@@ -352,6 +352,7 @@ func TestEmit_GeneratesPathAndQueryBinding(t *testing.T) {
 				Parameters: []ir.Parameter{
 					{Name: "groupId", In: "path", Required: true, Schema: ir.SchemaRef{Type: "string"}},
 					{Name: "max_results", In: "query", Required: false, Schema: ir.SchemaRef{Type: "integer", Format: "int32"}},
+					{Name: "accept", In: "header", Required: true, Schema: ir.SchemaRef{Type: "string", Enum: []string{"application/json", "application/octet-stream"}}},
 				},
 				Responses: []ir.Response{{StatusCode: 200, Description: "ok"}},
 			},
@@ -362,13 +363,16 @@ func TestEmit_GeneratesPathAndQueryBinding(t *testing.T) {
 	require.NoError(t, err)
 	content := string(b)
 
-	require.Contains(t, content, "ListGroupMembers(w http.ResponseWriter, r *http.Request, groupId string, params GenListGroupMembersParams)")
+	require.Contains(t, content, "ListGroupMembers(w http.ResponseWriter, r *http.Request, groupId string, params GenListGroupMembersParams, headers GenListGroupMembersHeaders)")
 	require.Contains(t, content, "apigenchi.BindPathParameter(\"groupId\", apigenchi.URLParam(r, \"groupId\"), true, &groupId)")
 	require.Contains(t, content, "apigenchi.BindQueryParameter(r.URL.Query(), \"max_results\", false, &params.MaxResults)")
+	require.Contains(t, content, "apigenchi.BindHeaderParameter(r.Header, \"accept\", true, &headers.Accept)")
 	require.Contains(t, content, "writeAPIGenError(w, http.StatusBadRequest, err.Error())")
-	require.Contains(t, content, "dispatcher.ListGroupMembers(w, r, groupId, params)")
+	require.Contains(t, content, "dispatcher.ListGroupMembers(w, r, groupId, params, headers)")
 	require.Contains(t, content, "type GenListGroupMembersParams struct {")
 	require.Contains(t, content, "\tMaxResults *int32")
+	require.Contains(t, content, "type GenListGroupMembersHeaders struct {")
+	require.Contains(t, content, "\tAccept string")
 	require.Contains(t, content, "func apigenErrorMessage(statusCode int, message string) string {")
 	require.Contains(t, content, "if statusCode >= http.StatusInternalServerError {")
 	require.Contains(t, content, "if statusText := strings.ToLower(http.StatusText(statusCode)); statusText != \"\" {")
@@ -381,6 +385,7 @@ func TestEmit_GeneratesPathAndQueryBinding(t *testing.T) {
 	require.Contains(t, content, "type GenListGroupMembersRequest struct {")
 	require.Contains(t, content, "\tGroupId string")
 	require.Contains(t, content, "\tParams GenListGroupMembersParams")
+	require.Contains(t, content, "\tHeaders GenListGroupMembersHeaders")
 	require.Contains(t, content, "type GenListGroupMembersResponse interface {")
 	require.Contains(t, content, "\tVisitListGroupMembersResponse(w http.ResponseWriter) error")
 	require.Contains(t, content, "type GenListGroupMembers200ResponseHeaders struct {")
@@ -586,6 +591,10 @@ func TestEmit_GeneratesMultipartBodyDecoding(t *testing.T) {
 	require.Contains(t, content, "type GenUploadArtifactBody = GenUploadArtifactMultipartBody")
 	require.Contains(t, content, `parts, err := readAPIGenMultipartParts(r, map[string]bool{"artifact": true}, map[int]bool{})`)
 	require.Contains(t, content, "defer cleanupAPIGenMultipartParts(parts)")
+	require.Contains(t, content, `if err := validateAPIGenMultipartParts(parts, map[string]apigenMultipartRule{`)
+	require.Contains(t, content, `"metadata": {Repeated: false}`)
+	require.Contains(t, content, `"checksum": {Repeated: true}`)
+	require.Contains(t, content, `}, 5); err != nil {`)
 	require.Contains(t, content, "metadataParts := apigenMultipartPartsByName(parts, \"metadata\")")
 	require.Contains(t, content, "if !metadataOK {")
 	require.Contains(t, content, "json.Unmarshal(metadataPart.Raw, &metadataValue)")
@@ -613,6 +622,55 @@ var _ = GenUploadArtifactBody{
 	Artifact: GenFile{Contents: []byte("payload")},
 	Checksums: []string{"abc"},
 	Part5: []byte("payload"),
+}
+`)
+}
+
+func TestEmit_GeneratesMixedMultipartBodyDecodingByOrder(t *testing.T) {
+	t.Helper()
+
+	doc := ir.Document{
+		SchemaVersion: "v2",
+		API:           ir.API{BasePath: "/"},
+		Info:          ir.Info{Title: "t", Version: "1"},
+		Endpoints: []ir.Endpoint{
+			{
+				Method:      "post",
+				Path:        "/mixed",
+				OperationID: "uploadMixed",
+				RequestBody: &ir.RequestBody{Required: true, Contents: []ir.BodyContent{{
+					ContentType: "multipart/mixed",
+					BodyKind:    "multipart",
+					Parts: []ir.MultipartPart{
+						{Name: "part1", WireName: "metadata", PartKind: "tuple", Required: true, ContentType: "text/plain", BodyKind: "text", Schema: &ir.SchemaRef{Type: "string"}},
+						{Name: "part2", WireName: "artifact", PartKind: "tuple", Required: true, ContentType: "application/octet-stream", BodyKind: "file", Filename: true, Schema: &ir.SchemaRef{Type: "string", Format: "binary"}},
+					},
+				}}},
+				Responses: []ir.Response{{StatusCode: 204, Description: "uploaded"}},
+			},
+		},
+	}
+
+	b, err := Emit(doc, Options{PackageName: "gen"})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, `parts, err := readAPIGenMultipartParts(r, map[string]bool{}, map[int]bool{1: true})`)
+	require.Contains(t, content, `if err := validateAPIGenMultipartParts(parts, map[string]apigenMultipartRule{}, 2); err != nil {`)
+	require.Contains(t, content, "part1Parts := apigenMultipartPartsByIndex(parts, 0)")
+	require.Contains(t, content, "part2Parts := apigenMultipartPartsByIndex(parts, 1)")
+	require.NotContains(t, content, `apigenMultipartPartsByName(parts, "metadata")`)
+	require.NotContains(t, content, `apigenMultipartPartsByName(parts, "artifact")`)
+
+	assertGeneratedServerCompiles(t, b, `package gen
+
+type Error struct {
+	Code int32
+	Message string
+}
+
+var _ = GenUploadMixedBody{
+	Part1: "metadata",
+	Part2: GenFile{},
 }
 `)
 }

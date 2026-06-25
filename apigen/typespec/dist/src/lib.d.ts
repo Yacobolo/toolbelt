@@ -5,6 +5,9 @@ export declare const $lib: import("@typespec/compiler").TypeSpecLibrary<{
     "unsupported-response-status": {
         readonly default: import("@typespec/compiler").CallableMessage<["status", "operation"]>;
     };
+    "unsupported-response-content": {
+        readonly default: import("@typespec/compiler").CallableMessage<["operation", "status", "contentType"]>;
+    };
     "unsupported-inline-enum": {
         readonly default: import("@typespec/compiler").CallableMessage<["context"]>;
     };
@@ -36,12 +39,15 @@ export declare const $lib: import("@typespec/compiler").TypeSpecLibrary<{
         readonly default: "The APIGen emitter option 'output-file' is required.";
     };
 }, Record<string, any>, never>;
-export declare const reportDiagnostic: <C extends "unsupported-type" | "unsupported-response-status" | "unsupported-inline-enum" | "unsupported-cookie" | "unsupported-shared-route" | "unsupported-auth" | "multiple-services" | "reserved-extension" | "invalid-extension-key" | "invalid-extension-value" | "unnamed-schema" | "missing-output-file", M extends keyof {
+export declare const reportDiagnostic: <C extends "unsupported-type" | "unsupported-response-status" | "unsupported-response-content" | "unsupported-inline-enum" | "unsupported-cookie" | "unsupported-shared-route" | "unsupported-auth" | "multiple-services" | "reserved-extension" | "invalid-extension-key" | "invalid-extension-value" | "unnamed-schema" | "missing-output-file", M extends keyof {
     "unsupported-type": {
         readonly default: import("@typespec/compiler").CallableMessage<["kind", "context"]>;
     };
     "unsupported-response-status": {
         readonly default: import("@typespec/compiler").CallableMessage<["status", "operation"]>;
+    };
+    "unsupported-response-content": {
+        readonly default: import("@typespec/compiler").CallableMessage<["operation", "status", "contentType"]>;
     };
     "unsupported-inline-enum": {
         readonly default: import("@typespec/compiler").CallableMessage<["context"]>;
@@ -79,6 +85,9 @@ export declare const reportDiagnostic: <C extends "unsupported-type" | "unsuppor
     };
     "unsupported-response-status": {
         readonly default: import("@typespec/compiler").CallableMessage<["status", "operation"]>;
+    };
+    "unsupported-response-content": {
+        readonly default: import("@typespec/compiler").CallableMessage<["operation", "status", "contentType"]>;
     };
     "unsupported-inline-enum": {
         readonly default: import("@typespec/compiler").CallableMessage<["context"]>;

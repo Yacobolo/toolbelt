@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -249,6 +250,7 @@ func runGeneratedCommand(cmd *spcobra.Command, client *Client, spec CommandSpec,
 	}
 
 	query := url.Values{}
+	headers := http.Header{}
 	for _, parameter := range spec.Parameters {
 		if parameter.In != "query" {
 			continue
@@ -262,6 +264,19 @@ func runGeneratedCommand(cmd *spcobra.Command, client *Client, spec CommandSpec,
 		}
 		addQueryValue(query, parameter.Name, value)
 	}
+	for _, parameter := range spec.Parameters {
+		if parameter.In != "header" {
+			continue
+		}
+		value, ok, err := resolveTypedInputValue(cmd, parameter.Name, parameter.Type, "header", argValues)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		headers.Add(parameter.Name, fmt.Sprint(value))
+	}
 
 	var body any
 	if spec.RequestBody != nil {
@@ -274,7 +289,7 @@ func runGeneratedCommand(cmd *spcobra.Command, client *Client, spec CommandSpec,
 
 	allPages, _ := cmd.Flags().GetBool("all")
 	if allPages && spec.Pagination != nil {
-		bodyBytes, err := fetchAllPages(client, spec, urlPath, query)
+		bodyBytes, err := fetchAllPages(client, spec, urlPath, query, headers)
 		if err != nil {
 			return err
 		}
@@ -282,7 +297,7 @@ func runGeneratedCommand(cmd *spcobra.Command, client *Client, spec CommandSpec,
 	}
 
 	contentType, bodyKind := requestContent(spec.RequestBody)
-	resp, err := client.Do(spec.Method, urlPath, query, body, contentType, bodyKind)
+	resp, err := client.DoWithHeaders(spec.Method, urlPath, query, headers, body, contentType, bodyKind)
 	if err != nil {
 		return err
 	}
@@ -540,7 +555,7 @@ func requestContent(requestBody *RequestBodySpec) (string, string) {
 	return requestBody.ContentType, requestBody.BodyKind
 }
 
-func fetchAllPages(client *Client, spec CommandSpec, path string, baseQuery url.Values) ([]byte, error) {
+func fetchAllPages(client *Client, spec CommandSpec, path string, baseQuery url.Values, headers http.Header) ([]byte, error) {
 	if spec.Pagination == nil {
 		return nil, fmt.Errorf("pagination is not configured")
 	}
@@ -561,7 +576,7 @@ func fetchAllPages(client *Client, spec CommandSpec, path string, baseQuery url.
 			query.Set("page_token", pageToken)
 		}
 
-		resp, err := client.Do(spec.Method, path, query, nil, "", "")
+		resp, err := client.DoWithHeaders(spec.Method, path, query, headers, nil, "", "")
 		if err != nil {
 			return nil, err
 		}
