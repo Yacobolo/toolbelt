@@ -148,11 +148,12 @@ Generated request bodies are contract-first:
 
 - JSON and form object bodies used in generated Go output should resolve to named IR-owned schemas
 - text bodies generate `string`, raw `bytes` bodies generate `[]byte`, and TypeSpec `Http.File` bodies generate `GenFile`
-- `GenFile` carries `Contents []byte`, `ContentType string`, and optional `Filename *string`; response writers set `Content-Type` and `Content-Disposition` from that metadata
-- multipart bodies generate a `Gen<Operation>MultipartBody` struct; JSON/form parts decode into generated schema types, text parts into `string`, raw bytes into `[]byte`, and `Http.File` parts into `GenFile`
+- `GenFile` carries `Contents []byte`, optional streaming `Reader io.ReadCloser`, `ContentType string`, optional `Filename *string`, and optional `Size *int64`; response writers stream `Reader` when present and set `Content-Type`/`Content-Disposition` from that metadata
+- raw `Http.File` request bodies pass `r.Body` through as `GenFile.Reader`; multipart `Http.File` parts spool to temporary files and are cleaned up after the handler returns
+- multipart bodies generate a `Gen<Operation>MultipartBody` struct; JSON/form parts decode into generated schema types, text parts into `string`, raw bytes into `[]byte`, and `Http.File` parts into streaming `GenFile`
 - repeated multipart parts generate slices, optional single parts generate pointers, and `multipart/mixed` tuple parts are decoded in wire order
 - generation fails explicitly when an anonymous object body cannot be mapped to a named IR schema
-- generated CLI support remains failure-closed for multipart request bodies unless the operation uses an explicit custom override
+- generated CLI supports multipart request bodies with repeated `--part name=value`, `--part name=@file`, or `--part name=-` flags; binary and file parts require `@file` or stdin
 
 Generated response writers are content-aware. Single-content responses keep concise names such as `GenGetArtifact200JSONResponse`, `GenGetArtifact200TextResponse`, and `GenGetArtifact200BinaryResponse`. When one status can return multiple media types, APIGen emits one concrete type per content variant using sanitized media names, for example `GenGetArtifact200ApplicationJSONResponse` and `GenGetArtifact200ApplicationOctetStreamResponse`. Each writer sets the authored `Content-Type`.
 
@@ -198,7 +199,7 @@ namespace Artifacts {
 ```
 
 APIGen v0.3.2 follows resolved `@typespec/http` semantics for JSON, text, binary, file, urlencoded form, multipart, optional bodies, response helpers, aliased response unions, and route containers.
-Content negotiation can use TypeSpec `@sharedRoute` or `@overload`; APIGen coalesces compatible same-method/same-path operations into one endpoint, merges literal `Accept`/`contentType` headers into enum-like parameters, and fails closed when auth, CLI metadata, parameters, or request bodies disagree.
+Content negotiation can use TypeSpec `@sharedRoute` or `@overload`; APIGen coalesces compatible same-method/same-path operations into one endpoint, merges literal `Accept`/`contentType` headers into enum-like parameters, and fails closed when auth, APIGen CLI/authz/manual metadata, operation extensions, parameters, or request bodies disagree.
 
 LibreDash-style contracts should use standard HTTP transport instead of raw-body extensions. Before:
 
@@ -237,7 +238,11 @@ namespace Deployments {
 - Generated non-JSON request/response types are no longer named `JSONBody` or `JSONResponse`.
 - Multi-content responses now generate media-specific concrete response names such as `ApplicationJSONResponse` and `ApplicationOctetStreamResponse`.
 - Raw `bytes` request/response bodies generate `[]byte`; TypeSpec `Http.File` request/response/multipart bodies generate `GenFile`.
-- Multipart requests now generate typed multipart body structs and streaming multipart decoding. Repeated parts are slices; optional single parts are pointers; named form-data parts use the TypeSpec part name and mixed tuple parts use wire order.
+- `GenFile` adds streaming fields: `Reader io.ReadCloser` and `Size *int64`. Existing simple in-memory use via `Contents []byte` remains valid.
+- Multipart requests now generate typed multipart body structs and streaming multipart decoding for `Http.File` parts. Repeated parts are slices; optional single parts are pointers; named form-data parts use the TypeSpec part name and mixed tuple parts use wire order.
+- Generated CLI multipart input uses repeated `--part` flags. JSON/form parts accept raw JSON, `@file`, or stdin; text parts accept raw text, `@file`, or stdin; binary/file parts require `@file` or stdin.
+- `multipart/mixed` OpenAPI output includes APIGen vendor metadata `x-apigen-multipart-kind: "mixed"` and ordered `x-apigen-multipart-parts` because OpenAPI 3.0 cannot fully model ordered mixed tuples as ordinary named fields.
+- v0.3.2 fails closed for cookie parameters, unsupported status ranges, OAuth/OpenID auth, non-header API-key auth, NoAuth operation overrides on secured services, and incompatible shared-route/overload merges.
 - `@sharedRoute` and same-endpoint `@overload` operations now coalesce into one APIGen endpoint when their transport metadata is compatible.
 - `GenericRequest` inference is removed; name the TypeSpec model you want APIGen to generate.
 - v0.3.1 remains the pinned all-JSON release for users who need the old generated shape.

@@ -36,6 +36,8 @@ func Emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("type APIGenField = apigencobra.Field\n\n")
 	b.WriteString("// APIGenRequestBody is generated request body metadata from JSON IR.\n")
 	b.WriteString("type APIGenRequestBody = apigencobra.RequestBodySpec\n\n")
+	b.WriteString("// APIGenMultipartPart is generated multipart request body metadata from JSON IR.\n")
+	b.WriteString("type APIGenMultipartPart = apigencobra.MultipartPartSpec\n\n")
 	b.WriteString("// APIGenArgBinding is generated positional argument metadata from JSON IR.\n")
 	b.WriteString("type APIGenArgBinding = apigencobra.ArgBinding\n\n")
 	b.WriteString("// APIGenOutput is generated output rendering metadata from JSON IR.\n")
@@ -100,13 +102,14 @@ func renderRequestBody(doc ir.Document, endpoint ir.Endpoint) string {
 	if content.Schema != nil {
 		bodySchemaType = schemaType(doc, *content.Schema)
 	}
-	return fmt.Sprintf("&apigencobra.RequestBodySpec{Required: %t, ContentType: %q, BodyKind: %q, SchemaType: %q, InputMode: %q, Fields: %s}",
+	return fmt.Sprintf("&apigencobra.RequestBodySpec{Required: %t, ContentType: %q, BodyKind: %q, SchemaType: %q, InputMode: %q, Fields: %s, Parts: %s}",
 		endpoint.RequestBody.Required,
 		content.ContentType,
 		content.BodyKind,
 		bodySchemaType,
 		bodyInput,
 		renderFields(fields),
+		renderMultipartParts(doc, content.Parts),
 	)
 }
 
@@ -191,6 +194,41 @@ func renderFields(fields []apiField) string {
 		))
 	}
 	return "[]apigencobra.Field{" + strings.Join(rendered, ", ") + "}"
+}
+
+func renderMultipartParts(doc ir.Document, parts []ir.MultipartPart) string {
+	if len(parts) == 0 {
+		return "nil"
+	}
+	rendered := make([]string, 0, len(parts))
+	for _, part := range parts {
+		schemaType := part.BodyKind
+		if part.Schema != nil {
+			schemaType = schemaTypeForPart(doc, *part.Schema)
+		}
+		rendered = append(rendered, fmt.Sprintf("{Name: %q, WireName: %q, PartKind: %q, Repeated: %t, Required: %t, ContentType: %q, BodyKind: %q, Filename: %t, SchemaType: %q}",
+			part.Name,
+			part.WireName,
+			part.PartKind,
+			part.Repeated,
+			part.Required,
+			part.ContentType,
+			part.BodyKind,
+			part.Filename,
+			schemaType,
+		))
+	}
+	return "[]apigencobra.MultipartPartSpec{" + strings.Join(rendered, ", ") + "}"
+}
+
+func schemaTypeForPart(doc ir.Document, schemaRef ir.SchemaRef) string {
+	if schemaRef.Type != "" {
+		return schemaRef.Type
+	}
+	if schema, ok := ir.ResolveSchema(doc, schemaRef); ok && schema.Type != "" {
+		return schema.Type
+	}
+	return "string"
 }
 
 func renderCommand(command []string) string {

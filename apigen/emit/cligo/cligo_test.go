@@ -56,6 +56,55 @@ func TestEmit(t *testing.T) {
 	require.Contains(t, string(b), "Command: []string{\"query\", \"execute\"}")
 }
 
+func TestEmit_IncludesMultipartPartSpecs(t *testing.T) {
+	t.Helper()
+	doc := ir.Document{
+		SchemaVersion: "v2",
+		API:           ir.API{BasePath: "/v1"},
+		Info:          ir.Info{Title: "t", Version: "1"},
+		Schemas: map[string]ir.Schema{
+			"UploadMetadata": {
+				Type: "object",
+				Properties: map[string]ir.SchemaProperty{
+					"name": {Schema: ir.SchemaRef{Type: "string"}},
+				},
+				Required: []string{"name"},
+			},
+		},
+		Endpoints: []ir.Endpoint{
+			{
+				Method:      "post",
+				Path:        "/artifacts",
+				OperationID: "uploadArtifact",
+				Summary:     "Upload artifact",
+				RequestBody: &ir.RequestBody{
+					Required: true,
+					Contents: []ir.BodyContent{{
+						ContentType: "multipart/form-data",
+						BodyKind:    "multipart",
+						Parts: []ir.MultipartPart{
+							{Name: "metadata", WireName: "metadata", PartKind: "model", Required: true, ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Ref: "UploadMetadata"}},
+							{Name: "artifact", WireName: "artifact", PartKind: "model", Required: true, ContentType: "application/octet-stream", BodyKind: "file", Filename: true, Schema: &ir.SchemaRef{Type: "string", Format: "binary"}},
+							{Name: "tag", WireName: "tag", PartKind: "model", Repeated: true, ContentType: "text/plain", BodyKind: "text", Schema: &ir.SchemaRef{Type: "string"}},
+						},
+					}},
+				},
+				Responses: []ir.Response{{StatusCode: 201, Description: "created"}},
+				CLI:       &ir.CLI{Command: []string{"artifact", "upload"}},
+			},
+		},
+	}
+
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, `InputMode: "multipart"`)
+	require.Contains(t, content, `Parts: []apigencobra.MultipartPartSpec{`)
+	require.Contains(t, content, `{Name: "metadata", WireName: "metadata", PartKind: "model", Repeated: false, Required: true, ContentType: "application/json", BodyKind: "json", Filename: false, SchemaType: "object"}`)
+	require.Contains(t, content, `{Name: "artifact", WireName: "artifact", PartKind: "model", Repeated: false, Required: true, ContentType: "application/octet-stream", BodyKind: "file", Filename: true, SchemaType: "string"}`)
+	require.Contains(t, content, `{Name: "tag", WireName: "tag", PartKind: "model", Repeated: true, Required: false, ContentType: "text/plain", BodyKind: "text", Filename: false, SchemaType: "string"}`)
+}
+
 func TestEmit_RejectsInvalidCLI(t *testing.T) {
 	t.Helper()
 

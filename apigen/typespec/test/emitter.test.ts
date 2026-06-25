@@ -344,6 +344,228 @@ describe("APIGen TypeSpec emitter", () => {
     ]);
   });
 
+  it("fails without writing IR when shared-route operations disagree on APIGen metadata", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Shared Metadata API" })
+        namespace SharedMetadataAPI;
+
+        @route("/widgets")
+        @sharedRoute
+        @get
+        @apigen.cli(#{ command: #["widgets", "get"] })
+        op getWidgetJson(@header accept: "application/json"): string;
+
+        @route("/widgets")
+        @sharedRoute
+        @get
+        @apigen.cli(#{ command: #["widgets", "download"] })
+        op getWidgetBinary(@header accept: "application/octet-stream"): bytes;
+      `,
+      "incompatible cli metadata",
+    );
+  });
+
+  it("fails without writing IR when shared-route operations disagree on authz metadata", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Shared Authz API" })
+        namespace SharedAuthzAPI;
+
+        @route("/widgets")
+        @sharedRoute
+        @get
+        @apigen.authz(#{ action: "read" })
+        op getWidgetJson(@header accept: "application/json"): string;
+
+        @route("/widgets")
+        @sharedRoute
+        @get
+        @apigen.authz(#{ action: "download" })
+        op getWidgetBinary(@header accept: "application/octet-stream"): bytes;
+      `,
+      "incompatible authz metadata",
+    );
+  });
+
+  it("fails without writing IR when shared-route operations disagree on auth", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Shared Auth API" })
+        namespace SharedAuthAPI;
+
+        @route("/widgets")
+        @sharedRoute
+        @get
+        @useAuth(BearerAuth)
+        op getWidgetJson(@header accept: "application/json"): string;
+
+        @route("/widgets")
+        @sharedRoute
+        @get
+        @useAuth(ApiKeyAuth<ApiKeyLocation.header, "X-API-Key">)
+        op getWidgetBinary(@header accept: "application/octet-stream"): bytes;
+      `,
+      "incompatible authentication",
+    );
+  });
+
+  it("fails without writing IR when shared-route operations disagree on manual handling", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Shared Manual API" })
+        namespace SharedManualAPI;
+
+        @route("/widgets")
+        @sharedRoute
+        @get
+        @apigen.manual
+        op getWidgetJson(@header accept: "application/json"): string;
+
+        @route("/widgets")
+        @sharedRoute
+        @get
+        op getWidgetBinary(@header accept: "application/octet-stream"): bytes;
+      `,
+      "incompatible manual metadata",
+    );
+  });
+
+  it("fails without writing IR when shared-route operations disagree on request bodies or non-literal parameters", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Shared Body API" })
+        namespace SharedBodyAPI;
+
+        model Widget {
+          name: string;
+        }
+
+        @route("/widgets")
+        @sharedRoute
+        @post
+        op createJson(@header contentType: "application/json", @query version: int32, @body body: Widget): string;
+
+        @route("/widgets")
+        @sharedRoute
+        @post
+        op createText(@header contentType: "text/plain", @query version: string, @body body: string): string;
+      `,
+      "incompatible parameter schema version",
+    );
+  });
+
+  it("fails without writing IR when shared-route operations disagree on request bodies", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Shared Body API" })
+        namespace SharedBodyAPI;
+
+        model Widget {
+          name: string;
+        }
+
+        @route("/widgets")
+        @sharedRoute
+        @post
+        op createJson(@header contentType: "application/json", @body body: Widget): string;
+
+        @route("/widgets")
+        @sharedRoute
+        @post
+        op createText(@header contentType: "text/plain", @body body: string): string;
+      `,
+      "incompatible request bodies",
+    );
+  });
+
+  it("expands TypeSpec status-code unions into concrete IR responses", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Status Union API" })
+      namespace StatusUnionAPI;
+
+      model Widget {
+        id: string;
+      }
+
+      model CreatedOrAccepted {
+        @statusCode status: 201 | 202;
+        @body body: Widget;
+      }
+
+      @route("/widgets")
+      @post
+      op create(): CreatedOrAccepted;
+    `);
+
+    expect(doc.endpoints[0].responses.map((response: any) => response.status_code)).toEqual([
+      201,
+      202,
+    ]);
+    expect(doc.endpoints[0].responses[0].contents[0]).toEqual({
+      content_type: "application/json",
+      body_kind: "json",
+      schema: { ref: "Widget" },
+    });
+  });
+
+  it("fails without writing IR for cookie parameters", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Cookie API" })
+        namespace CookieAPI;
+
+        @route("/widgets")
+        @get
+        op list(@cookie session: string): string;
+      `,
+      "cookie parameters are not supported",
+    );
+  });
+
+  it("fails without writing IR for unsupported advanced auth schemes", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        alias MyOAuth2<Scopes extends string[]> = OAuth2Auth<
+          [
+            {
+              type: OAuth2FlowType.implicit;
+              authorizationUrl: "https://api.example.com/oauth2/authorize";
+            }
+          ],
+          Scopes
+        >;
+
+        @service(#{ title: "OAuth API" })
+        @useAuth(MyOAuth2<["read"]>)
+        namespace OAuthAPI {
+          @route("/widgets")
+          @get
+          op list(): string;
+        }
+      `,
+      "oauth2 authentication is not supported",
+    );
+  });
+
   it("emits TypeSpec-native file and multipart metadata", async () => {
     const doc = await compileSource(`
       using Http;
@@ -767,6 +989,15 @@ async function compileSource(source: string, outputFile?: string) {
   await writeFile(join(fixtureDir, "main.tsp"), source);
   await compileDirectory(fixtureDir, irPath);
   return JSON.parse(await readFile(irPath, "utf8"));
+}
+
+async function expectCompileFails(source: string, message: string) {
+  const outDir = await mkdtemp(join(tmpdir(), "apigen-typespec-"));
+  const irPath = join(outDir, "json-ir.json");
+  await expect(compileSource(source, irPath)).rejects.toSatisfy((error: any) =>
+    `${error.stdout}\n${error.stderr}`.includes(message),
+  );
+  await expect(stat(irPath)).rejects.toMatchObject({ code: "ENOENT" });
 }
 
 async function compileDirectory(sourceDir: string, outputFile: string) {

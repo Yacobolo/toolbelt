@@ -82,7 +82,10 @@ class IRBuilder {
         this.report("unsupported-auth", { context, reason }, target);
     }
     unsupportedSharedRoute(operation, reason) {
-        this.unsupported(operation, `shared route ${reason}`);
+        this.report("unsupported-shared-route", { reason }, operation);
+    }
+    unsupportedCookie(target) {
+        this.report("unsupported-cookie", {}, target);
     }
     unsupportedResponseStatus(response) {
         this.report("unsupported-response-status", { status: JSON.stringify(response.statusCodes), operation: response.type.kind }, response.type);
@@ -225,7 +228,7 @@ function buildDocument(program, builder, service, options) {
     }));
     const authentication = resolveAuthentication(service);
     const defaultSecurity = authRequirements(builder, authentication.defaultAuth, namespace, "service authentication", true);
-    const securitySchemes = collectSecuritySchemes(authentication.schemes);
+    const securitySchemes = collectSecuritySchemes(builder, authentication.schemes, namespace);
     const endpoints = mergedEndpoints(program, builder, service.operations, authentication.operationsAuth, defaultSecurity);
     return prune({
         schema_version: "v2",
@@ -296,6 +299,7 @@ function canonicalOperation(program, operations) {
 }
 function endpoint(program, builder, group, operationsAuth, defaultSecurity) {
     const operation = group.canonical;
+    validateSharedRouteMetadata(program, builder, group.operations, operation);
     const extensions = {};
     for (const [key, value] of operationVendorExtensions(program, builder, operation.operation)) {
         extensions[key] = value;
@@ -324,6 +328,42 @@ function endpoint(program, builder, group, operationsAuth, defaultSecurity) {
         output.extensions = extensions;
     }
     return output;
+}
+function validateSharedRouteMetadata(program, builder, operations, canonical) {
+    const canonicalCLI = stableJSONString(cliMetadata(program, canonical));
+    const canonicalAuthz = stableJSONString(getAuthz({ program }, canonical.operation));
+    const canonicalManual = isManual({ program }, canonical.operation);
+    const canonicalExtensions = stableJSONString(operationVendorExtensions(program, builder, canonical.operation));
+    for (const operation of operations) {
+        if (stableJSONString(cliMetadata(program, operation)) !== canonicalCLI) {
+            builder.unsupportedSharedRoute(operation.operation, "incompatible cli metadata");
+        }
+        if (stableJSONString(getAuthz({ program }, operation.operation)) !== canonicalAuthz) {
+            builder.unsupportedSharedRoute(operation.operation, "incompatible authz metadata");
+        }
+        if (isManual({ program }, operation.operation) !== canonicalManual) {
+            builder.unsupportedSharedRoute(operation.operation, "incompatible manual metadata");
+        }
+        if (stableJSONString(operationVendorExtensions(program, builder, operation.operation)) !== canonicalExtensions) {
+            builder.unsupportedSharedRoute(operation.operation, "incompatible operation extensions");
+        }
+    }
+}
+function stableJSONString(value) {
+    return JSON.stringify(sortJSONValue(value));
+}
+function sortJSONValue(value) {
+    if (Array.isArray(value)) {
+        return value.map((item) => sortJSONValue(item));
+    }
+    if (value && typeof value === "object") {
+        const output = {};
+        for (const key of Object.keys(value).sort()) {
+            output[key] = sortJSONValue(value[key]);
+        }
+        return output;
+    }
+    return value;
 }
 function operationVendorExtensions(program, builder, operation) {
     const extensions = new Map(getExtensions(program, operation).entries());
@@ -478,6 +518,9 @@ function cliMetadata(program, operation) {
 }
 function endpointParameter(program, builder, parameter) {
     const param = parameter.param;
+    if (parameter.type === "cookie") {
+        builder.unsupportedCookie(param);
+    }
     return prune({
         name: "name" in parameter ? parameter.name : param.name,
         in: parameter.type,
@@ -756,10 +799,14 @@ function responseHeaders(program, builder, content) {
     }));
     return headers.length > 0 ? headers : undefined;
 }
-function collectSecuritySchemes(auths) {
+function collectSecuritySchemes(builder, auths, target) {
     const schemes = {};
     for (const auth of auths) {
         if (auth.type === "noAuth") {
+            continue;
+        }
+        if (!isSupportedAuth(auth)) {
+            builder.unsupportedAuth("service authentication", unsupportedAuthReason(auth), target);
             continue;
         }
         schemes[auth.id] = securityScheme(auth);
@@ -799,7 +846,15 @@ function authRequirements(builder, auth, target, context, allowNoAuth) {
                 if (allowNoAuth) {
                     continue;
                 }
-                builder.unsupportedAuth(context, "APIGen IR v1 does not support NoAuth operation overrides for secured services.", target);
+                builder.unsupportedAuth(context, "APIGen IR v2 does not support NoAuth operation overrides for secured services.", target);
+                continue;
+            }
+            if (ref.kind === "oauth2") {
+                builder.unsupportedAuth(context, "oauth2 authentication is not supported by APIGen v0.3.2.", target);
+                continue;
+            }
+            if (!isSupportedAuth(ref.auth)) {
+                builder.unsupportedAuth(context, unsupportedAuthReason(ref.auth), target);
                 continue;
             }
             requirement[ref.auth.id] = authScopes(ref);
@@ -809,6 +864,21 @@ function authRequirements(builder, auth, target, context, allowNoAuth) {
         }
     }
     return requirements.length > 0 ? requirements : undefined;
+}
+function isSupportedAuth(auth) {
+    if (auth.type === "http") {
+        return true;
+    }
+    if (auth.type === "apiKey") {
+        return auth.in === "header";
+    }
+    return false;
+}
+function unsupportedAuthReason(auth) {
+    if (auth.type === "apiKey" && auth.in !== "header") {
+        return `apiKey authentication in ${auth.in} is not supported by APIGen v0.3.2.`;
+    }
+    return `${auth.type} authentication is not supported by APIGen v0.3.2.`;
 }
 function authScopes(ref) {
     if (ref.kind === "oauth2") {

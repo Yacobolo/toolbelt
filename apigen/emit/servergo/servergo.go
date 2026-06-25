@@ -149,11 +149,14 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	if hasStrictOperations {
 		b.WriteString("\t\"context\"\n")
 		b.WriteString("\t\"fmt\"\n")
-		if hasRequestBodies {
+		if hasRequestBodies || hasFileBodies {
 			b.WriteString("\t\"io\"\n")
 		}
 		if hasFileBodies {
 			b.WriteString("\t\"mime\"\n")
+		}
+		if hasMultipartBodies {
+			b.WriteString("\t\"os\"\n")
 		}
 		b.WriteString("\t\"strings\"\n")
 	}
@@ -393,8 +396,16 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		b.WriteString("// GenFile represents a TypeSpec Http.File payload with transport metadata.\n")
 		b.WriteString("type GenFile struct {\n")
 		b.WriteString("\tContents []byte\n")
+		b.WriteString("\tReader io.ReadCloser\n")
 		b.WriteString("\tContentType string\n")
 		b.WriteString("\tFilename *string\n")
+		b.WriteString("\tSize *int64\n")
+		b.WriteString("}\n\n")
+		b.WriteString("func apigenContentLengthPointer(contentLength int64) *int64 {\n")
+		b.WriteString("\tif contentLength < 0 {\n")
+		b.WriteString("\t\treturn nil\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\treturn &contentLength\n")
 		b.WriteString("}\n\n")
 		b.WriteString("func writeAPIGenFileResponse(w http.ResponseWriter, file GenFile, defaultContentType string, statusCode int) error {\n")
 		b.WriteString("\tcontentType := file.ContentType\n")
@@ -408,6 +419,11 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		b.WriteString("\t\tw.Header().Set(\"Content-Disposition\", mime.FormatMediaType(\"attachment\", map[string]string{\"filename\": *file.Filename}))\n")
 		b.WriteString("\t}\n")
 		b.WriteString("\tw.WriteHeader(statusCode)\n")
+		b.WriteString("\tif file.Reader != nil {\n")
+		b.WriteString("\t\tdefer file.Reader.Close()\n")
+		b.WriteString("\t\t_, err := io.Copy(w, file.Reader)\n")
+		b.WriteString("\t\treturn err\n")
+		b.WriteString("\t}\n")
 		b.WriteString("\t_, err := w.Write(file.Contents)\n")
 		b.WriteString("\treturn err\n")
 		b.WriteString("}\n\n")
@@ -508,13 +524,17 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 			b.WriteString("\tFilename string\n")
 			b.WriteString("\tContentType string\n")
 			b.WriteString("\tRaw []byte\n")
+			b.WriteString("\tFile *os.File\n")
+			b.WriteString("\tTempPath string\n")
+			b.WriteString("\tSize *int64\n")
 			b.WriteString("}\n\n")
-			b.WriteString("func readAPIGenMultipartParts(r *http.Request) ([]apigenMultipartPart, error) {\n")
+			b.WriteString("func readAPIGenMultipartParts(r *http.Request, fileNames map[string]bool, fileIndexes map[int]bool) ([]apigenMultipartPart, error) {\n")
 			b.WriteString("\treader, err := r.MultipartReader()\n")
 			b.WriteString("\tif err != nil {\n")
 			b.WriteString("\t\treturn nil, fmt.Errorf(\"parse multipart body: %w\", err)\n")
 			b.WriteString("\t}\n")
 			b.WriteString("\tparts := []apigenMultipartPart{}\n")
+			b.WriteString("\tindex := 0\n")
 			b.WriteString("\tfor {\n")
 			b.WriteString("\t\tpart, err := reader.NextPart()\n")
 			b.WriteString("\t\tif err == io.EOF {\n")
@@ -523,16 +543,52 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 			b.WriteString("\t\tif err != nil {\n")
 			b.WriteString("\t\t\treturn nil, fmt.Errorf(\"read multipart part: %w\", err)\n")
 			b.WriteString("\t\t}\n")
-			b.WriteString("\t\traw, err := io.ReadAll(part)\n")
-			b.WriteString("\t\tif closeErr := part.Close(); err == nil && closeErr != nil {\n")
-			b.WriteString("\t\t\terr = closeErr\n")
+			b.WriteString("\t\tmultipartPart := apigenMultipartPart{Name: part.FormName(), Filename: part.FileName(), ContentType: part.Header.Get(\"Content-Type\")}\n")
+			b.WriteString("\t\tif fileNames[part.FormName()] || fileIndexes[index] {\n")
+			b.WriteString("\t\t\ttempFile, err := os.CreateTemp(\"\", \"apigen-multipart-*\")\n")
+			b.WriteString("\t\t\tif err != nil {\n")
+			b.WriteString("\t\t\t\t_ = part.Close()\n")
+			b.WriteString("\t\t\t\treturn nil, fmt.Errorf(\"create multipart temp file: %w\", err)\n")
+			b.WriteString("\t\t\t}\n")
+			b.WriteString("\t\t\tsize, copyErr := io.Copy(tempFile, part)\n")
+			b.WriteString("\t\t\tif closeErr := part.Close(); copyErr == nil && closeErr != nil {\n")
+			b.WriteString("\t\t\t\tcopyErr = closeErr\n")
+			b.WriteString("\t\t\t}\n")
+			b.WriteString("\t\t\tif copyErr == nil {\n")
+			b.WriteString("\t\t\t\t_, copyErr = tempFile.Seek(0, io.SeekStart)\n")
+			b.WriteString("\t\t\t}\n")
+			b.WriteString("\t\t\tif copyErr != nil {\n")
+			b.WriteString("\t\t\t\t_ = tempFile.Close()\n")
+			b.WriteString("\t\t\t\t_ = os.Remove(tempFile.Name())\n")
+			b.WriteString("\t\t\t\treturn nil, fmt.Errorf(\"read multipart part %s: %w\", part.FormName(), copyErr)\n")
+			b.WriteString("\t\t\t}\n")
+			b.WriteString("\t\t\tmultipartPart.File = tempFile\n")
+			b.WriteString("\t\t\tmultipartPart.TempPath = tempFile.Name()\n")
+			b.WriteString("\t\t\tmultipartPart.Size = &size\n")
+			b.WriteString("\t\t} else {\n")
+			b.WriteString("\t\t\traw, err := io.ReadAll(part)\n")
+			b.WriteString("\t\t\tif closeErr := part.Close(); err == nil && closeErr != nil {\n")
+			b.WriteString("\t\t\t\terr = closeErr\n")
+			b.WriteString("\t\t\t}\n")
+			b.WriteString("\t\t\tif err != nil {\n")
+			b.WriteString("\t\t\t\treturn nil, fmt.Errorf(\"read multipart part %s: %w\", part.FormName(), err)\n")
+			b.WriteString("\t\t\t}\n")
+			b.WriteString("\t\t\tmultipartPart.Raw = raw\n")
 			b.WriteString("\t\t}\n")
-			b.WriteString("\t\tif err != nil {\n")
-			b.WriteString("\t\t\treturn nil, fmt.Errorf(\"read multipart part %s: %w\", part.FormName(), err)\n")
-			b.WriteString("\t\t}\n")
-			b.WriteString("\t\tparts = append(parts, apigenMultipartPart{Name: part.FormName(), Filename: part.FileName(), ContentType: part.Header.Get(\"Content-Type\"), Raw: raw})\n")
+			b.WriteString("\t\tparts = append(parts, multipartPart)\n")
+			b.WriteString("\t\tindex++\n")
 			b.WriteString("\t}\n")
 			b.WriteString("\treturn parts, nil\n")
+			b.WriteString("}\n\n")
+			b.WriteString("func cleanupAPIGenMultipartParts(parts []apigenMultipartPart) {\n")
+			b.WriteString("\tfor _, part := range parts {\n")
+			b.WriteString("\t\tif part.File != nil {\n")
+			b.WriteString("\t\t\t_ = part.File.Close()\n")
+			b.WriteString("\t\t}\n")
+			b.WriteString("\t\tif part.TempPath != \"\" {\n")
+			b.WriteString("\t\t\t_ = os.Remove(part.TempPath)\n")
+			b.WriteString("\t\t}\n")
+			b.WriteString("\t}\n")
 			b.WriteString("}\n\n")
 			b.WriteString("func apigenMultipartPartsByName(parts []apigenMultipartPart, name string) []apigenMultipartPart {\n")
 			b.WriteString("\tmatched := []apigenMultipartPart{}\n")
@@ -560,7 +616,10 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 				b.WriteString("\t\tvalue := part.Filename\n")
 				b.WriteString("\t\tfilename = &value\n")
 				b.WriteString("\t}\n")
-				b.WriteString("\treturn GenFile{Contents: part.Raw, ContentType: contentType, Filename: filename}\n")
+				b.WriteString("\tif part.File != nil {\n")
+				b.WriteString("\t\treturn GenFile{Reader: part.File, ContentType: contentType, Filename: filename, Size: part.Size}\n")
+				b.WriteString("\t}\n")
+				b.WriteString("\treturn GenFile{Contents: part.Raw, ContentType: contentType, Filename: filename, Size: part.Size}\n")
 				b.WriteString("}\n\n")
 			}
 		}
@@ -693,17 +752,19 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 				b.WriteString("\t\treturn\n")
 				b.WriteString("\t}\n")
 				b.WriteString("\tbody = value\n")
-			case "binary", "file":
+			case "binary":
 				b.WriteString("\tvalue, err := decodeAPIGenBytesBody(r.Body, " + requiredBody + ")\n")
 				b.WriteString("\tif err != nil {\n")
 				b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
 				b.WriteString("\t\treturn\n")
 				b.WriteString("\t}\n")
-				if content.BodyKind == "file" {
-					b.WriteString("\tbody = GenFile{Contents: value, ContentType: r.Header.Get(\"Content-Type\")}\n")
-				} else {
-					b.WriteString("\tbody = value\n")
-				}
+				b.WriteString("\tbody = value\n")
+			case "file":
+				b.WriteString("\tif " + requiredBody + " && r.ContentLength == 0 {\n")
+				b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, \"request body must not be empty\")\n")
+				b.WriteString("\t\treturn\n")
+				b.WriteString("\t}\n")
+				b.WriteString("\tbody = GenFile{Reader: r.Body, ContentType: r.Header.Get(\"Content-Type\"), Size: apigenContentLengthPointer(r.ContentLength)}\n")
 			case "form_urlencoded":
 				b.WriteString("\tif err := decodeAPIGenFormBody(r, &body, " + requiredBody + requiredFieldArgs + "); err != nil {\n")
 				b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
@@ -711,11 +772,12 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 				b.WriteString("\t}\n")
 			case "multipart":
 				b.WriteString("\tif " + requiredBody + " || r.ContentLength != 0 {\n")
-				b.WriteString("\t\tparts, err := readAPIGenMultipartParts(r)\n")
+				b.WriteString("\t\tparts, err := readAPIGenMultipartParts(r, " + renderMultipartFileNameMap(content) + ", " + renderMultipartFileIndexMap(content) + ")\n")
 				b.WriteString("\t\tif err != nil {\n")
 				b.WriteString("\t\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
 				b.WriteString("\t\t\treturn\n")
 				b.WriteString("\t\t}\n")
+				b.WriteString("\t\tdefer cleanupAPIGenMultipartParts(parts)\n")
 				if err := emitMultipartDecode(&b, doc, name, content); err != nil {
 					return nil, err
 				}
@@ -889,6 +951,33 @@ func multipartPartTypeName(doc ir.Document, part ir.MultipartPart) (string, erro
 	default:
 		return "", fmt.Errorf("multipart part %q has unsupported body kind %q", part.Name, part.BodyKind)
 	}
+}
+
+func renderMultipartFileNameMap(content ir.BodyContent) string {
+	values := make([]string, 0)
+	for _, part := range content.Parts {
+		if part.BodyKind == "file" && part.WireName != "" {
+			values = append(values, strconv.Quote(part.WireName)+": true")
+		}
+	}
+	if len(values) == 0 {
+		return "map[string]bool{}"
+	}
+	sort.Strings(values)
+	return "map[string]bool{" + strings.Join(values, ", ") + "}"
+}
+
+func renderMultipartFileIndexMap(content ir.BodyContent) string {
+	values := make([]string, 0)
+	for idx, part := range content.Parts {
+		if part.BodyKind == "file" && part.WireName == "" {
+			values = append(values, strconv.Itoa(idx)+": true")
+		}
+	}
+	if len(values) == 0 {
+		return "map[int]bool{}"
+	}
+	return "map[int]bool{" + strings.Join(values, ", ") + "}"
 }
 
 func emitOperationResponse(b *strings.Builder, doc ir.Document, operationName string, response ir.Response) {

@@ -584,7 +584,8 @@ func TestEmit_GeneratesMultipartBodyDecoding(t *testing.T) {
 	require.Contains(t, content, "\tChecksums []string")
 	require.Contains(t, content, "\tPart5 []byte")
 	require.Contains(t, content, "type GenUploadArtifactBody = GenUploadArtifactMultipartBody")
-	require.Contains(t, content, "parts, err := readAPIGenMultipartParts(r)")
+	require.Contains(t, content, `parts, err := readAPIGenMultipartParts(r, map[string]bool{"artifact": true}, map[int]bool{})`)
+	require.Contains(t, content, "defer cleanupAPIGenMultipartParts(parts)")
 	require.Contains(t, content, "metadataParts := apigenMultipartPartsByName(parts, \"metadata\")")
 	require.Contains(t, content, "if !metadataOK {")
 	require.Contains(t, content, "json.Unmarshal(metadataPart.Raw, &metadataValue)")
@@ -592,7 +593,9 @@ func TestEmit_GeneratesMultipartBodyDecoding(t *testing.T) {
 	require.Contains(t, content, "artifactValue := genFileFromMultipartPart(artifactPart, \"application/octet-stream\")")
 	require.Contains(t, content, "for _, checksumsPart := range checksumsParts {")
 	require.Contains(t, content, "part5Parts := apigenMultipartPartsByIndex(parts, 4)")
-	require.Contains(t, content, "func readAPIGenMultipartParts(r *http.Request) ([]apigenMultipartPart, error) {")
+	require.Contains(t, content, "func readAPIGenMultipartParts(r *http.Request, fileNames map[string]bool, fileIndexes map[int]bool) ([]apigenMultipartPart, error) {")
+	require.Contains(t, content, "tempFile, err := os.CreateTemp(\"\", \"apigen-multipart-*\")")
+	require.Contains(t, content, "func cleanupAPIGenMultipartParts(parts []apigenMultipartPart) {")
 
 	assertGeneratedServerCompiles(t, b, `package gen
 
@@ -641,13 +644,17 @@ func TestEmit_GeneratesGenFileRequestAndResponse(t *testing.T) {
 	content := string(b)
 	require.Contains(t, content, "type GenFile struct {")
 	require.Contains(t, content, "\tContents []byte")
+	require.Contains(t, content, "\tReader io.ReadCloser")
 	require.Contains(t, content, "\tContentType string")
 	require.Contains(t, content, "\tFilename *string")
+	require.Contains(t, content, "\tSize *int64")
 	require.Contains(t, content, "type GenPutArtifactBody = GenFile")
-	require.Contains(t, content, `body = GenFile{Contents: value, ContentType: r.Header.Get("Content-Type")}`)
+	require.Contains(t, content, `body = GenFile{Reader: r.Body, ContentType: r.Header.Get("Content-Type"), Size: apigenContentLengthPointer(r.ContentLength)}`)
 	require.Contains(t, content, "type GenPutArtifact200FileResponse struct {")
 	require.Contains(t, content, "Body GenFile")
 	require.Contains(t, content, "writeAPIGenFileResponse(w, response.Body, \"application/octet-stream\", 200)")
+	require.Contains(t, content, "if file.Reader != nil {")
+	require.Contains(t, content, "_, err := io.Copy(w, file.Reader)")
 
 	assertGeneratedServerCompiles(t, b, `package gen
 

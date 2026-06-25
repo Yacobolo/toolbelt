@@ -3,8 +3,10 @@ package cobra
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -183,6 +185,9 @@ func newGeneratedLeafCommand(spec CommandSpec, client *Client, opts RuntimeOptio
 		if spec.RequestBody.InputMode == "binary" || spec.RequestBody.InputMode == "file" {
 			cmd.Flags().String("file", "", "Binary/file input path (- for stdin)")
 		}
+		if spec.RequestBody.InputMode == "multipart" {
+			cmd.Flags().StringArray("part", nil, "Multipart part input name=value, name=@file, or name=-")
+		}
 		if spec.RequestBody.InputMode == "flags" || spec.RequestBody.InputMode == "flags_or_json" {
 			for _, field := range spec.RequestBody.Fields {
 				if _, ok := positional["body:"+field.Name]; ok {
@@ -336,6 +341,8 @@ func buildRequestBody(cmd *spcobra.Command, spec CommandSpec, argValues map[stri
 			return nil, nil
 		}
 		return readRawJSONInput(jsonInput)
+	case "multipart":
+		return buildMultipartBody(cmd, requestBody)
 	case "flags", "flags_or_json":
 		if requestBody.InputMode == "flags_or_json" {
 			jsonInput, _ := cmd.Flags().GetString("json")
@@ -384,6 +391,146 @@ func buildRequestBody(cmd *spcobra.Command, spec CommandSpec, argValues map[stri
 	default:
 		return nil, fmt.Errorf("unsupported request body input mode %q", requestBody.InputMode)
 	}
+}
+
+func buildMultipartBody(cmd *spcobra.Command, requestBody *RequestBodySpec) (any, error) {
+	rawParts, _ := cmd.Flags().GetStringArray("part")
+	byName := make(map[string]MultipartPartSpec, len(requestBody.Parts))
+	seen := make(map[string]int, len(requestBody.Parts))
+	collected := make(map[string][]MultipartPart, len(requestBody.Parts))
+	for _, spec := range requestBody.Parts {
+		byName[spec.Name] = spec
+	}
+
+	for _, raw := range rawParts {
+		name, value, ok := strings.Cut(raw, "=")
+		if !ok || strings.TrimSpace(name) == "" {
+			return nil, fmt.Errorf("multipart parts must use name=value, name=@file, or name=-")
+		}
+		name = strings.TrimSpace(name)
+		spec, ok := byName[name]
+		if !ok {
+			return nil, fmt.Errorf("unknown multipart part %q", name)
+		}
+		seen[name]++
+		if seen[name] > 1 && !spec.Repeated {
+			return nil, fmt.Errorf("duplicate multipart part %q", name)
+		}
+		part, err := parseMultipartPartInput(spec, value)
+		if err != nil {
+			return nil, err
+		}
+		collected[name] = append(collected[name], part)
+	}
+
+	hasRequiredPart := false
+	for _, spec := range requestBody.Parts {
+		if spec.Required {
+			hasRequiredPart = true
+		}
+		if spec.Required && len(collected[spec.Name]) == 0 {
+			return nil, fmt.Errorf("required multipart part %q is missing", spec.Name)
+		}
+	}
+	if requestBody.Required && len(rawParts) == 0 && !hasRequiredPart {
+		return nil, fmt.Errorf("request body is required; use --part")
+	}
+
+	body := MultipartBody{ContentType: requestBody.ContentType}
+	for _, spec := range requestBody.Parts {
+		body.Parts = append(body.Parts, collected[spec.Name]...)
+	}
+	return body, nil
+}
+
+func parseMultipartPartInput(spec MultipartPartSpec, value string) (MultipartPart, error) {
+	data, filename, err := readMultipartPartInput(spec, value)
+	if err != nil {
+		return MultipartPart{}, err
+	}
+	return MultipartPart{
+		Name:        multipartPartWireName(spec),
+		ContentType: defaultGeneratedContentType(spec.ContentType),
+		BodyKind:    spec.BodyKind,
+		Filename:    filename,
+		Data:        data,
+	}, nil
+}
+
+func readMultipartPartInput(spec MultipartPartSpec, value string) ([]byte, *string, error) {
+	switch spec.BodyKind {
+	case "json", "form_urlencoded":
+		data, filename, err := readMultipartTextOrFile(value)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read multipart part %q: %w", spec.Name, err)
+		}
+		if spec.BodyKind == "json" && !json.Valid(data) {
+			return nil, nil, fmt.Errorf("multipart part %q must be valid JSON", spec.Name)
+		}
+		return data, filename, nil
+	case "text":
+		data, filename, err := readMultipartTextOrFile(value)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read multipart part %q: %w", spec.Name, err)
+		}
+		return data, filename, nil
+	case "binary", "file":
+		if value != "-" && !strings.HasPrefix(value, "@") {
+			return nil, nil, fmt.Errorf("multipart part %q requires @file or - input", spec.Name)
+		}
+		data, filename, err := readMultipartFileOrStdin(value)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read multipart part %q: %w", spec.Name, err)
+		}
+		if spec.BodyKind == "binary" {
+			filename = nil
+		}
+		return data, filename, nil
+	default:
+		return nil, nil, fmt.Errorf("multipart part %q has unsupported body kind %q", spec.Name, spec.BodyKind)
+	}
+}
+
+func readMultipartTextOrFile(value string) ([]byte, *string, error) {
+	if value == "-" {
+		data, err := io.ReadAll(os.Stdin)
+		return data, nil, err
+	}
+	if strings.HasPrefix(value, "@") {
+		return readMultipartFileOrStdin(value)
+	}
+	return []byte(value), nil, nil
+}
+
+func readMultipartFileOrStdin(value string) ([]byte, *string, error) {
+	if value == "-" || value == "@-" {
+		data, err := io.ReadAll(os.Stdin)
+		return data, nil, err
+	}
+	path := strings.TrimPrefix(value, "@")
+	if strings.TrimSpace(path) == "" {
+		return nil, nil, fmt.Errorf("file path is required")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	name := filepath.Base(path)
+	return data, &name, nil
+}
+
+func multipartPartWireName(spec MultipartPartSpec) string {
+	if strings.TrimSpace(spec.WireName) != "" {
+		return spec.WireName
+	}
+	return spec.Name
+}
+
+func defaultGeneratedContentType(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "application/json"
+	}
+	return value
 }
 
 func requestContent(requestBody *RequestBodySpec) (string, string) {

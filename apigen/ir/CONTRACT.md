@@ -68,6 +68,8 @@ Schema-bearing content uses `schema`. Multiple response alternatives may use `an
 
 JSON `bytes` values are represented as `type: string`, `format: byte`. Raw binary/file payloads are represented as `type: string`, `format: binary`.
 
+Generated Go treats raw `bytes` as `[]byte`. TypeSpec `Http.File` uses generated `GenFile`, which supports both simple `Contents []byte` and streaming `Reader io.ReadCloser` payloads plus `ContentType`, optional `Filename`, and optional `Size` metadata.
+
 ## Multipart Parts
 
 Each multipart part defines:
@@ -83,6 +85,13 @@ Each multipart part defines:
 - optional `schema`
 
 Named `multipart/form-data` parts use `wire_name`. Unnamed `multipart/mixed` tuple parts are positional and keep stable generated names such as `part1`, `part2`. `HttpPart<T[]>` is a single JSON-array part; `HttpPart<T>[]` is repeated parts.
+
+Generated CLI metadata includes ordered multipart part specs so runtime/cobra can accept repeated `--part name=value`, `--part name=@file`, or `--part name=-` flags. For `multipart/mixed`, tuple parts are addressed by generated names such as `part1` and `part2` and emitted in IR order.
+
+Canonical OpenAPI emits ordinary object schemas and `encoding` for `multipart/form-data`. For `multipart/mixed`, OpenAPI 3.0 receives best-effort schema output plus APIGen vendor metadata:
+
+- `x-apigen-multipart-kind: "mixed"`
+- ordered `x-apigen-multipart-parts`
 
 ## Responses
 
@@ -115,7 +124,7 @@ Response headers are unique case-insensitively per response.
 
 `SchemaRef.ref` values are normalized against component-style paths and resolved against this registry.
 
-JSON and urlencoded form object bodies intended for generated Go output should resolve to named schema entries in this registry. Text bodies generate `string`; raw binary `bytes` bodies generate `[]byte`; TypeSpec `Http.File` bodies generate `GenFile` with byte contents, content type, and optional filename metadata. Generators reject anonymous object bodies when they cannot be mapped to a stable generated Go type.
+JSON and urlencoded form object bodies intended for generated Go output should resolve to named schema entries in this registry. Text bodies generate `string`; raw binary `bytes` bodies generate `[]byte`; TypeSpec `Http.File` bodies generate streaming-capable `GenFile` with byte contents or a reader, content type, optional filename, and optional size metadata. Generators reject anonymous object bodies when they cannot be mapped to a stable generated Go type.
 
 ## Contract Roles
 

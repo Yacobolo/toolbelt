@@ -9,7 +9,7 @@
 - Generated non-JSON request and response types no longer use `JSONBody` or `JSONResponse` names.
 - Same-status response variants are represented as one IR response with multiple ordered contents.
 - Multi-content generated responses use media-specific concrete names such as `ApplicationJSONResponse` and `ApplicationOctetStreamResponse`.
-- Raw `bytes` bodies stay `[]byte`; TypeSpec `Http.File` bodies now generate `GenFile` with contents, content type, and optional filename metadata.
+- Raw `bytes` bodies stay `[]byte`; TypeSpec `Http.File` bodies now generate `GenFile` with `Contents []byte`, optional streaming `Reader io.ReadCloser`, content type, optional filename, and optional size metadata.
 - Multipart generated body fields now distinguish required, optional, repeated, named form-data, and ordered mixed tuple parts.
 - `GenericRequest` inference is removed; TypeSpec contracts must name the schema they want generated.
 
@@ -29,11 +29,14 @@ APIGen now follows resolved `@typespec/http` semantics for:
 - `HttpPart<T>[]` repeated multipart parts
 - `HttpPart<T[]>` single JSON-array multipart parts
 - `multipart/mixed` tuple parts
+- generated CLI multipart input with repeated `--part name=value`, `--part name=@file`, or `--part name=-`
 - standard response helpers such as `Response<Status>`, `Body<T>`, `OkResponse`, `CreatedResponse`, and `NoContentResponse`
 - aliased response unions
 - namespace/interface route containers
 
 Vendor extensions remain available for application-specific metadata, but standard HTTP wire contracts should use TypeSpec HTTP constructs instead of custom raw-body extensions.
+
+OpenAPI output remains valid OpenAPI 3.0. `multipart/form-data` emits object schemas plus encoding metadata. `multipart/mixed` emits a best-effort schema plus APIGen vendor metadata `x-apigen-multipart-kind: "mixed"` and ordered `x-apigen-multipart-parts`.
 
 ## Migration
 
@@ -84,10 +87,18 @@ Generated Go migration:
 - Keep JSON response constructors named `Gen<Operation><Status>JSONResponse`.
 - Use `Gen<Operation><Status>TextResponse`, `BinaryResponse`, or `FileResponse` for non-JSON responses.
 - For multi-content statuses, use media-specific response constructors such as `GenGetArtifact200ApplicationJSONResponse` or `GenGetArtifact200ApplicationOctetStreamResponse`.
-- Multipart request handlers receive `Gen<Operation>Body` aliased to a generated `Gen<Operation>MultipartBody` struct. Required parts are concrete fields; optional single parts are pointers; repeated parts are slices. JSON/form parts decode to generated schema types, text parts decode to `string`, raw bytes decode to `[]byte`, and `Http.File` parts decode to `GenFile`.
-- `GenFile` responses write the authored/default content type, honor runtime `GenFile.ContentType` when present, and emit `Content-Disposition` when `Filename` is set.
-- Generated CLI remains failure-closed for multipart request bodies unless an operation explicitly opts into a custom override.
+- Multipart request handlers receive `Gen<Operation>Body` aliased to a generated `Gen<Operation>MultipartBody` struct. Required parts are concrete fields; optional single parts are pointers; repeated parts are slices. JSON/form parts decode to generated schema types, text parts decode to `string`, raw bytes decode to `[]byte`, and `Http.File` parts decode to streaming `GenFile`.
+- Raw `Http.File` request bodies pass through as `GenFile.Reader`; multipart `Http.File` parts spool to temporary files and are removed after the strict handler bridge returns.
+- `GenFile` responses write the authored/default content type, honor runtime `GenFile.ContentType` when present, emit `Content-Disposition` when `Filename` is set, and stream from `Reader` when present.
+- Generated CLI supports multipart request bodies with repeated `--part` flags. JSON/form parts accept raw JSON, `@file`, or stdin; text parts accept raw text, `@file`, or stdin; binary/file parts require `@file` or stdin. Repeated parts may repeat the same name and preserve user order within that part.
 - Replace `GenericRequest` wrappers with the concrete TypeSpec model name.
+
+Failure-closed TypeSpec constructs:
+
+- Cookie parameters are rejected until APIGen supports them consistently across IR, OpenAPI, generated server structs, and generated CLI.
+- Status ranges such as `*` are rejected; concrete numeric status codes and numeric status-code unions are supported.
+- OAuth/OpenID auth and non-header API-key auth are rejected until APIGen can represent them honestly in all generated surfaces.
+- Shared routes/overloads are rejected when auth, APIGen CLI/authz/manual metadata, operation extensions, parameters, or request bodies disagree.
 
 ## Preferred TypeSpec
 

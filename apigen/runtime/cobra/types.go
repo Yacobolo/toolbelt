@@ -41,12 +41,41 @@ type Field struct {
 
 // RequestBodySpec describes generated request body input behavior.
 type RequestBodySpec struct {
-	Required    bool    `json:"required,omitempty"`
-	ContentType string  `json:"content_type,omitempty"`
-	BodyKind    string  `json:"body_kind,omitempty"`
-	SchemaType  string  `json:"schema_type,omitempty"`
-	InputMode   string  `json:"input_mode,omitempty"`
-	Fields      []Field `json:"fields,omitempty"`
+	Required    bool                `json:"required,omitempty"`
+	ContentType string              `json:"content_type,omitempty"`
+	BodyKind    string              `json:"body_kind,omitempty"`
+	SchemaType  string              `json:"schema_type,omitempty"`
+	InputMode   string              `json:"input_mode,omitempty"`
+	Fields      []Field             `json:"fields,omitempty"`
+	Parts       []MultipartPartSpec `json:"parts,omitempty"`
+}
+
+// MultipartPartSpec describes one generated multipart CLI input part.
+type MultipartPartSpec struct {
+	Name        string `json:"name"`
+	WireName    string `json:"wire_name,omitempty"`
+	PartKind    string `json:"part_kind,omitempty"`
+	Repeated    bool   `json:"repeated,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+	BodyKind    string `json:"body_kind,omitempty"`
+	Filename    bool   `json:"filename,omitempty"`
+	SchemaType  string `json:"schema_type,omitempty"`
+}
+
+// MultipartBody is the parsed request body passed from generated commands to Client.Do.
+type MultipartBody struct {
+	ContentType string
+	Parts       []MultipartPart
+}
+
+// MultipartPart is one parsed outgoing multipart part.
+type MultipartPart struct {
+	Name        string
+	ContentType string
+	BodyKind    string
+	Filename    *string
+	Data        []byte
 }
 
 // ArgBinding binds a positional argument to a request source field.

@@ -539,7 +539,7 @@ func validateEndpointCLI(doc Document, endpoint Endpoint, cli *CLI) error {
 	}
 
 	switch cli.BodyInput {
-	case "none", "json", "flags", "flags_or_json", "text", "binary", "file":
+	case "none", "json", "flags", "flags_or_json", "text", "binary", "file", "multipart":
 	default:
 		return fmt.Errorf("endpoint %q cli.body_input has unsupported value %q", endpoint.OperationID, cli.BodyInput)
 	}
@@ -551,17 +551,12 @@ func validateEndpointCLI(doc Document, endpoint Endpoint, cli *CLI) error {
 	}
 
 	bodySchema, hasBodySchema := ResolveRequestBodySchema(doc, endpoint)
-	bodyContent, hasBodyContent := PrimaryRequestBodyContent(endpoint)
 	if endpoint.RequestBody == nil && cli.BodyInput != "none" {
 		return fmt.Errorf("endpoint %q cli.body_input=%q requires request_body", endpoint.OperationID, cli.BodyInput)
 	}
 	if endpoint.RequestBody != nil && (cli.BodyInput == "flags" || cli.BodyInput == "flags_or_json") && (!hasBodySchema || bodySchema.Type != "object") {
 		return fmt.Errorf("endpoint %q cli.body_input=%q requires an object request_body schema", endpoint.OperationID, cli.BodyInput)
 	}
-	if hasBodyContent && bodyContent.BodyKind == "multipart" && cli.BodyInput != "none" {
-		return fmt.Errorf("endpoint %q multipart request bodies are not supported by generated CLI", endpoint.OperationID)
-	}
-
 	parametersByLocation := map[string]map[string]struct{}{
 		"path":  {},
 		"query": {},
@@ -710,6 +705,8 @@ func normalizeEndpointCLI(doc Document, endpoint Endpoint) (*CLI, error) {
 			cli.BodyInput = "binary"
 		case content.BodyKind == "file":
 			cli.BodyInput = "file"
+		case content.BodyKind == "multipart":
+			cli.BodyInput = "multipart"
 		default:
 			cli.BodyInput = "json"
 		}

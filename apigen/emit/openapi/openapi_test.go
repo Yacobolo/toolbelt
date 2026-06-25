@@ -172,6 +172,48 @@ func TestEmitYAML_EmitsMultipartMetadata(t *testing.T) {
 	require.Equal(t, "application/octet-stream", media.Encoding["attachments"].ContentType)
 }
 
+func TestEmitYAML_EmitsMultipartMixedVendorMetadata(t *testing.T) {
+	t.Helper()
+
+	docIR := ir.Document{
+		SchemaVersion: "v2",
+		Info:          ir.Info{Title: "test", Version: "1.0.0"},
+		Endpoints: []ir.Endpoint{{
+			Method:      "post",
+			Path:        "/artifact",
+			OperationID: "uploadArtifact",
+			RequestBody: &ir.RequestBody{Required: true, Contents: []ir.BodyContent{{
+				ContentType: "multipart/mixed",
+				BodyKind:    "multipart",
+				Parts: []ir.MultipartPart{
+					{Name: "part1", PartKind: "tuple", Required: true, ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Type: "object"}},
+					{Name: "part2", PartKind: "tuple", Required: true, ContentType: "application/octet-stream", BodyKind: "file", Filename: true, Schema: &ir.SchemaRef{Type: "string", Format: "binary"}},
+				},
+			}}},
+			Responses: []ir.Response{{StatusCode: 204, Description: "ok"}},
+		}},
+	}
+
+	b, err := EmitYAML(docIR, Options{})
+	require.NoError(t, err)
+	var root yaml.Node
+	require.NoError(t, yaml.Unmarshal(b, &root))
+
+	media := lookupYAMLMappingNode(&root, "paths", "/artifact", "post", "requestBody", "content", "multipart/mixed")
+	require.NotNil(t, media)
+	require.Equal(t, "mixed", yamlScalarValue(lookupYAMLMappingNode(media, "x-apigen-multipart-kind")))
+	parts := lookupYAMLMappingNode(media, "x-apigen-multipart-parts")
+	require.NotNil(t, parts)
+	require.Equal(t, yaml.SequenceNode, parts.Kind)
+	require.Len(t, parts.Content, 2)
+	require.Equal(t, "part1", yamlScalarValue(lookupYAMLMappingNode(parts.Content[0], "name")))
+	require.Equal(t, "application/json", yamlScalarValue(lookupYAMLMappingNode(parts.Content[0], "content_type")))
+	require.Equal(t, "json", yamlScalarValue(lookupYAMLMappingNode(parts.Content[0], "body_kind")))
+	require.Equal(t, "part2", yamlScalarValue(lookupYAMLMappingNode(parts.Content[1], "name")))
+	require.Equal(t, "application/octet-stream", yamlScalarValue(lookupYAMLMappingNode(parts.Content[1], "content_type")))
+	require.Equal(t, "file", yamlScalarValue(lookupYAMLMappingNode(parts.Content[1], "body_kind")))
+}
+
 func TestEmitYAML_UsesAPIBasePathForVisibleRoutes(t *testing.T) {
 	t.Helper()
 
@@ -197,6 +239,13 @@ func TestEmitYAML_UsesAPIBasePathForVisibleRoutes(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, doc.Paths.Value("/v1/items/{id}"))
 	require.Nil(t, doc.Paths.Value("/items/{id}"))
+}
+
+func yamlScalarValue(node *yaml.Node) string {
+	if node == nil {
+		return ""
+	}
+	return node.Value
 }
 
 func lookupYAMLMappingNode(root *yaml.Node, path ...string) *yaml.Node {

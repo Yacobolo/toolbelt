@@ -300,6 +300,10 @@ func mediaTypeNode(content ir.BodyContent, examples *exampleResolver) *yaml.Node
 		if encoding := multipartEncodingNode(content.Parts); encoding != nil {
 			appendKeyValue(mediaType, "encoding", encoding)
 		}
+		if strings.EqualFold(content.ContentType, "multipart/mixed") {
+			appendKeyValue(mediaType, "x-apigen-multipart-kind", stringNode("mixed"))
+			appendKeyValue(mediaType, "x-apigen-multipart-parts", multipartPartsExtensionNode(content.Parts))
+		}
 	} else if len(content.AnyOf) > 0 {
 		schema := mappingNode()
 		anyOf := sequenceNode()
@@ -315,6 +319,37 @@ func mediaTypeNode(content ir.BodyContent, examples *exampleResolver) *yaml.Node
 		appendKeyValue(mediaType, "example", anyToNode(example))
 	}
 	return mediaType
+}
+
+func multipartPartsExtensionNode(parts []ir.MultipartPart) *yaml.Node {
+	node := sequenceNode()
+	for _, part := range parts {
+		partNode := mappingNode()
+		appendKeyValue(partNode, "name", stringNode(part.Name))
+		if part.WireName != "" {
+			appendKeyValue(partNode, "wire_name", stringNode(part.WireName))
+		}
+		if part.PartKind != "" {
+			appendKeyValue(partNode, "part_kind", stringNode(part.PartKind))
+		}
+		if part.Repeated {
+			appendKeyValue(partNode, "repeated", boolNode(part.Repeated))
+		}
+		if part.Required {
+			appendKeyValue(partNode, "required", boolNode(part.Required))
+		}
+		if part.ContentType != "" {
+			appendKeyValue(partNode, "content_type", stringNode(part.ContentType))
+		}
+		if part.BodyKind != "" {
+			appendKeyValue(partNode, "body_kind", stringNode(part.BodyKind))
+		}
+		if part.Filename {
+			appendKeyValue(partNode, "filename", boolNode(part.Filename))
+		}
+		node.Content = append(node.Content, partNode)
+	}
+	return node
 }
 
 func multipartSchemaNode(parts []ir.MultipartPart) *yaml.Node {
