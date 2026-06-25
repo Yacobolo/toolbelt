@@ -417,7 +417,7 @@ func (target targetSpec) usesLegacyCLIOut() bool {
 
 func validateTargetSpec(target targetSpec) error {
 	if target.usesLegacyGoOut() || target.usesLegacyCLIOut() {
-		return fmt.Errorf("target %q uses legacy flat manifest fields that are not supported in apigen 0.2.0", target.Name)
+		return fmt.Errorf("target %q uses legacy flat manifest fields that are not supported", target.Name)
 	}
 	if strings.TrimSpace(target.TypeSpecDir) == "" {
 		return fmt.Errorf("target %q typespec_dir is required", target.Name)
@@ -466,6 +466,11 @@ func compileTypeSpec(typeSpecDir string, irOutPath string, openAPIOutPath string
 	if err := ensureTypeSpecToolchain(pkg); err != nil {
 		return err
 	}
+	stagedTypeSpecDir, cleanup, err := stageTypeSpecProject(absTypeSpecDir, pkg)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	tempIRPath, err := tempOutputPath(absIROutPath)
 	if err != nil {
@@ -483,7 +488,7 @@ func compileTypeSpec(typeSpecDir string, irOutPath string, openAPIOutPath string
 		"node",
 		tsp,
 		"compile",
-		absTypeSpecDir,
+		stagedTypeSpecDir,
 		"--import",
 		pkg.Dir,
 		"--emit",
@@ -514,6 +519,99 @@ func compileTypeSpec(typeSpecDir string, irOutPath string, openAPIOutPath string
 	}
 	if err := replaceFile(tempOpenAPIPath, absOpenAPIOutPath); err != nil {
 		return err
+	}
+	return nil
+}
+
+func stageTypeSpecProject(typeSpecDir string, pkg typeSpecPackage) (string, func(), error) {
+	info, err := os.Stat(typeSpecDir)
+	if err != nil {
+		return "", nil, fmt.Errorf("stat typespec dir: %w", err)
+	}
+	if !info.IsDir() {
+		return "", nil, fmt.Errorf("typespec dir %s is not a directory", typeSpecDir)
+	}
+	tempDir, err := os.MkdirTemp("", "apigen-typespec-project-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("create staged typespec project: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(tempDir) }
+	stagedDir := filepath.Join(tempDir, "project")
+	if err := copyTypeSpecProject(typeSpecDir, stagedDir); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	if err := linkTypeSpecPackage(stagedDir, filepath.Join("@typespec", "http"), filepath.Join(pkg.Dir, "node_modules", "@typespec", "http")); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	if err := linkTypeSpecPackage(stagedDir, filepath.Join("@typespec", "openapi"), filepath.Join(pkg.Dir, "node_modules", "@typespec", "openapi")); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	if err := linkTypeSpecPackage(stagedDir, filepath.Join("@yacobolo", "apigen"), pkg.Dir); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return stagedDir, cleanup, nil
+}
+
+func copyTypeSpecProject(src string, dst string) error {
+	return filepath.WalkDir(src, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return fmt.Errorf("resolve staged typespec path: %w", err)
+		}
+		if rel != "." && entry.IsDir() && entry.Name() == "node_modules" {
+			return filepath.SkipDir
+		}
+		target := filepath.Join(dst, rel)
+		if entry.IsDir() {
+			if err := os.MkdirAll(target, 0o750); err != nil {
+				return fmt.Errorf("create staged typespec directory: %w", err)
+			}
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			linkTarget, err := os.Readlink(path)
+			if err != nil {
+				return fmt.Errorf("read staged typespec symlink: %w", err)
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+				return fmt.Errorf("create staged typespec symlink directory: %w", err)
+			}
+			if err := os.Symlink(linkTarget, target); err != nil {
+				return fmt.Errorf("create staged typespec symlink: %w", err)
+			}
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read staged typespec file: %w", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+			return fmt.Errorf("create staged typespec file directory: %w", err)
+		}
+		if err := os.WriteFile(target, content, 0o600); err != nil {
+			return fmt.Errorf("write staged typespec file: %w", err)
+		}
+		return nil
+	})
+}
+
+func linkTypeSpecPackage(projectDir string, modulePath string, packageDir string) error {
+	if _, err := os.Stat(packageDir); err != nil {
+		return fmt.Errorf("stat bundled typespec package %s: %w", modulePath, err)
+	}
+	target := filepath.Join(projectDir, "node_modules", modulePath)
+	if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+		return fmt.Errorf("create staged node_modules for %s: %w", modulePath, err)
+	}
+	if err := os.Symlink(packageDir, target); err != nil {
+		return fmt.Errorf("link staged typespec package %s: %w", modulePath, err)
 	}
 	return nil
 }

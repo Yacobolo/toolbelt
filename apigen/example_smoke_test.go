@@ -16,6 +16,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCheckedInExampleBuilds(t *testing.T) {
+	t.Helper()
+
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+
+	exampleRoot := filepath.Join(moduleRootFromWorkingDir(t, cwd), "example")
+	runCommand(t, exampleRoot, "go", "test", "./...")
+}
+
 func TestExample_TypeSpecToGeneratedBuildAndRun(t *testing.T) {
 	t.Helper()
 

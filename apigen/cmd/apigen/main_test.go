@@ -191,6 +191,46 @@ func TestCompileTypeSpec_GeneratesIRAndOpenAPI(t *testing.T) {
 	require.FileExists(t, openAPIPath)
 }
 
+func TestCompileTypeSpec_SupportsConventionalPackageImports(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	setupManagedTypeSpecCache(t)
+	typeSpecDir := filepath.Join(dir, "typespec")
+	require.NoError(t, os.MkdirAll(typeSpecDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(typeSpecDir, "main.tsp"), []byte(`import "@typespec/http";
+import "@typespec/openapi";
+import "@yacobolo/apigen";
+
+using Http;
+using TypeSpec.OpenAPI;
+
+@service(#{ title: "Conventional Import API" })
+@info(#{ version: "1.0.0" })
+namespace ConventionalImportAPI;
+
+model Widget {
+  id: string;
+}
+
+@route("/widgets")
+@get
+@apigen.cli(#{ command: #["widgets", "list"] })
+op listWidgets(): Widget;
+`), 0o644))
+	irPath := filepath.Join(dir, "json-ir.json")
+	openAPIPath := filepath.Join(dir, "openapi.yaml")
+
+	require.NoError(t, compileTypeSpec(typeSpecDir, irPath, openAPIPath))
+
+	doc, err := loadDocument(irPath)
+	require.NoError(t, err)
+	require.Equal(t, "Conventional Import API", doc.Info.Title)
+	require.Len(t, doc.Endpoints, 1)
+	require.Equal(t, []string{"widgets", "list"}, doc.Endpoints[0].CLI.Command)
+	require.FileExists(t, openAPIPath)
+}
+
 func TestCompileTypeSpec_PreservesOutputsWhenToolchainUnavailable(t *testing.T) {
 	t.Helper()
 
@@ -326,6 +366,7 @@ func TestResolveCommandConfig_GroupedManifestRejectsLegacyFields(t *testing.T) {
 	_, err := resolveCommandConfig("all", manifestPath, "example", commandConfig{})
 	require.Error(t, err)
 	require.ErrorContains(t, err, "legacy flat manifest fields")
+	require.NotContains(t, err.Error(), "0.2.0")
 }
 
 func TestResolveCommandConfig_GroupedManifestRejectsStringCLIOut(t *testing.T) {
