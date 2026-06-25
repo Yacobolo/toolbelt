@@ -1,5 +1,5 @@
-import { emitFile, getAllTags, getDoc, getService, getSummary, isArrayModelType, isRecordModelType, walkPropertiesInherited, } from "@typespec/compiler";
-import { getAllHttpServices, getServers, resolveAuthentication, } from "@typespec/http";
+import { emitFile, getAllTags, getDoc, getOverloadedOperation, getOverloads, getService, getSummary, isArrayModelType, isRecordModelType, walkPropertiesInherited, } from "@typespec/compiler";
+import { getAllHttpServices, getServers, isOverloadSameEndpoint, isSharedRoute, resolveAuthentication, } from "@typespec/http";
 import { getExtensions, getOperationId, getTagsMetadata, resolveInfo, resolveOperationId } from "@typespec/openapi";
 import { getAuthz, getCLI, getResponseShape, isManual } from "./decorators.js";
 import { reportDiagnostic } from "./lib.js";
@@ -81,8 +81,17 @@ class IRBuilder {
     unsupportedAuth(context, reason, target) {
         this.report("unsupported-auth", { context, reason }, target);
     }
+    unsupportedSharedRoute(operation, reason) {
+        this.report("unsupported-shared-route", { reason }, operation);
+    }
+    unsupportedCookie(target) {
+        this.report("unsupported-cookie", {}, target);
+    }
     unsupportedResponseStatus(response) {
         this.report("unsupported-response-status", { status: JSON.stringify(response.statusCodes), operation: response.type.kind }, response.type);
+    }
+    unsupportedResponseContent(response, status, contentType) {
+        this.report("unsupported-response-content", { operation: response.type.kind, status: String(status), contentType }, response.type);
     }
     reservedExtension(key, target) {
         this.report("reserved-extension", { key }, target);
@@ -222,10 +231,10 @@ function buildDocument(program, builder, service, options) {
     }));
     const authentication = resolveAuthentication(service);
     const defaultSecurity = authRequirements(builder, authentication.defaultAuth, namespace, "service authentication", true);
-    const securitySchemes = collectSecuritySchemes(authentication.schemes);
-    const endpoints = service.operations.map((operation) => endpoint(program, builder, operation, authentication.operationsAuth.get(operation.operation), defaultSecurity));
+    const securitySchemes = collectSecuritySchemes(builder, authentication.schemes, namespace);
+    const endpoints = mergedEndpoints(program, builder, service.operations, authentication.operationsAuth, defaultSecurity);
     return prune({
-        schema_version: "v1",
+        schema_version: "v2",
         api: { base_path: options["base-path"] ?? "/" },
         info: prune({
             title: info.title ?? serviceInfo?.title ?? "API",
@@ -243,7 +252,57 @@ function buildDocument(program, builder, service, options) {
         endpoints,
     });
 }
-function endpoint(program, builder, operation, operationAuth, defaultSecurity) {
+function mergedEndpoints(program, builder, operations, operationsAuth, defaultSecurity) {
+    const groups = operationGroups(program, operations);
+    return groups.map((group) => endpoint(program, builder, group, operationsAuth, defaultSecurity));
+}
+function operationGroups(program, operations) {
+    const byRoute = new Map();
+    const order = [];
+    for (const operation of operations) {
+        const key = `${operation.verb.toLowerCase()} ${operation.path}`;
+        if (!byRoute.has(key)) {
+            byRoute.set(key, []);
+            order.push(key);
+        }
+        byRoute.get(key).push(operation);
+    }
+    const groups = [];
+    for (const key of order) {
+        const routeOperations = byRoute.get(key);
+        if (routeOperations.length === 1) {
+            groups.push({ operations: routeOperations, canonical: routeOperations[0] });
+            continue;
+        }
+        const coalescable = routeOperations.some((operation) => isSharedRoute(program, operation.operation)) ||
+            routeOperations.some((operation) => operation.overloading && isOverloadSameEndpoint(operation));
+        if (!coalescable) {
+            groups.push(...routeOperations.map((operation) => ({ operations: [operation], canonical: operation })));
+            continue;
+        }
+        groups.push({
+            operations: routeOperations,
+            canonical: canonicalOperation(program, routeOperations),
+        });
+    }
+    return groups;
+}
+function canonicalOperation(program, operations) {
+    for (const operation of operations) {
+        if (getOverloads(program, operation.operation)?.length) {
+            return operation;
+        }
+    }
+    for (const operation of operations) {
+        if (getOverloadedOperation(program, operation.operation) === undefined) {
+            return operation;
+        }
+    }
+    return operations[0];
+}
+function endpoint(program, builder, group, operationsAuth, defaultSecurity) {
+    const operation = group.canonical;
+    validateSharedRouteMetadata(program, builder, group.operations, operation);
     const extensions = {};
     for (const [key, value] of operationVendorExtensions(program, builder, operation.operation)) {
         extensions[key] = value;
@@ -262,16 +321,52 @@ function endpoint(program, builder, operation, operationAuth, defaultSecurity) {
         summary: getSummary(program, operation.operation),
         description: getDoc(program, operation.operation),
         tags: getAllTags(program, operation.operation),
-        parameters: operation.parameters.parameters.map((parameter) => endpointParameter(program, builder, parameter)),
-        request_body: requestBody(builder, operation.parameters.body),
-        responses: operation.responses.map((response) => endpointResponse(program, builder, response)),
+        parameters: mergedParameters(program, builder, group.operations),
+        request_body: mergedRequestBody(builder, group.operations),
+        responses: endpointResponses(program, builder, group.operations.flatMap((item) => item.responses)),
         cli: cliMetadata(program, operation),
-        security: operationSecurity(builder, operation, operationAuth, defaultSecurity),
+        security: mergedOperationSecurity(builder, group.operations, operationsAuth, defaultSecurity),
     });
     if (Object.keys(extensions).length > 0) {
         output.extensions = extensions;
     }
     return output;
+}
+function validateSharedRouteMetadata(program, builder, operations, canonical) {
+    const canonicalCLI = stableJSONString(cliMetadata(program, canonical));
+    const canonicalAuthz = stableJSONString(getAuthz({ program }, canonical.operation));
+    const canonicalManual = isManual({ program }, canonical.operation);
+    const canonicalExtensions = stableJSONString(operationVendorExtensions(program, builder, canonical.operation));
+    for (const operation of operations) {
+        if (stableJSONString(cliMetadata(program, operation)) !== canonicalCLI) {
+            builder.unsupportedSharedRoute(operation.operation, "incompatible cli metadata");
+        }
+        if (stableJSONString(getAuthz({ program }, operation.operation)) !== canonicalAuthz) {
+            builder.unsupportedSharedRoute(operation.operation, "incompatible authz metadata");
+        }
+        if (isManual({ program }, operation.operation) !== canonicalManual) {
+            builder.unsupportedSharedRoute(operation.operation, "incompatible manual metadata");
+        }
+        if (stableJSONString(operationVendorExtensions(program, builder, operation.operation)) !== canonicalExtensions) {
+            builder.unsupportedSharedRoute(operation.operation, "incompatible operation extensions");
+        }
+    }
+}
+function stableJSONString(value) {
+    return JSON.stringify(sortJSONValue(value));
+}
+function sortJSONValue(value) {
+    if (Array.isArray(value)) {
+        return value.map((item) => sortJSONValue(item));
+    }
+    if (value && typeof value === "object") {
+        const output = {};
+        for (const key of Object.keys(value).sort()) {
+            output[key] = sortJSONValue(value[key]);
+        }
+        return output;
+    }
+    return value;
 }
 function operationVendorExtensions(program, builder, operation) {
     const extensions = new Map(getExtensions(program, operation).entries());
@@ -426,14 +521,81 @@ function cliMetadata(program, operation) {
 }
 function endpointParameter(program, builder, parameter) {
     const param = parameter.param;
+    if (parameter.type === "cookie") {
+        builder.unsupportedCookie(param);
+    }
     return prune({
         name: "name" in parameter ? parameter.name : param.name,
         in: parameter.type,
         required: parameter.type === "path" ? true : !param.optional,
         description: getDoc(program, param),
         explode: shouldEmitExplode(builder, param.type, parameter) ? parameter.explode : undefined,
-        schema: builder.schemaRef(param.type, `parameter ${param.name}`),
+        schema: parameterSchemaRef(builder, param.type, `parameter ${param.name}`),
     });
+}
+function mergedParameters(program, builder, operations) {
+    const output = [];
+    const byKey = new Map();
+    for (const operation of operations) {
+        for (const parameter of operation.parameters.parameters) {
+            const next = endpointParameter(program, builder, parameter);
+            const key = `${next.in.toLowerCase()}:${next.name.toLowerCase()}`;
+            const existing = byKey.get(key);
+            if (!existing) {
+                byKey.set(key, next);
+                output.push(next);
+                continue;
+            }
+            const merged = mergeParameter(builder, existing, next, operation.operation);
+            Object.assign(existing, merged);
+        }
+    }
+    return output.length > 0 ? output : undefined;
+}
+function mergeParameter(builder, left, right, operation) {
+    if (left.in !== right.in || left.required !== right.required || left.explode !== right.explode) {
+        builder.unsupportedSharedRoute(operation, `incompatible parameter ${left.name}`);
+        return left;
+    }
+    const schema = mergeParameterSchemas(left.schema, right.schema);
+    if (!schema) {
+        builder.unsupportedSharedRoute(operation, `incompatible parameter schema ${left.name}`);
+        return left;
+    }
+    return prune({
+        ...left,
+        description: left.description ?? right.description,
+        schema,
+    });
+}
+function mergeParameterSchemas(left, right) {
+    if (JSON.stringify(left) === JSON.stringify(right)) {
+        return left;
+    }
+    const leftValues = literalSchemaEnumValues(left);
+    const rightValues = literalSchemaEnumValues(right);
+    if (leftValues && rightValues) {
+        return { type: "string", enum: uniqueStrings([...leftValues, ...rightValues]) };
+    }
+    return undefined;
+}
+function literalSchemaEnumValues(schema) {
+    if (schema.type !== "string" || schema.ref || schema.format || schema.items || schema.additional_properties) {
+        return undefined;
+    }
+    return schema.enum ? schema.enum : [];
+}
+function parameterSchemaRef(builder, type, context) {
+    if (type.kind === "String") {
+        return { type: "string", enum: [type.value] };
+    }
+    if (type.kind === "Union") {
+        const enumValues = stringLiteralUnionValues(type);
+        if (enumValues) {
+            return { type: "string", enum: enumValues };
+        }
+    }
+    return builder.schemaRef(type, context);
 }
 function shouldEmitExplode(builder, type, parameter) {
     if (!("explode" in parameter) || parameter.explode === undefined) {
@@ -442,28 +604,58 @@ function shouldEmitExplode(builder, type, parameter) {
     if (parameter.type !== "query" && parameter.type !== "header") {
         return false;
     }
-    const schema = builder.schemaRef(type, `parameter ${parameter.param.name}`);
+    const schema = parameterSchemaRef(builder, type, `parameter ${parameter.param.name}`);
     return schema.type === "array" || parameter.explode === true;
 }
 function requestBody(builder, body) {
     if (!body) {
         return undefined;
     }
-    if (body.bodyKind !== "single") {
-        builder.unsupportedType(body.type, "request body");
-        return undefined;
-    }
     return prune({
         required: body.property ? !body.property.optional : true,
-        content_type: body.contentTypes[0],
-        schema: builder.namedSchemaRef(body.type, "request body"),
+        contents: bodyContents(builder, body, "request body"),
     });
+}
+function mergedRequestBody(builder, operations) {
+    let output;
+    for (const operation of operations) {
+        const next = requestBody(builder, operation.parameters.body);
+        if (!next) {
+            continue;
+        }
+        if (!output) {
+            output = next;
+            continue;
+        }
+        if (JSON.stringify(output) !== JSON.stringify(next)) {
+            builder.unsupportedSharedRoute(operation.operation, "incompatible request bodies");
+        }
+    }
+    return output;
+}
+function endpointResponses(program, builder, responses) {
+    const byStatus = new Map();
+    const order = [];
+    for (const httpResponse of responses) {
+        const response = endpointResponse(program, builder, httpResponse);
+        const existing = byStatus.get(response.status_code);
+        if (!existing) {
+            byStatus.set(response.status_code, response);
+            order.push(response.status_code);
+            continue;
+        }
+        existing.description = existing.description || response.description;
+        existing.headers = mergeHeaders(existing.headers, response.headers);
+        existing.contents = mergeContents(builder, httpResponse, response.status_code, existing.contents, response.contents);
+        existing.extensions = mergeResponseExtensions(existing.extensions, response.extensions);
+    }
+    return order.map((status) => byStatus.get(status));
 }
 function endpointResponse(program, builder, response) {
     if (typeof response.statusCodes !== "number") {
         builder.unsupportedResponseStatus(response);
     }
-    const content = response.responses[0];
+    const firstContent = response.responses[0];
     const shape = response.type.kind === "Model" ? getResponseShape({ program }, response.type) : undefined;
     const extensions = shape
         ? {
@@ -476,11 +668,134 @@ function endpointResponse(program, builder, response) {
     return prune({
         status_code: typeof response.statusCodes === "number" ? response.statusCodes : 0,
         description: response.description ?? "The request has completed.",
-        headers: content ? responseHeaders(program, builder, content) : undefined,
-        content_type: content?.body?.contentTypes[0],
-        schema: content?.body ? builder.schemaRef(content.body.type, "response body") : undefined,
+        headers: firstContent ? responseHeaders(program, builder, firstContent) : undefined,
+        contents: responseContents(builder, response.responses),
         extensions,
     });
+}
+function mergeHeaders(left, right) {
+    if (!left || left.length === 0) {
+        return right;
+    }
+    if (!right || right.length === 0) {
+        return left;
+    }
+    const output = [...left];
+    const seen = new Set(left.map((header) => header.name.toLowerCase()));
+    for (const header of right) {
+        const key = header.name.toLowerCase();
+        if (seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+        output.push(header);
+    }
+    return output;
+}
+function mergeContents(builder, response, statusCode, left, right) {
+    if (!left || left.length === 0) {
+        return right;
+    }
+    if (!right || right.length === 0) {
+        return left;
+    }
+    const output = [...left];
+    for (const content of right) {
+        if (output.some((existing) => JSON.stringify(existing) === JSON.stringify(content))) {
+            continue;
+        }
+        if (output.some((existing) => sameContentType(existing.content_type, content.content_type))) {
+            builder.unsupportedResponseContent(response, statusCode, content.content_type);
+            continue;
+        }
+        output.push(content);
+    }
+    return output;
+}
+function sameContentType(left, right) {
+    return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+function mergeResponseExtensions(left, right) {
+    if (!left || Object.keys(left).length === 0) {
+        return right;
+    }
+    if (!right || Object.keys(right).length === 0) {
+        return left;
+    }
+    return { ...left, ...right };
+}
+function responseContents(builder, contents) {
+    const output = [];
+    for (const content of contents) {
+        if (!content.body) {
+            continue;
+        }
+        output.push(...bodyContents(builder, content.body, "response body"));
+    }
+    return output.length > 0 ? output : undefined;
+}
+function bodyContents(builder, body, context) {
+    switch (body.bodyKind) {
+        case "single":
+            return body.contentTypes.map((contentType) => prune({
+                content_type: contentType,
+                body_kind: bodyKindForSingle(body.type, contentType),
+                schema: schemaRefForContent(builder, body.type, contentType, context),
+            }));
+        case "file":
+            return body.contentTypes.map((contentType) => prune({
+                content_type: contentType,
+                body_kind: "file",
+                schema: fileSchemaRef(body.isText),
+            }));
+        case "multipart":
+            return body.contentTypes.map((contentType) => prune({
+                content_type: contentType,
+                body_kind: "multipart",
+                parts: body.parts.map((part, idx) => multipartPart(builder, part, idx)),
+            }));
+    }
+}
+function multipartPart(builder, part, idx) {
+    const bodyKind = part.body.bodyKind === "file" ? "file" : bodyKindForSingle(part.body.type, part.body.contentTypes[0] ?? "application/json");
+    const schema = part.body.bodyKind === "file"
+        ? fileSchemaRef(part.body.isText)
+        : schemaRefForContent(builder, part.body.type, part.body.contentTypes[0] ?? "application/json", `multipart part ${part.name ?? idx}`);
+    return prune({
+        name: part.partKind === "model" ? part.property.name : `part${idx + 1}`,
+        wire_name: part.name,
+        part_kind: part.partKind,
+        repeated: part.multi ? true : undefined,
+        required: !part.optional,
+        description: "property" in part && part.property ? getDoc(builder.program, part.property) : undefined,
+        content_type: part.body.contentTypes[0],
+        body_kind: bodyKind,
+        filename: part.filename !== undefined ? true : undefined,
+        schema,
+    });
+}
+function bodyKindForSingle(type, contentType) {
+    const normalized = contentType.toLowerCase();
+    if (normalized === "application/x-www-form-urlencoded") {
+        return "form_urlencoded";
+    }
+    if (normalized.startsWith("text/")) {
+        return "text";
+    }
+    if (normalized === "application/octet-stream" || isBytesType(type)) {
+        return "binary";
+    }
+    return "json";
+}
+function schemaRefForContent(builder, type, contentType, context) {
+    const kind = bodyKindForSingle(type, contentType);
+    if ((kind === "binary" || kind === "file") && isBytesType(type)) {
+        return { type: "string", format: "binary" };
+    }
+    return builder.schemaRef(type, context);
+}
+function fileSchemaRef(isText) {
+    return isText ? { type: "string" } : { type: "string", format: "binary" };
 }
 function responseHeaders(program, builder, content) {
     if (!content.headers) {
@@ -494,10 +809,14 @@ function responseHeaders(program, builder, content) {
     }));
     return headers.length > 0 ? headers : undefined;
 }
-function collectSecuritySchemes(auths) {
+function collectSecuritySchemes(builder, auths, target) {
     const schemes = {};
     for (const auth of auths) {
         if (auth.type === "noAuth") {
+            continue;
+        }
+        if (!isSupportedAuth(auth)) {
+            builder.unsupportedAuth("service authentication", unsupportedAuthReason(auth), target);
             continue;
         }
         schemes[auth.id] = securityScheme(auth);
@@ -514,6 +833,20 @@ function operationSecurity(builder, operation, operationAuth, defaultSecurity) {
     }
     return security;
 }
+function mergedOperationSecurity(builder, operations, operationsAuth, defaultSecurity) {
+    let output;
+    for (const operation of operations) {
+        const security = operationSecurity(builder, operation, operationsAuth.get(operation.operation), defaultSecurity);
+        if (output === undefined) {
+            output = security;
+            continue;
+        }
+        if (!sameSecurity(output, security)) {
+            builder.unsupportedSharedRoute(operation.operation, "incompatible authentication");
+        }
+    }
+    return output;
+}
 function authRequirements(builder, auth, target, context, allowNoAuth) {
     const requirements = [];
     for (const option of auth.options) {
@@ -523,7 +856,15 @@ function authRequirements(builder, auth, target, context, allowNoAuth) {
                 if (allowNoAuth) {
                     continue;
                 }
-                builder.unsupportedAuth(context, "APIGen IR v1 does not support NoAuth operation overrides for secured services.", target);
+                builder.unsupportedAuth(context, "APIGen IR v2 does not support NoAuth operation overrides for secured services.", target);
+                continue;
+            }
+            if (ref.kind === "oauth2") {
+                builder.unsupportedAuth(context, "oauth2 authentication is not supported by APIGen v0.3.2.", target);
+                continue;
+            }
+            if (!isSupportedAuth(ref.auth)) {
+                builder.unsupportedAuth(context, unsupportedAuthReason(ref.auth), target);
                 continue;
             }
             requirement[ref.auth.id] = authScopes(ref);
@@ -533,6 +874,29 @@ function authRequirements(builder, auth, target, context, allowNoAuth) {
         }
     }
     return requirements.length > 0 ? requirements : undefined;
+}
+function isSupportedAuth(auth) {
+    if (auth.type === "http") {
+        return auth.scheme.toLowerCase() === "bearer";
+    }
+    if (auth.type === "apiKey") {
+        return auth.in === "header" && auth.name === "X-API-Key";
+    }
+    return false;
+}
+function unsupportedAuthReason(auth) {
+    if (auth.type === "http") {
+        return `http ${auth.scheme} authentication is not supported by APIGen v0.3.2. Use Bearer HTTP auth.`;
+    }
+    if (auth.type === "apiKey") {
+        if (auth.in !== "header") {
+            return `apiKey authentication in ${auth.in} is not supported by APIGen v0.3.2. Use ApiKeyAuth<ApiKeyLocation.header, "X-API-Key">.`;
+        }
+        if (auth.name !== "X-API-Key") {
+            return `header API key name ${auth.name} is not supported by APIGen v0.3.2. Use X-API-Key.`;
+        }
+    }
+    return `${auth.type} authentication is not supported by APIGen v0.3.2.`;
 }
 function authScopes(ref) {
     if (ref.kind === "oauth2") {
@@ -584,6 +948,17 @@ function scalarSchemaRef(scalar) {
     }
     return { type: "string" };
 }
+function isBytesType(type) {
+    if (type.kind !== "Scalar") {
+        return false;
+    }
+    for (let current = type; current; current = current.baseScalar) {
+        if (current.name === "bytes") {
+            return true;
+        }
+    }
+    return false;
+}
 function enumValues(type) {
     return [...type.members.values()].map((member) => String(member.value ?? member.name));
 }
@@ -596,6 +971,18 @@ function stringLiteralUnionValues(type) {
         values.push(variant.type.value);
     }
     return values;
+}
+function uniqueStrings(values) {
+    const output = [];
+    const seen = new Set();
+    for (const value of values) {
+        if (seen.has(value)) {
+            continue;
+        }
+        seen.add(value);
+        output.push(value);
+    }
+    return output;
 }
 function isNamedUserModel(type) {
     return type.name !== "" && !isArrayModelType(type) && !isRecordModelType(type);

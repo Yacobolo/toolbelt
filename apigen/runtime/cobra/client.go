@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"os"
 	"strings"
@@ -47,7 +50,12 @@ func NewClient(baseURL, apiKey, token string) *Client {
 }
 
 // Do issues an authenticated HTTP request against the generated API surface.
-func (c *Client) Do(method, path string, query url.Values, body any) (*http.Response, error) {
+func (c *Client) Do(method, path string, query url.Values, body any, contentType string, bodyKind string) (*http.Response, error) {
+	return c.DoWithHeaders(method, path, query, nil, body, contentType, bodyKind)
+}
+
+// DoWithHeaders issues an authenticated HTTP request with generated header parameter values.
+func (c *Client) DoWithHeaders(method, path string, query url.Values, headers http.Header, body any, contentType string, bodyKind string) (*http.Response, error) {
 	baseURL := strings.TrimRight(c.BaseURL, "/")
 	if baseURL == "" {
 		baseURL = "http://localhost:8080"
@@ -60,20 +68,71 @@ func (c *Client) Do(method, path string, query url.Values, body any) (*http.Resp
 
 	var bodyReader io.Reader
 	if body != nil {
-		payload, err := json.Marshal(body)
-		if err != nil {
-			return nil, fmt.Errorf("marshal request body: %w", err)
+		switch bodyKind {
+		case "text":
+			bodyReader = strings.NewReader(fmt.Sprint(body))
+		case "binary", "file":
+			switch typed := body.(type) {
+			case []byte:
+				bodyReader = bytes.NewReader(typed)
+			case string:
+				bodyReader = strings.NewReader(typed)
+			default:
+				return nil, fmt.Errorf("unsupported %s request body type %T", bodyKind, body)
+			}
+		case "form_urlencoded":
+			values, ok := body.(url.Values)
+			if !ok {
+				return nil, fmt.Errorf("form_urlencoded request body must be url.Values")
+			}
+			bodyReader = strings.NewReader(values.Encode())
+		case "multipart":
+			var multipartBody MultipartBody
+			switch typed := body.(type) {
+			case MultipartBody:
+				multipartBody = typed
+			case *MultipartBody:
+				if typed == nil {
+					return nil, fmt.Errorf("multipart request body must not be nil")
+				}
+				multipartBody = *typed
+			default:
+				return nil, fmt.Errorf("multipart request body must be MultipartBody")
+			}
+			payload, encodedContentType, err := encodeMultipartBody(multipartBody, contentType)
+			if err != nil {
+				return nil, err
+			}
+			bodyReader = payload
+			contentType = encodedContentType
+		default:
+			payload, err := json.Marshal(body)
+			if err != nil {
+				return nil, fmt.Errorf("marshal request body: %w", err)
+			}
+			bodyReader = bytes.NewReader(payload)
 		}
-		bodyReader = bytes.NewReader(payload)
 	}
 
 	req, err := http.NewRequestWithContext(context.Background(), method, reqURL, bodyReader)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Accept", "application/json")
+	for name, values := range headers {
+		for _, value := range values {
+			req.Header.Add(name, value)
+		}
+	}
+	if req.Header.Get("Accept") == "" {
+		req.Header.Set("Accept", "application/json")
+	}
 	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		if req.Header.Get("Content-Type") == "" {
+			if strings.TrimSpace(contentType) == "" {
+				contentType = "application/json"
+			}
+			req.Header.Set("Content-Type", contentType)
+		}
 	}
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
@@ -87,6 +146,58 @@ func (c *Client) Do(method, path string, query url.Values, body any) (*http.Resp
 	}
 	c.logRequest(req, resp, body)
 	return resp, nil
+}
+
+func encodeMultipartBody(body MultipartBody, defaultContentType string) (io.Reader, string, error) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	contentType := body.ContentType
+	if strings.TrimSpace(contentType) == "" {
+		contentType = defaultContentType
+	}
+	if strings.TrimSpace(contentType) == "" {
+		contentType = "multipart/form-data"
+	}
+	if !strings.HasPrefix(strings.ToLower(contentType), "multipart/") {
+		return nil, "", fmt.Errorf("multipart request content type must start with multipart/")
+	}
+	for _, part := range body.Parts {
+		header := make(textproto.MIMEHeader)
+		if strings.TrimSpace(part.ContentType) != "" {
+			header.Set("Content-Type", part.ContentType)
+		}
+		if strings.EqualFold(contentType, "multipart/form-data") || strings.HasPrefix(strings.ToLower(contentType), "multipart/form-data;") {
+			params := map[string]string{"name": part.Name}
+			if part.Filename != nil && strings.TrimSpace(*part.Filename) != "" {
+				params["filename"] = *part.Filename
+			}
+			header.Set("Content-Disposition", mime.FormatMediaType("form-data", params))
+		} else if strings.TrimSpace(part.Name) != "" || part.Filename != nil {
+			params := map[string]string{}
+			if strings.TrimSpace(part.Name) != "" {
+				params["name"] = part.Name
+			}
+			if part.Filename != nil && strings.TrimSpace(*part.Filename) != "" {
+				params["filename"] = *part.Filename
+			}
+			header.Set("Content-Disposition", mime.FormatMediaType("attachment", params))
+		}
+		writerPart, err := writer.CreatePart(header)
+		if err != nil {
+			return nil, "", fmt.Errorf("create multipart part %q: %w", part.Name, err)
+		}
+		if _, err := writerPart.Write(part.Data); err != nil {
+			return nil, "", fmt.Errorf("write multipart part %q: %w", part.Name, err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, "", fmt.Errorf("close multipart body: %w", err)
+	}
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return nil, "", fmt.Errorf("parse multipart content type: %w", err)
+	}
+	return &buf, mediaType + "; boundary=" + writer.Boundary(), nil
 }
 
 func (c *Client) logRequest(req *http.Request, resp *http.Response, body any) {

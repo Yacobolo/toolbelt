@@ -123,13 +123,11 @@ type Parameter struct {
 	Schema      SchemaRef `json:"schema"`
 }
 
-// RequestBody describes the JSON request payload.
+// RequestBody describes the operation request payload.
 type RequestBody struct {
-	Required    bool      `json:"required,omitempty"`
-	Description string    `json:"description,omitempty"`
-	ContentType string    `json:"content_type,omitempty"`
-	Example     any       `json:"example,omitempty"`
-	Schema      SchemaRef `json:"schema"`
+	Required    bool          `json:"required,omitempty"`
+	Description string        `json:"description,omitempty"`
+	Contents    []BodyContent `json:"contents,omitempty"`
 }
 
 // Response describes one operation response.
@@ -137,11 +135,32 @@ type Response struct {
 	StatusCode  int            `json:"status_code"`
 	Description string         `json:"description"`
 	Headers     []Header       `json:"headers,omitempty"`
-	ContentType string         `json:"content_type,omitempty"`
-	Example     any            `json:"example,omitempty"`
-	Schema      *SchemaRef     `json:"schema,omitempty"`
-	AnyOf       []SchemaRef    `json:"any_of,omitempty"`
+	Contents    []BodyContent  `json:"contents,omitempty"`
 	Extensions  map[string]any `json:"extensions,omitempty"`
+}
+
+// BodyContent describes one media type variant for a request or response body.
+type BodyContent struct {
+	ContentType string          `json:"content_type"`
+	BodyKind    string          `json:"body_kind"`
+	Schema      *SchemaRef      `json:"schema,omitempty"`
+	AnyOf       []SchemaRef     `json:"any_of,omitempty"`
+	Parts       []MultipartPart `json:"parts,omitempty"`
+	Example     any             `json:"example,omitempty"`
+}
+
+// MultipartPart describes one part in a multipart body.
+type MultipartPart struct {
+	Name        string     `json:"name"`
+	WireName    string     `json:"wire_name,omitempty"`
+	PartKind    string     `json:"part_kind,omitempty"`
+	Repeated    bool       `json:"repeated,omitempty"`
+	Required    bool       `json:"required,omitempty"`
+	Description string     `json:"description,omitempty"`
+	ContentType string     `json:"content_type,omitempty"`
+	BodyKind    string     `json:"body_kind,omitempty"`
+	Filename    bool       `json:"filename,omitempty"`
+	Schema      *SchemaRef `json:"schema,omitempty"`
 }
 
 // Header describes one response header.
@@ -166,6 +185,7 @@ type SchemaRef struct {
 	Ref                  string                `json:"ref,omitempty"`
 	Type                 string                `json:"type,omitempty"`
 	Format               string                `json:"format,omitempty"`
+	Enum                 []string              `json:"enum,omitempty"`
 	Items                *SchemaRef            `json:"items,omitempty"`
 	AdditionalProperties *AdditionalProperties `json:"additional_properties,omitempty"`
 }

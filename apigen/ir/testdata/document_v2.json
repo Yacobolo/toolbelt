@@ -1,5 +1,5 @@
 {
-  "schema_version": "v1",
+  "schema_version": "v2",
   "api": {
     "base_path": "/v1"
   },
@@ -125,9 +125,15 @@
         {
           "status_code": 200,
           "description": "ok",
-          "schema": {
-            "ref": "HealthResponse"
-          }
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "HealthResponse"
+              }
+            }
+          ]
         }
       ],
       "extensions": {
@@ -158,9 +164,15 @@
         {
           "status_code": 200,
           "description": "ok",
-          "schema": {
-            "ref": "PaginatedWidgets"
-          }
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "PaginatedWidgets"
+              }
+            }
+          ]
         }
       ],
       "extensions": {
@@ -185,30 +197,48 @@
       ],
       "request_body": {
         "required": true,
-        "schema": {
-          "ref": "CreateWidgetRequest"
-        }
+        "contents": [
+          {
+            "content_type": "application/json",
+            "body_kind": "json",
+            "schema": {
+              "ref": "CreateWidgetRequest"
+            }
+          }
+        ]
       },
       "responses": [
         {
           "status_code": 201,
           "description": "created",
-          "schema": {
-            "ref": "Widget"
-          },
           "extensions": {
             "x-apigen-response-shape": {
               "kind": "wrapped_json",
               "body_type": "Widget"
             }
-          }
+          },
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "Widget"
+              }
+            }
+          ]
         },
         {
           "status_code": 400,
           "description": "bad request",
-          "schema": {
-            "ref": "Error"
-          }
+          "contents": [
+            {
+              "content_type": "application/json",
+              "body_kind": "json",
+              "schema": {
+                "ref": "Error"
+              }
+            }
+          ]
         }
       ],
       "extensions": {

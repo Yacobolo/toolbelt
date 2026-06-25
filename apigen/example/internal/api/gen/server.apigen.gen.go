@@ -207,12 +207,15 @@ func writeAPIGenError(w http.ResponseWriter, statusCode int, message string) {
 	_ = json.NewEncoder(w).Encode(Error{Code: apigenchi.SafeIntToInt32(statusCode), Message: apigenErrorMessage(statusCode, message)})
 }
 
-func decodeAPIGenJSONBody(body io.Reader, dest any, requiredFields ...string) error {
+func decodeAPIGenJSONBody(body io.Reader, dest any, requiredBody bool, requiredFields ...string) error {
 	raw, err := io.ReadAll(body)
 	if err != nil {
 		return fmt.Errorf("read request body: %w", err)
 	}
 	if len(strings.TrimSpace(string(raw))) == 0 {
+		if !requiredBody {
+			return nil
+		}
 		return fmt.Errorf("request body must not be empty")
 	}
 	if len(requiredFields) > 0 {
@@ -236,6 +239,63 @@ func decodeAPIGenJSONBody(body io.Reader, dest any, requiredFields ...string) er
 			return fmt.Errorf("request body must contain a single JSON value")
 		}
 		return fmt.Errorf("invalid JSON body: %w", err)
+	}
+	return nil
+}
+
+func decodeAPIGenTextBody(body io.Reader, requiredBody bool) (string, error) {
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		return "", fmt.Errorf("read request body: %w", err)
+	}
+	if len(raw) == 0 && requiredBody {
+		return "", fmt.Errorf("request body must not be empty")
+	}
+	return string(raw), nil
+}
+
+func decodeAPIGenBytesBody(body io.Reader, requiredBody bool) ([]byte, error) {
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		return nil, fmt.Errorf("read request body: %w", err)
+	}
+	if len(raw) == 0 && requiredBody {
+		return nil, fmt.Errorf("request body must not be empty")
+	}
+	return raw, nil
+}
+
+func decodeAPIGenFormBody(r *http.Request, dest any, requiredBody bool, requiredFields ...string) error {
+	if err := r.ParseForm(); err != nil {
+		return fmt.Errorf("parse form body: %w", err)
+	}
+	if len(r.PostForm) == 0 {
+		if !requiredBody {
+			return nil
+		}
+		return fmt.Errorf("request body must not be empty")
+	}
+	for _, field := range requiredFields {
+		if strings.TrimSpace(r.PostForm.Get(field)) == "" {
+			return fmt.Errorf("%s is required", field)
+		}
+	}
+	payload := map[string]any{}
+	for key, values := range r.PostForm {
+		if len(values) == 1 {
+			payload[key] = values[0]
+		} else {
+			payload[key] = values
+		}
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("encode form body: %w", err)
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(encoded)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dest); err != nil {
+		return fmt.Errorf("invalid form body: %w", err)
 	}
 	return nil
 }
@@ -361,7 +421,7 @@ type GenListTodos200ResponseHeaders struct {
 	XRateLimitReset     int64
 }
 
-// GenListTodos200JSONResponse is the APIGen concrete JSON response for ListTodos 200.
+// GenListTodos200JSONResponse is the APIGen concrete response for ListTodos 200.
 type GenListTodos200JSONResponse struct {
 	Body    GenSchemaListTodosResponse
 	Headers GenListTodos200ResponseHeaders
@@ -507,7 +567,7 @@ func (response GenListTodos502JSONResponse) VisitListTodosResponse(w http.Respon
 
 // GenCreateTodoRequest represents the APIGen strict request contract for CreateTodo.
 type GenCreateTodoRequest struct {
-	Body *GenCreateTodoJSONBody
+	Body *GenCreateTodoBody
 }
 
 // GenCreateTodoResponse represents the APIGen strict response contract for CreateTodo.
@@ -522,7 +582,7 @@ type GenCreateTodo201ResponseHeaders struct {
 	XRateLimitReset     int64
 }
 
-// GenCreateTodo201JSONResponse is the APIGen concrete JSON response for CreateTodo 201.
+// GenCreateTodo201JSONResponse is the APIGen concrete response for CreateTodo 201.
 type GenCreateTodo201JSONResponse struct {
 	Body    GenSchemaTodo
 	Headers GenCreateTodo201ResponseHeaders
@@ -666,8 +726,8 @@ func (response GenCreateTodo502JSONResponse) VisitCreateTodoResponse(w http.Resp
 	return json.NewEncoder(w).Encode(response.Body)
 }
 
-// GenCreateTodoJSONBody aliases the APIGen strict JSON request body schema for CreateTodo.
-type GenCreateTodoJSONBody = GenSchemaCreateTodoRequest
+// GenCreateTodoBody aliases the APIGen strict request body schema for CreateTodo.
+type GenCreateTodoBody = GenSchemaCreateTodoRequest
 
 // GenDeleteTodoRequest represents the APIGen strict request contract for DeleteTodo.
 type GenDeleteTodoRequest struct {
@@ -845,7 +905,7 @@ type GenGetTodo200ResponseHeaders struct {
 	XRateLimitReset     int64
 }
 
-// GenGetTodo200JSONResponse is the APIGen concrete JSON response for GetTodo 200.
+// GenGetTodo200JSONResponse is the APIGen concrete response for GetTodo 200.
 type GenGetTodo200JSONResponse struct {
 	Body    GenSchemaTodo
 	Headers GenGetTodo200ResponseHeaders
@@ -1006,7 +1066,7 @@ type GenCompleteTodo200ResponseHeaders struct {
 	XRateLimitReset     int64
 }
 
-// GenCompleteTodo200JSONResponse is the APIGen concrete JSON response for CompleteTodo 200.
+// GenCompleteTodo200JSONResponse is the APIGen concrete response for CompleteTodo 200.
 type GenCompleteTodo200JSONResponse struct {
 	Body    GenSchemaTodo
 	Headers GenCompleteTodo200ResponseHeaders
@@ -1188,8 +1248,8 @@ func (b genStrictBridge) ListTodos(w http.ResponseWriter, r *http.Request, param
 
 func (b genStrictBridge) CreateTodo(w http.ResponseWriter, r *http.Request) {
 	var request GenCreateTodoRequest
-	var body GenCreateTodoJSONBody
-	if err := decodeAPIGenJSONBody(r.Body, &body, []string{"title"}...); err != nil {
+	var body GenCreateTodoBody
+	if err := decodeAPIGenJSONBody(r.Body, &body, true, []string{"title"}...); err != nil {
 		writeAPIGenError(w, http.StatusBadRequest, err.Error())
 		return
 	}

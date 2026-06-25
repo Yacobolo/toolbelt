@@ -16,7 +16,7 @@ export interface CLIPagination {
 export interface CLIOptions {
     command: string[];
     args?: CLIArg[];
-    bodyInput?: "none" | "json" | "flags" | "flags_or_json";
+    bodyInput?: "none" | "json" | "flags" | "flags_or_json" | "text" | "binary" | "file" | "multipart";
     confirm?: "none" | "always";
     output?: CLIOutput;
     pagination?: CLIPagination;

@@ -14,7 +14,7 @@ func TestEmitYAML(t *testing.T) {
 	t.Helper()
 
 	docIR := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		Info:          ir.Info{Title: "test", Version: "1.0.0"},
 		Schemas: map[string]ir.Schema{
 			"Item": {
@@ -40,6 +40,7 @@ func TestEmitYAML(t *testing.T) {
 				OperationID: "getItem",
 				Parameters: []ir.Parameter{
 					{Name: "id", In: "path", Required: true, Schema: ir.SchemaRef{Type: "string"}, Example: "item_123"},
+					{Name: "accept", In: "header", Required: true, Schema: ir.SchemaRef{Type: "string", Enum: []string{"application/json", "application/octet-stream"}}},
 				},
 				Extensions: map[string]any{
 					"x-agent": map[string]any{
@@ -53,15 +54,19 @@ func TestEmitYAML(t *testing.T) {
 				Responses: []ir.Response{{
 					StatusCode:  200,
 					Description: "ok",
-					Example: map[string]any{
-						"id": "item_123",
-					},
 					Headers: []ir.Header{{
 						Name:        "X-RateLimit-Remaining",
 						Description: "Requests left in the current window.",
 						Schema:      ir.SchemaRef{Type: "integer", Format: "int32"},
 					}},
-					Schema: &ir.SchemaRef{Ref: "Item"},
+					Contents: []ir.BodyContent{{
+						ContentType: "application/json",
+						BodyKind:    "json",
+						Schema:      &ir.SchemaRef{Ref: "Item"},
+						Example: map[string]any{
+							"id": "item_123",
+						},
+					}},
 				}},
 			},
 		},
@@ -76,6 +81,7 @@ func TestEmitYAML(t *testing.T) {
 	require.Equal(t, "3.0.0", doc.OpenAPI)
 	require.Equal(t, "getItem", doc.Paths.Value("/items/{id}").Get.OperationID)
 	require.Equal(t, "item_123", doc.Paths.Value("/items/{id}").Get.Parameters[0].Value.Example)
+	require.Equal(t, []any{"application/json", "application/octet-stream"}, doc.Paths.Value("/items/{id}").Get.Parameters[1].Value.Schema.Value.Enum)
 	require.Equal(t, "item_123", doc.Components.Schemas["Item"].Value.Example.(map[string]any)["id"])
 	require.Equal(t, true, doc.Paths.Value("/items/{id}").Get.Extensions["x-agent"].(map[string]any)["enabled"])
 	require.Equal(t, []any{"items", "read"}, doc.Paths.Value("/items/{id}").Get.Extensions["x-agent"].(map[string]any)["tags"])
@@ -93,11 +99,126 @@ func TestEmitYAML(t *testing.T) {
 	require.Contains(t, string(b), "example:")
 }
 
+func TestEmitYAML_EmitsMultipleContentKinds(t *testing.T) {
+	t.Helper()
+
+	docIR := ir.Document{
+		SchemaVersion: "v2",
+		Info:          ir.Info{Title: "test", Version: "1.0.0"},
+		Endpoints: []ir.Endpoint{{
+			Method:      "get",
+			Path:        "/artifact",
+			OperationID: "getArtifact",
+			Responses: []ir.Response{{
+				StatusCode:  200,
+				Description: "ok",
+				Contents: []ir.BodyContent{
+					{ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Type: "string"}},
+					{ContentType: "application/octet-stream", BodyKind: "binary", Schema: &ir.SchemaRef{Type: "string", Format: "binary"}},
+				},
+			}},
+		}},
+	}
+
+	b, err := EmitYAML(docIR, Options{})
+	require.NoError(t, err)
+
+	loader := openapi3.NewLoader()
+	doc, err := loader.LoadFromData(b)
+	require.NoError(t, err)
+	content := doc.Paths.Value("/artifact").Get.Responses.Value("200").Value.Content
+	require.NotNil(t, content.Get("application/json"))
+	require.NotNil(t, content.Get("application/octet-stream"))
+	require.Equal(t, "binary", content.Get("application/octet-stream").Schema.Value.Format)
+}
+
+func TestEmitYAML_EmitsMultipartMetadata(t *testing.T) {
+	t.Helper()
+
+	docIR := ir.Document{
+		SchemaVersion: "v2",
+		Info:          ir.Info{Title: "test", Version: "1.0.0"},
+		Schemas: map[string]ir.Schema{
+			"Metadata": {Type: "object", Properties: map[string]ir.SchemaProperty{"name": {Schema: ir.SchemaRef{Type: "string"}}}},
+		},
+		Endpoints: []ir.Endpoint{{
+			Method:      "post",
+			Path:        "/artifact",
+			OperationID: "uploadArtifact",
+			RequestBody: &ir.RequestBody{Required: true, Contents: []ir.BodyContent{{
+				ContentType: "multipart/form-data",
+				BodyKind:    "multipart",
+				Parts: []ir.MultipartPart{
+					{Name: "metadata", WireName: "metadata", PartKind: "model", Required: true, ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Ref: "Metadata"}},
+					{Name: "attachments", WireName: "attachments", PartKind: "model", Repeated: true, Required: true, ContentType: "application/octet-stream", BodyKind: "file", Filename: true, Schema: &ir.SchemaRef{Type: "string", Format: "binary"}},
+				},
+			}}},
+			Responses: []ir.Response{{StatusCode: 204, Description: "ok"}},
+		}},
+	}
+
+	b, err := EmitYAML(docIR, Options{})
+	require.NoError(t, err)
+
+	loader := openapi3.NewLoader()
+	doc, err := loader.LoadFromData(b)
+	require.NoError(t, err)
+	media := doc.Paths.Value("/artifact").Post.RequestBody.Value.Content.Get("multipart/form-data")
+	require.NotNil(t, media)
+	require.Equal(t, []string{"metadata", "attachments"}, media.Schema.Value.Required)
+	require.Equal(t, openapi3.Types{"array"}, *media.Schema.Value.Properties["attachments"].Value.Type)
+	require.Equal(t, "binary", media.Schema.Value.Properties["attachments"].Value.Items.Value.Format)
+	require.Equal(t, "application/json", media.Encoding["metadata"].ContentType)
+	require.Equal(t, "application/octet-stream", media.Encoding["attachments"].ContentType)
+}
+
+func TestEmitYAML_EmitsMultipartMixedVendorMetadata(t *testing.T) {
+	t.Helper()
+
+	docIR := ir.Document{
+		SchemaVersion: "v2",
+		Info:          ir.Info{Title: "test", Version: "1.0.0"},
+		Endpoints: []ir.Endpoint{{
+			Method:      "post",
+			Path:        "/artifact",
+			OperationID: "uploadArtifact",
+			RequestBody: &ir.RequestBody{Required: true, Contents: []ir.BodyContent{{
+				ContentType: "multipart/mixed",
+				BodyKind:    "multipart",
+				Parts: []ir.MultipartPart{
+					{Name: "part1", PartKind: "tuple", Required: true, ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Type: "object"}},
+					{Name: "part2", PartKind: "tuple", Required: true, ContentType: "application/octet-stream", BodyKind: "file", Filename: true, Schema: &ir.SchemaRef{Type: "string", Format: "binary"}},
+				},
+			}}},
+			Responses: []ir.Response{{StatusCode: 204, Description: "ok"}},
+		}},
+	}
+
+	b, err := EmitYAML(docIR, Options{})
+	require.NoError(t, err)
+	var root yaml.Node
+	require.NoError(t, yaml.Unmarshal(b, &root))
+
+	media := lookupYAMLMappingNode(&root, "paths", "/artifact", "post", "requestBody", "content", "multipart/mixed")
+	require.NotNil(t, media)
+	require.Equal(t, "mixed", yamlScalarValue(lookupYAMLMappingNode(media, "x-apigen-multipart-kind")))
+	parts := lookupYAMLMappingNode(media, "x-apigen-multipart-parts")
+	require.NotNil(t, parts)
+	require.Equal(t, yaml.SequenceNode, parts.Kind)
+	require.Len(t, parts.Content, 2)
+	require.Equal(t, "part1", yamlScalarValue(lookupYAMLMappingNode(parts.Content[0], "name")))
+	require.Equal(t, "application/json", yamlScalarValue(lookupYAMLMappingNode(parts.Content[0], "content_type")))
+	require.Equal(t, "json", yamlScalarValue(lookupYAMLMappingNode(parts.Content[0], "body_kind")))
+	require.Equal(t, "part2", yamlScalarValue(lookupYAMLMappingNode(parts.Content[1], "name")))
+	require.Equal(t, "application/octet-stream", yamlScalarValue(lookupYAMLMappingNode(parts.Content[1], "content_type")))
+	require.Equal(t, "file", yamlScalarValue(lookupYAMLMappingNode(parts.Content[1], "body_kind")))
+}
+
 func TestEmitYAML_UsesAPIBasePathForVisibleRoutes(t *testing.T) {
 	t.Helper()
 
 	docIR := ir.Document{
-		SchemaVersion: "v1",
+		SchemaVersion: "v2",
 		API:           ir.API{BasePath: "/v1"},
 		Info:          ir.Info{Title: "test", Version: "1.0.0"},
 		Endpoints: []ir.Endpoint{
@@ -118,6 +239,13 @@ func TestEmitYAML_UsesAPIBasePathForVisibleRoutes(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, doc.Paths.Value("/v1/items/{id}"))
 	require.Nil(t, doc.Paths.Value("/items/{id}"))
+}
+
+func yamlScalarValue(node *yaml.Node) string {
+	if node == nil {
+		return ""
+	}
+	return node.Value
 }
 
 func lookupYAMLMappingNode(root *yaml.Node, path ...string) *yaml.Node {

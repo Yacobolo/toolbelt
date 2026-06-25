@@ -18,7 +18,7 @@ describe("APIGen TypeSpec emitter", () => {
     await compileFixture("todo", irPath);
 
     const doc = JSON.parse(await readFile(irPath, "utf8"));
-    expect(doc.schema_version).toBe("v1");
+    expect(doc.schema_version).toBe("v2");
     expect(doc.info.title).toBe("APIGen Todo Example");
     expect(doc.endpoints.map((x: any) => x.operation_id)).toEqual([
       "listTodos",
@@ -28,7 +28,11 @@ describe("APIGen TypeSpec emitter", () => {
       "deleteTodo",
     ]);
     expect(doc.schemas.Todo.property_order).toEqual(["id", "title", "status"]);
-    expect(doc.endpoints[1].request_body.schema.ref).toBe("CreateTodoRequest");
+    expect(doc.endpoints[1].request_body.contents[0]).toMatchObject({
+      content_type: "application/json",
+      body_kind: "json",
+      schema: { ref: "CreateTodoRequest" },
+    });
     expect(doc.endpoints[1].cli.command).toEqual(["todos", "create"]);
     expect(doc.openapi.security).toEqual([{ BearerAuth: [] }, { ApiKeyAuth: [] }]);
   });
@@ -82,7 +86,724 @@ describe("APIGen TypeSpec emitter", () => {
     expect(doc.schemas.Widget.required).toEqual(["status", "id"]);
     expect(doc.schemas.Widget.properties.status.schema).toEqual({ ref: "WidgetStatus" });
     expect(doc.endpoints[0].parameters[0].schema).toEqual({ ref: "WidgetStatus" });
-    expect(doc.endpoints[1].request_body.schema).toEqual({ ref: "WidgetStatus" });
+    expect(doc.endpoints[1].request_body.contents[0].schema).toEqual({ ref: "WidgetStatus" });
+  });
+
+  it("emits v2 IR for optimized TypeSpec HTTP authoring", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Optimized API" })
+      namespace OptimizedAPI;
+
+      model Error {
+        code: int32;
+        message: string;
+      }
+
+      model Artifact {
+        id: string;
+      }
+
+      model ArtifactCreate {
+        name: string;
+      }
+
+      model Metadata {
+        name: string;
+      }
+
+      model OkJson<T> {
+        ...OkResponse;
+        ...Body<T>;
+      }
+
+      model CreatedJson<T> {
+        ...CreatedResponse;
+        ...Body<T>;
+      }
+
+      model BadRequest {
+        ...BadRequestResponse;
+        ...Body<Error>;
+      }
+
+      model RateLimited {
+        ...Response<429>;
+        ...Body<Error>;
+      }
+
+      alias CommonErrors = BadRequest | RateLimited;
+
+      @route("/artifacts")
+      namespace Artifacts {
+        @route("/{id}")
+        @get
+        op get(@path id: string): OkJson<Artifact> | CommonErrors;
+
+        @post
+        op create(@body body?: ArtifactCreate): CreatedJson<Artifact> | CommonErrors;
+
+        @route("/{id}/text")
+        @put
+        op replaceText(@path id: string, @header contentType: "text/plain", @body body: string): OkJson<Artifact> | CommonErrors;
+
+        @route("/{id}/blob")
+        @put
+        op replaceBlob(@path id: string, @header contentType: "application/octet-stream", @body body: bytes): OkJson<Artifact> | CommonErrors;
+
+        @route("/{id}/file")
+        @put
+        op replaceFile(@path id: string, @bodyRoot body: File<"application/octet-stream", bytes>): OkJson<Artifact> | CommonErrors;
+
+        @route("/{id}/form")
+        @put
+        op replaceForm(@path id: string, @header contentType: "application/x-www-form-urlencoded", @body body: Metadata): OkJson<Artifact> | CommonErrors;
+
+        @route("/{id}/multipart")
+        @put
+        op replaceMultipart(@path id: string, @multipartBody body: {
+          metadata: HttpPart<Metadata>;
+          artifact: HttpPart<File<"application/octet-stream", bytes>>;
+        }): OkJson<Artifact> | CommonErrors;
+      }
+    `);
+
+    expect(doc.schema_version).toBe("v2");
+    expect(doc.endpoints.map((x: any) => x.path)).toEqual([
+      "/artifacts/{id}",
+      "/artifacts",
+      "/artifacts/{id}/text",
+      "/artifacts/{id}/blob",
+      "/artifacts/{id}/file",
+      "/artifacts/{id}/form",
+      "/artifacts/{id}/multipart",
+    ]);
+    expect(doc.endpoints[0].responses.map((x: any) => x.status_code)).toEqual([200, 400, 429]);
+    expect(doc.endpoints[1].request_body.required).toBe(false);
+    expect(doc.endpoints[2].request_body.contents[0].body_kind).toBe("text");
+    expect(doc.endpoints[3].request_body.contents[0]).toMatchObject({
+      content_type: "application/octet-stream",
+      body_kind: "binary",
+      schema: { type: "string", format: "binary" },
+    });
+    expect(doc.endpoints[4].request_body.contents[0].body_kind).toBe("file");
+    expect(doc.endpoints[5].request_body.contents[0].body_kind).toBe("form_urlencoded");
+    expect(doc.endpoints[6].request_body.contents[0].body_kind).toBe("multipart");
+    expect(doc.endpoints[6].request_body.contents[0].parts.map((x: any) => x.name)).toEqual([
+      "metadata",
+      "artifact",
+    ]);
+  });
+
+  it("merges same-status response variants into ordered IR contents", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Multi Content API" })
+      namespace MultiContentAPI;
+
+      model Artifact {
+        id: string;
+      }
+
+      model JSONArtifact {
+        ...OkResponse;
+        ...Body<Artifact>;
+      }
+
+      model BinaryArtifact {
+        ...OkResponse;
+        @header contentType: "application/octet-stream";
+        @body body: bytes;
+      }
+
+      @route("/artifacts/{id}")
+      @get
+      op getArtifact(@path id: string): JSONArtifact | BinaryArtifact;
+    `);
+
+    const response = doc.endpoints[0].responses[0];
+    expect(doc.endpoints[0].responses).toHaveLength(1);
+    expect(response.status_code).toBe(200);
+    expect(response.contents).toEqual([
+      {
+        content_type: "application/json",
+        body_kind: "json",
+        schema: { ref: "Artifact" },
+      },
+      {
+        content_type: "application/octet-stream",
+        body_kind: "binary",
+        schema: { type: "string", format: "binary" },
+      },
+    ]);
+  });
+
+  it("coalesces shared-route content variants and literal accept headers", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Shared Route API" })
+      namespace SharedRouteAPI;
+
+      model Artifact {
+        id: string;
+      }
+
+      model JsonArtifact {
+        ...OkResponse;
+        ...Body<Artifact>;
+      }
+
+      model BinaryArtifact {
+        ...OkResponse;
+        @header contentType: "application/octet-stream";
+        @body body: bytes;
+      }
+
+      @route("/artifacts/{id}")
+      @sharedRoute
+      @get
+      op getArtifactJson(@path id: string, @header accept: "application/json"): JsonArtifact;
+
+      @route("/artifacts/{id}")
+      @sharedRoute
+      @get
+      op getArtifactBinary(@path id: string, @header accept: "application/octet-stream"): BinaryArtifact;
+    `);
+
+    expect(doc.endpoints).toHaveLength(1);
+    expect(doc.endpoints[0]).toMatchObject({
+      method: "get",
+      path: "/artifacts/{id}",
+      operation_id: "getArtifactJson",
+    });
+    expect(doc.endpoints[0].parameters).toEqual([
+      { name: "id", in: "path", required: true, schema: { type: "string" } },
+      {
+        name: "accept",
+        in: "header",
+        required: true,
+        schema: { type: "string", enum: ["application/json", "application/octet-stream"] },
+      },
+    ]);
+    expect(doc.endpoints[0].responses).toHaveLength(1);
+    expect(doc.endpoints[0].responses[0].contents).toEqual([
+      { content_type: "application/json", body_kind: "json", schema: { ref: "Artifact" } },
+      {
+        content_type: "application/octet-stream",
+        body_kind: "binary",
+        schema: { type: "string", format: "binary" },
+      },
+    ]);
+  });
+
+  it("coalesces overload content variants into the overload base operation", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Overload API" })
+      namespace OverloadAPI;
+
+      model Artifact {
+        id: string;
+      }
+
+      model JsonArtifact {
+        ...OkResponse;
+        ...Body<Artifact>;
+      }
+
+      model BinaryArtifact {
+        ...OkResponse;
+        @header contentType: "application/octet-stream";
+        @body body: bytes;
+      }
+
+      @route("/artifacts/{id}")
+      @get
+      op getArtifact(@path id: string, @header accept: "application/json" | "application/octet-stream"): JsonArtifact | BinaryArtifact;
+
+      @overload(getArtifact)
+      op getArtifactJson(@path id: string, @header accept: "application/json"): JsonArtifact;
+
+      @overload(getArtifact)
+      op getArtifactBinary(@path id: string, @header accept: "application/octet-stream"): BinaryArtifact;
+    `);
+
+    expect(doc.endpoints).toHaveLength(1);
+    expect(doc.endpoints[0].operation_id).toBe("getArtifact");
+    expect(doc.endpoints[0].parameters[1].schema).toEqual({
+      type: "string",
+      enum: ["application/json", "application/octet-stream"],
+    });
+    expect(doc.endpoints[0].responses[0].contents.map((x: any) => x.content_type)).toEqual([
+      "application/json",
+      "application/octet-stream",
+    ]);
+  });
+
+  it("deduplicates identical same-status content variants", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Duplicate Content API" })
+      namespace DuplicateContentAPI;
+
+      model Widget {
+        id: string;
+      }
+
+      model JsonWidget {
+        ...OkResponse;
+        ...Body<Widget>;
+      }
+
+      @route("/widgets/{id}")
+      @sharedRoute
+      @get
+      op getWidgetA(@path id: string, @header accept: "application/json"): JsonWidget;
+
+      @route("/widgets/{id}")
+      @sharedRoute
+      @get
+      op getWidgetB(@path id: string, @header accept: "application/vnd.widget+json"): JsonWidget;
+    `);
+
+    expect(doc.endpoints[0].responses[0].contents).toEqual([
+      { content_type: "application/json", body_kind: "json", schema: { ref: "Widget" } },
+    ]);
+  });
+
+  it("fails without writing IR for incompatible same-status content variants with the same media type", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Duplicate Content API" })
+        namespace DuplicateContentAPI;
+
+        model Widget {
+          id: string;
+        }
+
+        model OtherWidget {
+          name: string;
+        }
+
+        model WidgetResponse {
+          ...OkResponse;
+          ...Body<Widget>;
+        }
+
+        model OtherWidgetResponse {
+          ...OkResponse;
+          ...Body<OtherWidget>;
+        }
+
+        @route("/widgets/{id}")
+        @sharedRoute
+        @get
+        op getWidgetA(@path id: string, @header accept: "application/json"): WidgetResponse;
+
+        @route("/widgets/{id}")
+        @sharedRoute
+        @get
+        op getWidgetB(@path id: string, @header accept: "application/vnd.widget+json"): OtherWidgetResponse;
+      `,
+      "incompatible response content for status 200 and content type application/json",
+    );
+  });
+
+  it("fails without writing IR when shared-route operations disagree on APIGen metadata", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Shared Metadata API" })
+        namespace SharedMetadataAPI;
+
+        @route("/widgets")
+        @sharedRoute
+        @get
+        @apigen.cli(#{ command: #["widgets", "get"] })
+        op getWidgetJson(@header accept: "application/json"): string;
+
+        @route("/widgets")
+        @sharedRoute
+        @get
+        @apigen.cli(#{ command: #["widgets", "download"] })
+        op getWidgetBinary(@header accept: "application/octet-stream"): bytes;
+      `,
+      "incompatible cli metadata",
+    );
+  });
+
+  it("fails without writing IR when shared-route operations disagree on authz metadata", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Shared Authz API" })
+        namespace SharedAuthzAPI;
+
+        @route("/widgets")
+        @sharedRoute
+        @get
+        @apigen.authz(#{ action: "read" })
+        op getWidgetJson(@header accept: "application/json"): string;
+
+        @route("/widgets")
+        @sharedRoute
+        @get
+        @apigen.authz(#{ action: "download" })
+        op getWidgetBinary(@header accept: "application/octet-stream"): bytes;
+      `,
+      "incompatible authz metadata",
+    );
+  });
+
+  it("fails without writing IR when shared-route operations disagree on auth", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Shared Auth API" })
+        namespace SharedAuthAPI;
+
+        @route("/widgets")
+        @sharedRoute
+        @get
+        @useAuth(BearerAuth)
+        op getWidgetJson(@header accept: "application/json"): string;
+
+        @route("/widgets")
+        @sharedRoute
+        @get
+        @useAuth(ApiKeyAuth<ApiKeyLocation.header, "X-API-Key">)
+        op getWidgetBinary(@header accept: "application/octet-stream"): bytes;
+      `,
+      "incompatible authentication",
+    );
+  });
+
+  it("fails without writing IR when shared-route operations disagree on manual handling", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Shared Manual API" })
+        namespace SharedManualAPI;
+
+        @route("/widgets")
+        @sharedRoute
+        @get
+        @apigen.manual
+        op getWidgetJson(@header accept: "application/json"): string;
+
+        @route("/widgets")
+        @sharedRoute
+        @get
+        op getWidgetBinary(@header accept: "application/octet-stream"): bytes;
+      `,
+      "incompatible manual metadata",
+    );
+  });
+
+  it("fails without writing IR when shared-route operations disagree on request bodies or non-literal parameters", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Shared Body API" })
+        namespace SharedBodyAPI;
+
+        model Widget {
+          name: string;
+        }
+
+        @route("/widgets")
+        @sharedRoute
+        @post
+        op createJson(@header contentType: "application/json", @query version: int32, @body body: Widget): string;
+
+        @route("/widgets")
+        @sharedRoute
+        @post
+        op createText(@header contentType: "text/plain", @query version: string, @body body: string): string;
+      `,
+      "incompatible parameter schema version",
+    );
+  });
+
+  it("fails without writing IR when shared-route operations disagree on request bodies", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Shared Body API" })
+        namespace SharedBodyAPI;
+
+        model Widget {
+          name: string;
+        }
+
+        @route("/widgets")
+        @sharedRoute
+        @post
+        op createJson(@header contentType: "application/json", @body body: Widget): string;
+
+        @route("/widgets")
+        @sharedRoute
+        @post
+        op createText(@header contentType: "text/plain", @body body: string): string;
+      `,
+      "incompatible request bodies",
+    );
+  });
+
+  it("expands TypeSpec status-code unions into concrete IR responses", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Status Union API" })
+      namespace StatusUnionAPI;
+
+      model Widget {
+        id: string;
+      }
+
+      model CreatedOrAccepted {
+        @statusCode status: 201 | 202;
+        @body body: Widget;
+      }
+
+      @route("/widgets")
+      @post
+      op create(): CreatedOrAccepted;
+    `);
+
+    expect(doc.endpoints[0].responses.map((response: any) => response.status_code)).toEqual([
+      201,
+      202,
+    ]);
+    expect(doc.endpoints[0].responses[0].contents[0]).toEqual({
+      content_type: "application/json",
+      body_kind: "json",
+      schema: { ref: "Widget" },
+    });
+  });
+
+  it("fails without writing IR for cookie parameters", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Cookie API" })
+        namespace CookieAPI;
+
+        @route("/widgets")
+        @get
+        op list(@cookie session: string): string;
+      `,
+      "cookie parameters are not supported",
+    );
+  });
+
+  it("fails without writing IR for unsupported advanced auth schemes", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        alias MyOAuth2<Scopes extends string[]> = OAuth2Auth<
+          [
+            {
+              type: OAuth2FlowType.implicit;
+              authorizationUrl: "https://api.example.com/oauth2/authorize";
+            }
+          ],
+          Scopes
+        >;
+
+        @service(#{ title: "OAuth API" })
+        @useAuth(MyOAuth2<["read"]>)
+        namespace OAuthAPI {
+          @route("/widgets")
+          @get
+          op list(): string;
+        }
+      `,
+      "oauth2 authentication is not supported",
+    );
+  });
+
+  it("fails without writing IR for non-runtime-compatible auth schemes", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Basic Auth API" })
+        @useAuth(BasicAuth)
+        namespace BasicAuthAPI {
+          @route("/widgets")
+          @get
+          op list(): string;
+        }
+      `,
+      "http Basic authentication is not supported",
+    );
+
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Custom API Key API" })
+        @useAuth(ApiKeyAuth<ApiKeyLocation.header, "X-Custom-Key">)
+        namespace CustomAPIKeyAPI {
+          @route("/widgets")
+          @get
+          op list(): string;
+        }
+      `,
+      "header API key name X-Custom-Key is not supported",
+    );
+
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Query API Key API" })
+        @useAuth(ApiKeyAuth<ApiKeyLocation.query, "api_key">)
+        namespace QueryAPIKeyAPI {
+          @route("/widgets")
+          @get
+          op list(): string;
+        }
+      `,
+      "apiKey authentication in query is not supported",
+    );
+  });
+
+  it("emits TypeSpec-native file and multipart metadata", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Multipart API" })
+      namespace MultipartAPI;
+
+      model Metadata {
+        name: string;
+      }
+
+      model OkJson<T> {
+        ...OkResponse;
+        ...Body<T>;
+      }
+
+      model Artifact {
+        id: string;
+      }
+
+      @route("/blob")
+      @put
+      op uploadBlob(@body body: bytes): OkJson<Artifact>;
+
+      @route("/file")
+      @put
+      op uploadFile(@bodyRoot body: File<"application/octet-stream", bytes>): OkJson<Artifact>;
+
+      @route("/multipart")
+      @post
+      op uploadMultipart(@multipartBody body: {
+        metadata: HttpPart<Metadata>;
+        displayName?: HttpPart<string, #{ name: "display-name" }>;
+        attachments: HttpPart<File<"application/octet-stream", bytes>>[];
+        samples: HttpPart<string[]>;
+      }): OkJson<Artifact>;
+
+      @route("/mixed")
+      @post
+      op uploadMixed(@header contentType: "multipart/mixed", @multipartBody body: [
+        HttpPart<string>,
+        HttpPart<File<"application/octet-stream", bytes>, #{ name: "payload" }>,
+      ]): OkJson<Artifact>;
+    `);
+
+    expect(doc.endpoints[0].request_body.contents[0]).toMatchObject({
+      content_type: "application/octet-stream",
+      body_kind: "binary",
+      schema: { type: "string", format: "binary" },
+    });
+    expect(doc.endpoints[1].request_body.contents[0]).toMatchObject({
+      content_type: "application/octet-stream",
+      body_kind: "file",
+      schema: { type: "string", format: "binary" },
+    });
+    expect(doc.endpoints[2].request_body.contents[0].parts).toEqual([
+      {
+        name: "metadata",
+        wire_name: "metadata",
+        part_kind: "model",
+        required: true,
+        content_type: "application/json",
+        body_kind: "json",
+        schema: { ref: "Metadata" },
+      },
+      {
+        name: "displayName",
+        wire_name: "display-name",
+        part_kind: "model",
+        required: false,
+        content_type: "text/plain",
+        body_kind: "text",
+        schema: { type: "string" },
+      },
+      {
+        name: "attachments",
+        wire_name: "attachments",
+        part_kind: "model",
+        repeated: true,
+        required: true,
+        content_type: "application/octet-stream",
+        body_kind: "file",
+        filename: true,
+        schema: { type: "string", format: "binary" },
+      },
+      {
+        name: "samples",
+        wire_name: "samples",
+        part_kind: "model",
+        required: true,
+        content_type: "application/json",
+        body_kind: "json",
+        schema: { type: "array", items: { type: "string" } },
+      },
+    ]);
+    expect(doc.endpoints[3].request_body.contents[0]).toMatchObject({
+      content_type: "multipart/mixed",
+      body_kind: "multipart",
+    });
+    expect(doc.endpoints[3].request_body.contents[0].parts).toEqual([
+      {
+        name: "part1",
+        part_kind: "tuple",
+        required: true,
+        content_type: "text/plain",
+        body_kind: "text",
+        schema: { type: "string" },
+      },
+      {
+        name: "part2",
+        wire_name: "payload",
+        part_kind: "tuple",
+        required: true,
+        content_type: "application/octet-stream",
+        body_kind: "file",
+        filename: true,
+        schema: { type: "string", format: "binary" },
+      },
+    ]);
   });
 
   it("fails without writing IR for inline string literal unions", async () => {
@@ -387,6 +1108,15 @@ async function compileSource(source: string, outputFile?: string) {
   await writeFile(join(fixtureDir, "main.tsp"), source);
   await compileDirectory(fixtureDir, irPath);
   return JSON.parse(await readFile(irPath, "utf8"));
+}
+
+async function expectCompileFails(source: string, message: string) {
+  const outDir = await mkdtemp(join(tmpdir(), "apigen-typespec-"));
+  const irPath = join(outDir, "json-ir.json");
+  await expect(compileSource(source, irPath)).rejects.toSatisfy((error: any) =>
+    `${error.stdout}\n${error.stderr}`.includes(message),
+  );
+  await expect(stat(irPath)).rejects.toMatchObject({ code: "ENOENT" });
 }
 
 async function compileDirectory(sourceDir: string, outputFile: string) {

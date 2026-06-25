@@ -3,8 +3,11 @@ package cobra
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -177,6 +180,15 @@ func newGeneratedLeafCommand(spec CommandSpec, client *Client, opts RuntimeOptio
 		if spec.RequestBody.InputMode == "json" || spec.RequestBody.InputMode == "flags_or_json" {
 			cmd.Flags().String("json", "", "JSON input (raw string or @filename or - for stdin)")
 		}
+		if spec.RequestBody.InputMode == "text" {
+			cmd.Flags().String("text", "", "Text input (raw string or @filename or - for stdin)")
+		}
+		if spec.RequestBody.InputMode == "binary" || spec.RequestBody.InputMode == "file" {
+			cmd.Flags().String("file", "", "Binary/file input path (- for stdin)")
+		}
+		if spec.RequestBody.InputMode == "multipart" {
+			cmd.Flags().StringArray("part", nil, "Multipart part input name=value, name=@file, or name=-")
+		}
 		if spec.RequestBody.InputMode == "flags" || spec.RequestBody.InputMode == "flags_or_json" {
 			for _, field := range spec.RequestBody.Fields {
 				if _, ok := positional["body:"+field.Name]; ok {
@@ -238,6 +250,7 @@ func runGeneratedCommand(cmd *spcobra.Command, client *Client, spec CommandSpec,
 	}
 
 	query := url.Values{}
+	headers := http.Header{}
 	for _, parameter := range spec.Parameters {
 		if parameter.In != "query" {
 			continue
@@ -251,6 +264,19 @@ func runGeneratedCommand(cmd *spcobra.Command, client *Client, spec CommandSpec,
 		}
 		addQueryValue(query, parameter.Name, value)
 	}
+	for _, parameter := range spec.Parameters {
+		if parameter.In != "header" {
+			continue
+		}
+		value, ok, err := resolveTypedInputValue(cmd, parameter.Name, parameter.Type, "header", argValues)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		headers.Add(parameter.Name, fmt.Sprint(value))
+	}
 
 	var body any
 	if spec.RequestBody != nil {
@@ -263,14 +289,15 @@ func runGeneratedCommand(cmd *spcobra.Command, client *Client, spec CommandSpec,
 
 	allPages, _ := cmd.Flags().GetBool("all")
 	if allPages && spec.Pagination != nil {
-		bodyBytes, err := fetchAllPages(client, spec, urlPath, query)
+		bodyBytes, err := fetchAllPages(client, spec, urlPath, query, headers)
 		if err != nil {
 			return err
 		}
 		return renderResponseBody(cmd, spec, bodyBytes, opts)
 	}
 
-	resp, err := client.Do(spec.Method, urlPath, query, body)
+	contentType, bodyKind := requestContent(spec.RequestBody)
+	resp, err := client.DoWithHeaders(spec.Method, urlPath, query, headers, body, contentType, bodyKind)
 	if err != nil {
 		return err
 	}
@@ -302,6 +329,24 @@ func buildRequestBody(cmd *spcobra.Command, spec CommandSpec, argValues map[stri
 	switch requestBody.InputMode {
 	case "none":
 		return nil, nil
+	case "text":
+		textInput, _ := cmd.Flags().GetString("text")
+		if strings.TrimSpace(textInput) == "" {
+			if requestBody.Required {
+				return nil, fmt.Errorf("request body is required; use --text")
+			}
+			return nil, nil
+		}
+		return readRawStringInput(textInput)
+	case "binary", "file":
+		path, _ := cmd.Flags().GetString("file")
+		if strings.TrimSpace(path) == "" {
+			if requestBody.Required {
+				return nil, fmt.Errorf("request body is required; use --file")
+			}
+			return nil, nil
+		}
+		return readRawBytesInput(path)
 	case "json":
 		jsonInput, _ := cmd.Flags().GetString("json")
 		if strings.TrimSpace(jsonInput) == "" {
@@ -311,6 +356,8 @@ func buildRequestBody(cmd *spcobra.Command, spec CommandSpec, argValues map[stri
 			return nil, nil
 		}
 		return readRawJSONInput(jsonInput)
+	case "multipart":
+		return buildMultipartBody(cmd, requestBody)
 	case "flags", "flags_or_json":
 		if requestBody.InputMode == "flags_or_json" {
 			jsonInput, _ := cmd.Flags().GetString("json")
@@ -323,10 +370,13 @@ func buildRequestBody(cmd *spcobra.Command, spec CommandSpec, argValues map[stri
 		}
 
 		body := map[string]any{}
+		form := url.Values{}
 		setCount := 0
 		for _, field := range requestBody.Fields {
 			if value, ok := argValues["body:"+field.Name]; ok {
-				body[field.Name] = castStringValue(value, field.Type)
+				casted := castStringValue(value, field.Type)
+				body[field.Name] = casted
+				form.Set(field.Name, fmt.Sprint(casted))
 				setCount++
 				continue
 			}
@@ -342,11 +392,15 @@ func buildRequestBody(cmd *spcobra.Command, spec CommandSpec, argValues map[stri
 				return nil, err
 			}
 			body[field.Name] = value
+			form.Set(field.Name, fmt.Sprint(value))
 			setCount++
 		}
 
 		if requestBody.Required && setCount == 0 {
 			return nil, fmt.Errorf("request body is required")
+		}
+		if requestBody.BodyKind == "form_urlencoded" {
+			return form, nil
 		}
 		return body, nil
 	default:
@@ -354,7 +408,154 @@ func buildRequestBody(cmd *spcobra.Command, spec CommandSpec, argValues map[stri
 	}
 }
 
-func fetchAllPages(client *Client, spec CommandSpec, path string, baseQuery url.Values) ([]byte, error) {
+func buildMultipartBody(cmd *spcobra.Command, requestBody *RequestBodySpec) (any, error) {
+	rawParts, _ := cmd.Flags().GetStringArray("part")
+	byName := make(map[string]MultipartPartSpec, len(requestBody.Parts))
+	seen := make(map[string]int, len(requestBody.Parts))
+	collected := make(map[string][]MultipartPart, len(requestBody.Parts))
+	for _, spec := range requestBody.Parts {
+		byName[spec.Name] = spec
+	}
+
+	for _, raw := range rawParts {
+		name, value, ok := strings.Cut(raw, "=")
+		if !ok || strings.TrimSpace(name) == "" {
+			return nil, fmt.Errorf("multipart parts must use name=value, name=@file, or name=-")
+		}
+		name = strings.TrimSpace(name)
+		spec, ok := byName[name]
+		if !ok {
+			return nil, fmt.Errorf("unknown multipart part %q", name)
+		}
+		seen[name]++
+		if seen[name] > 1 && !spec.Repeated {
+			return nil, fmt.Errorf("duplicate multipart part %q", name)
+		}
+		part, err := parseMultipartPartInput(spec, value)
+		if err != nil {
+			return nil, err
+		}
+		collected[name] = append(collected[name], part)
+	}
+
+	hasRequiredPart := false
+	for _, spec := range requestBody.Parts {
+		if spec.Required {
+			hasRequiredPart = true
+		}
+		if spec.Required && len(collected[spec.Name]) == 0 {
+			return nil, fmt.Errorf("required multipart part %q is missing", spec.Name)
+		}
+	}
+	if requestBody.Required && len(rawParts) == 0 && !hasRequiredPart {
+		return nil, fmt.Errorf("request body is required; use --part")
+	}
+
+	body := MultipartBody{ContentType: requestBody.ContentType}
+	for _, spec := range requestBody.Parts {
+		body.Parts = append(body.Parts, collected[spec.Name]...)
+	}
+	return body, nil
+}
+
+func parseMultipartPartInput(spec MultipartPartSpec, value string) (MultipartPart, error) {
+	data, filename, err := readMultipartPartInput(spec, value)
+	if err != nil {
+		return MultipartPart{}, err
+	}
+	return MultipartPart{
+		Name:        multipartPartWireName(spec),
+		ContentType: defaultGeneratedContentType(spec.ContentType),
+		BodyKind:    spec.BodyKind,
+		Filename:    filename,
+		Data:        data,
+	}, nil
+}
+
+func readMultipartPartInput(spec MultipartPartSpec, value string) ([]byte, *string, error) {
+	switch spec.BodyKind {
+	case "json", "form_urlencoded":
+		data, filename, err := readMultipartTextOrFile(value)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read multipart part %q: %w", spec.Name, err)
+		}
+		if spec.BodyKind == "json" && !json.Valid(data) {
+			return nil, nil, fmt.Errorf("multipart part %q must be valid JSON", spec.Name)
+		}
+		return data, filename, nil
+	case "text":
+		data, filename, err := readMultipartTextOrFile(value)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read multipart part %q: %w", spec.Name, err)
+		}
+		return data, filename, nil
+	case "binary", "file":
+		if value != "-" && !strings.HasPrefix(value, "@") {
+			return nil, nil, fmt.Errorf("multipart part %q requires @file or - input", spec.Name)
+		}
+		data, filename, err := readMultipartFileOrStdin(value)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read multipart part %q: %w", spec.Name, err)
+		}
+		if spec.BodyKind == "binary" {
+			filename = nil
+		}
+		return data, filename, nil
+	default:
+		return nil, nil, fmt.Errorf("multipart part %q has unsupported body kind %q", spec.Name, spec.BodyKind)
+	}
+}
+
+func readMultipartTextOrFile(value string) ([]byte, *string, error) {
+	if value == "-" {
+		data, err := io.ReadAll(os.Stdin)
+		return data, nil, err
+	}
+	if strings.HasPrefix(value, "@") {
+		return readMultipartFileOrStdin(value)
+	}
+	return []byte(value), nil, nil
+}
+
+func readMultipartFileOrStdin(value string) ([]byte, *string, error) {
+	if value == "-" || value == "@-" {
+		data, err := io.ReadAll(os.Stdin)
+		return data, nil, err
+	}
+	path := strings.TrimPrefix(value, "@")
+	if strings.TrimSpace(path) == "" {
+		return nil, nil, fmt.Errorf("file path is required")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	name := filepath.Base(path)
+	return data, &name, nil
+}
+
+func multipartPartWireName(spec MultipartPartSpec) string {
+	if strings.TrimSpace(spec.WireName) != "" {
+		return spec.WireName
+	}
+	return spec.Name
+}
+
+func defaultGeneratedContentType(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "application/json"
+	}
+	return value
+}
+
+func requestContent(requestBody *RequestBodySpec) (string, string) {
+	if requestBody == nil {
+		return "", ""
+	}
+	return requestBody.ContentType, requestBody.BodyKind
+}
+
+func fetchAllPages(client *Client, spec CommandSpec, path string, baseQuery url.Values, headers http.Header) ([]byte, error) {
 	if spec.Pagination == nil {
 		return nil, fmt.Errorf("pagination is not configured")
 	}
@@ -375,7 +576,7 @@ func fetchAllPages(client *Client, spec CommandSpec, path string, baseQuery url.
 			query.Set("page_token", pageToken)
 		}
 
-		resp, err := client.Do(spec.Method, path, query, nil)
+		resp, err := client.DoWithHeaders(spec.Method, path, query, headers, nil, "", "")
 		if err != nil {
 			return nil, err
 		}
@@ -752,6 +953,35 @@ func readRawJSONInput(jsonInput string) (any, error) {
 	}
 
 	return raw, nil
+}
+
+func readRawStringInput(value string) (string, error) {
+	if value == "-" {
+		data, err := os.ReadFile("/dev/stdin")
+		if err != nil {
+			return "", fmt.Errorf("read stdin: %w", err)
+		}
+		return string(data), nil
+	}
+	if strings.HasPrefix(value, "@") {
+		data, err := os.ReadFile(value[1:])
+		if err != nil {
+			return "", fmt.Errorf("read file: %w", err)
+		}
+		return string(data), nil
+	}
+	return value, nil
+}
+
+func readRawBytesInput(path string) ([]byte, error) {
+	if path == "-" {
+		data, err := os.ReadFile("/dev/stdin")
+		if err != nil {
+			return nil, fmt.Errorf("read stdin: %w", err)
+		}
+		return data, nil
+	}
+	return os.ReadFile(path)
 }
 
 func outputFormat(cmd *spcobra.Command) OutputFormat {

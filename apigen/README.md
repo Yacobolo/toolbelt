@@ -9,7 +9,7 @@ Module path: `github.com/Yacobolo/toolbelt/apigen`
 APIGen has two contract layers:
 
 - TypeSpec authoring input for humans
-- JSON IR `v1` for generators
+- JSON IR `v2` for generators
 
 Canonical OpenAPI is the published API artifact. JSON IR is the compatibility boundary between TypeSpec and the Go emitters. Repo-owned OpenAPI extensions such as `x-authz` are preserved there.
 
@@ -18,7 +18,7 @@ Canonical OpenAPI is the published API artifact. JSON IR is the compatibility bo
 Install the CLI:
 
 ```bash
-go install github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.3.0
+go install github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.3.2
 ```
 
 Or run from this module during local development:
@@ -137,16 +137,121 @@ APIGen-owned extension keys are reserved. Use APIGen decorators for `x-authz` an
 Install as a dependency with:
 
 ```bash
-go get github.com/Yacobolo/toolbelt/apigen@v0.3.0
+go get github.com/Yacobolo/toolbelt/apigen@v0.3.2
 ```
 
 ## Contract Notes
 
-JSON IR currently supports schema version `v1`. Required root fields are `schema_version`, `info.title`, `info.version`, and at least one endpoint. Endpoint extensions preserve operation-level `x-*` vendor metadata; APIGen-owned endpoint extensions include `x-authz` and `x-apigen-manual`. Supported response extensions include `x-apigen-response-shape`.
+JSON IR currently supports schema version `v2`. Required root fields are `schema_version`, `info.title`, `info.version`, and at least one endpoint. Request and response bodies use ordered `contents` entries with explicit `content_type` and `body_kind`. Endpoint extensions preserve operation-level `x-*` vendor metadata; APIGen-owned endpoint extensions include `x-authz` and `x-apigen-manual`. Supported response extensions include `x-apigen-response-shape`.
+
+Endpoint parameters support TypeSpec path, query, and header parameters across IR, OpenAPI, generated server binding, and generated CLI flags. Cookie parameters intentionally fail closed in v0.3.2.
+
+Supported TypeSpec auth is intentionally narrow and runtime-backed: HTTP Bearer auth and `ApiKeyAuth<ApiKeyLocation.header, "X-API-Key">`. Basic/Digest/custom HTTP schemes, OAuth/OpenID, non-header API keys, and header API keys with other names fail closed instead of emitting misleading runtime or OpenAPI metadata.
 
 Generated request bodies are contract-first:
 
-- request bodies used in generated server and request-model output must resolve to named IR-owned schemas
-- generation fails explicitly when a request body cannot be mapped to a named IR schema
+- JSON and form object bodies used in generated Go output should resolve to named IR-owned schemas
+- text bodies generate `string`, raw `bytes` bodies generate `[]byte`, and TypeSpec `Http.File` bodies generate `GenFile`
+- `GenFile` carries `Contents []byte`, optional streaming `Reader io.ReadCloser`, `ContentType string`, optional `Filename *string`, and optional `Size *int64`; response writers stream `Reader` when present and set `Content-Type`/`Content-Disposition` from that metadata
+- raw `Http.File` request bodies pass `r.Body` through as `GenFile.Reader`; multipart `Http.File` parts spool to temporary files and are cleaned up after the handler returns
+- multipart bodies generate a `Gen<Operation>MultipartBody` struct; JSON/form parts decode into generated schema types, text parts into `string`, raw bytes into `[]byte`, and `Http.File` parts into streaming `GenFile`
+- repeated multipart parts generate slices, optional single parts generate pointers, and `multipart/mixed` tuple parts are decoded in wire order
+- generated multipart server decoding is strict: unknown form-data part names, duplicate non-repeated form-data parts, and extra mixed tuple parts return `400`
+- generation fails explicitly when an anonymous object body cannot be mapped to a named IR schema
+- generated CLI supports multipart request bodies with repeated `--part name=value`, `--part name=@file`, or `--part name=-` flags; binary and file parts require `@file` or stdin
+
+Generated response writers are content-aware. Single-content responses keep concise names such as `GenGetArtifact200JSONResponse`, `GenGetArtifact200TextResponse`, and `GenGetArtifact200BinaryResponse`. When one status can return multiple media types, APIGen emits one concrete type per content variant using sanitized media names, for example `GenGetArtifact200ApplicationJSONResponse` and `GenGetArtifact200ApplicationOctetStreamResponse`. Each writer sets the authored `Content-Type`. Identical duplicate content variants are deduplicated; incompatible same-status variants with the same `content_type` fail closed instead of being approximated with `anyOf`.
+
+## Preferred TypeSpec Style
+
+Prefer TypeSpec-native HTTP helpers and aliases over APIGen-shaped response boilerplate:
+
+```typespec
+using Http;
+
+model Error {
+  code: int32;
+  message: string;
+}
+
+model OkJson<T> {
+  ...OkResponse;
+  ...Body<T>;
+}
+
+model BadRequest {
+  ...BadRequestResponse;
+  ...Body<Error>;
+}
+
+model RateLimited {
+  ...Response<429>;
+  ...Body<Error>;
+}
+
+alias CommonErrors = BadRequest | RateLimited;
+
+@route("/artifacts")
+namespace Artifacts {
+  @route("/{id}/blob")
+  @put
+  op replaceBlob(
+    @path id: string,
+    @header contentType: "application/octet-stream",
+    @body body: bytes,
+  ): OkJson<Artifact> | CommonErrors;
+}
+```
+
+APIGen v0.3.2 follows resolved `@typespec/http` semantics for JSON, text, binary, file, urlencoded form, multipart, optional bodies, response helpers, aliased response unions, and route containers.
+Content negotiation can use TypeSpec `@sharedRoute` or `@overload`; APIGen coalesces compatible same-method/same-path operations into one endpoint, merges literal `Accept`/`contentType` headers into enum-like parameters, and fails closed when auth, APIGen CLI/authz/manual metadata, operation extensions, parameters, or request bodies disagree.
+
+LibreDash-style contracts should use standard HTTP transport instead of raw-body extensions. Before:
+
+```typespec
+model DeploymentArtifactUploadRequest {
+  value: bytes;
+}
+
+@extension("x-libredash-dispatch", "raw-body")
+op uploadDeploymentArtifact(@body body: DeploymentArtifactUploadRequest): UploadDeploymentArtifactOK | BadRequest | Unauthorized | Forbidden;
+```
+
+After:
+
+```typespec
+alias CommonErrors = BadRequest | Unauthorized | Forbidden;
+
+@route("/api/v1")
+namespace Deployments {
+  @route("/workspaces/{workspace}/deployments/{deployment}/artifact")
+  @put
+  op uploadDeploymentArtifact(
+    @path workspace: string,
+    @path deployment: string,
+    @header contentType: "application/octet-stream",
+    @body body: bytes,
+  ): OkJson<DeploymentArtifactResponse> | CommonErrors;
+}
+```
+
+## v0.3.2 Migration Notes
+
+- JSON IR changes from `schema_version: "v1"` to `"v2"`.
+- `request_body.schema/content_type` becomes `request_body.contents[]`.
+- `response.schema/content_type/any_of` becomes `response.contents[]`.
+- Generated non-JSON request/response types are no longer named `JSONBody` or `JSONResponse`.
+- Multi-content responses now generate media-specific concrete response names such as `ApplicationJSONResponse` and `ApplicationOctetStreamResponse`.
+- Raw `bytes` request/response bodies generate `[]byte`; TypeSpec `Http.File` request/response/multipart bodies generate `GenFile`.
+- `GenFile` adds streaming fields: `Reader io.ReadCloser` and `Size *int64`. Existing simple in-memory use via `Contents []byte` remains valid.
+- Multipart requests now generate typed multipart body structs and streaming multipart decoding for `Http.File` parts. Repeated parts are slices; optional single parts are pointers; named form-data parts use the TypeSpec part name and mixed tuple parts use wire order.
+- Generated strict request structs now include typed `Gen<Operation>Headers` when the operation has header parameters; generated CLI exposes those headers as flags and sends them as HTTP headers.
+- Multipart server decoding now rejects unknown form-data parts, duplicate non-repeated form-data parts, and extra mixed tuple parts.
+- Generated CLI multipart input uses repeated `--part` flags. JSON/form parts accept raw JSON, `@file`, or stdin; text parts accept raw text, `@file`, or stdin; binary/file parts require `@file` or stdin.
+- `multipart/mixed` OpenAPI output includes APIGen vendor metadata `x-apigen-multipart-kind: "mixed"` and ordered `x-apigen-multipart-parts` because OpenAPI 3.0 cannot fully model ordered mixed tuples as ordinary named fields.
+- v0.3.2 fails closed for cookie parameters, unsupported status ranges, Basic/Digest/custom HTTP auth, OAuth/OpenID auth, non-header API-key auth, header API keys other than `X-API-Key`, NoAuth operation overrides on secured services, incompatible duplicate response content variants, and incompatible shared-route/overload merges.
+- `@sharedRoute` and same-endpoint `@overload` operations now coalesce into one APIGen endpoint when their transport metadata is compatible.
+- `GenericRequest` inference is removed; name the TypeSpec model you want APIGen to generate.
+- v0.3.1 remains the pinned all-JSON release for users who need the old generated shape.
 
 See [`ir/CONTRACT.md`](./ir/CONTRACT.md) for the full IR contract and run `go test ./...` for the module smoke coverage.

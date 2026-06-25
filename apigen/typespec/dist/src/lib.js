@@ -11,13 +11,31 @@ export const $lib = createTypeSpecLibrary({
         "unsupported-response-status": {
             severity: "error",
             messages: {
-                default: paramMessage `Unsupported response status '${"status"}' for operation '${"operation"}'. APIGen IR v1 requires concrete numeric status codes.`,
+                default: paramMessage `Unsupported response status '${"status"}' for operation '${"operation"}'. APIGen IR v2 requires concrete numeric status codes.`,
+            },
+        },
+        "unsupported-response-content": {
+            severity: "error",
+            messages: {
+                default: paramMessage `Unsupported response content for operation '${"operation"}': incompatible response content for status ${"status"} and content type ${"contentType"}. APIGen IR v2 requires one concrete content entry per status/content type.`,
             },
         },
         "unsupported-inline-enum": {
             severity: "error",
             messages: {
-                default: paramMessage `Unsupported inline enum-like union in ${"context"}. APIGen IR v1 requires a named enum schema.`,
+                default: paramMessage `Unsupported inline enum-like union in ${"context"}. APIGen IR v2 requires a named enum schema.`,
+            },
+        },
+        "unsupported-cookie": {
+            severity: "error",
+            messages: {
+                default: "cookie parameters are not supported by APIGen v0.3.2 generated server, OpenAPI, and CLI outputs.",
+            },
+        },
+        "unsupported-shared-route": {
+            severity: "error",
+            messages: {
+                default: paramMessage `Unsupported shared route: ${"reason"}.`,
             },
         },
         "unsupported-auth": {
@@ -53,7 +71,7 @@ export const $lib = createTypeSpecLibrary({
         "unnamed-schema": {
             severity: "error",
             messages: {
-                default: paramMessage `APIGen IR v1 requires ${"context"} to resolve to a named model schema.`,
+                default: paramMessage `APIGen IR v2 requires ${"context"} to resolve to a named model schema.`,
             },
         },
         "missing-output-file": {

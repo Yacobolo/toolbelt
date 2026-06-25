@@ -255,11 +255,7 @@ func requestBodyNode(requestBody ir.RequestBody, examples *exampleResolver) *yam
 	if requestBody.Description != "" {
 		appendKeyValue(node, "description", stringNode(requestBody.Description))
 	}
-	contentType := requestBody.ContentType
-	if contentType == "" {
-		contentType = "application/json"
-	}
-	appendKeyValue(node, "content", singleContentNode(contentType, requestBody.Schema, examples.requestBodyExample(requestBody)))
+	appendKeyValue(node, "content", contentsNode(requestBody.Contents, examples))
 	return node
 }
 
@@ -281,50 +277,123 @@ func responsesNode(responses []ir.Response, examples *exampleResolver) (*yaml.No
 			}
 			appendKeyValue(entry, "headers", headers)
 		}
-		if len(response.AnyOf) > 0 {
-			contentType := response.ContentType
-			if contentType == "" {
-				contentType = "application/json"
-			}
-			appendKeyValue(entry, "content", singleAnyOfContentNode(contentType, response.AnyOf, examples.responseExample(response)))
-		} else if response.Schema != nil {
-			contentType := response.ContentType
-			if contentType == "" {
-				contentType = "application/json"
-			}
-			appendKeyValue(entry, "content", singleContentNode(contentType, *response.Schema, examples.responseExample(response)))
+		if len(response.Contents) > 0 {
+			appendKeyValue(entry, "content", contentsNode(response.Contents, examples))
 		}
 		appendKeyValue(node, strconv.Itoa(response.StatusCode), entry)
 	}
 	return node, nil
 }
 
-func singleContentNode(contentType string, schema ir.SchemaRef, example any) *yaml.Node {
+func contentsNode(contents []ir.BodyContent, examples *exampleResolver) *yaml.Node {
 	content := mappingNode()
-	mediaType := mappingNode()
-	appendKeyValue(mediaType, "schema", schemaRefNode(schema))
-	if example != nil {
-		appendKeyValue(mediaType, "example", anyToNode(example))
+	for _, item := range contents {
+		appendKeyValue(content, item.ContentType, mediaTypeNode(item, examples))
 	}
-	appendKeyValue(content, contentType, mediaType)
 	return content
 }
 
-func singleAnyOfContentNode(contentType string, schemas []ir.SchemaRef, example any) *yaml.Node {
-	content := mappingNode()
+func mediaTypeNode(content ir.BodyContent, examples *exampleResolver) *yaml.Node {
 	mediaType := mappingNode()
-	schema := mappingNode()
-	anyOf := sequenceNode()
-	for _, item := range schemas {
-		anyOf.Content = append(anyOf.Content, schemaRefNode(item))
+	if len(content.Parts) > 0 {
+		appendKeyValue(mediaType, "schema", multipartSchemaNode(content.Parts))
+		if encoding := multipartEncodingNode(content.Parts); encoding != nil {
+			appendKeyValue(mediaType, "encoding", encoding)
+		}
+		if strings.EqualFold(content.ContentType, "multipart/mixed") {
+			appendKeyValue(mediaType, "x-apigen-multipart-kind", stringNode("mixed"))
+			appendKeyValue(mediaType, "x-apigen-multipart-parts", multipartPartsExtensionNode(content.Parts))
+		}
+	} else if len(content.AnyOf) > 0 {
+		schema := mappingNode()
+		anyOf := sequenceNode()
+		for _, item := range content.AnyOf {
+			anyOf.Content = append(anyOf.Content, schemaRefNode(item))
+		}
+		appendKeyValue(schema, "anyOf", anyOf)
+		appendKeyValue(mediaType, "schema", schema)
+	} else if content.Schema != nil {
+		appendKeyValue(mediaType, "schema", schemaRefNode(*content.Schema))
 	}
-	appendKeyValue(schema, "anyOf", anyOf)
-	appendKeyValue(mediaType, "schema", schema)
-	if example != nil {
+	if example := examples.contentExample(content); example != nil {
 		appendKeyValue(mediaType, "example", anyToNode(example))
 	}
-	appendKeyValue(content, contentType, mediaType)
-	return content
+	return mediaType
+}
+
+func multipartPartsExtensionNode(parts []ir.MultipartPart) *yaml.Node {
+	node := sequenceNode()
+	for _, part := range parts {
+		partNode := mappingNode()
+		appendKeyValue(partNode, "name", stringNode(part.Name))
+		if part.WireName != "" {
+			appendKeyValue(partNode, "wire_name", stringNode(part.WireName))
+		}
+		if part.PartKind != "" {
+			appendKeyValue(partNode, "part_kind", stringNode(part.PartKind))
+		}
+		if part.Repeated {
+			appendKeyValue(partNode, "repeated", boolNode(part.Repeated))
+		}
+		if part.Required {
+			appendKeyValue(partNode, "required", boolNode(part.Required))
+		}
+		if part.ContentType != "" {
+			appendKeyValue(partNode, "content_type", stringNode(part.ContentType))
+		}
+		if part.BodyKind != "" {
+			appendKeyValue(partNode, "body_kind", stringNode(part.BodyKind))
+		}
+		if part.Filename {
+			appendKeyValue(partNode, "filename", boolNode(part.Filename))
+		}
+		node.Content = append(node.Content, partNode)
+	}
+	return node
+}
+
+func multipartSchemaNode(parts []ir.MultipartPart) *yaml.Node {
+	schema := mappingNode()
+	appendKeyValue(schema, "type", stringNode("object"))
+	properties := mappingNode()
+	required := sequenceNode()
+	for _, part := range parts {
+		partSchema := mappingNode()
+		if part.Schema != nil {
+			partSchema = schemaRefNode(*part.Schema)
+		}
+		if part.Repeated {
+			arraySchema := mappingNode()
+			appendKeyValue(arraySchema, "type", stringNode("array"))
+			appendKeyValue(arraySchema, "items", partSchema)
+			partSchema = arraySchema
+		}
+		appendKeyValue(properties, part.Name, partSchema)
+		if part.Required {
+			required.Content = append(required.Content, stringNode(part.Name))
+		}
+	}
+	appendKeyValue(schema, "properties", properties)
+	if len(required.Content) > 0 {
+		appendKeyValue(schema, "required", required)
+	}
+	return schema
+}
+
+func multipartEncodingNode(parts []ir.MultipartPart) *yaml.Node {
+	encoding := mappingNode()
+	for _, part := range parts {
+		if part.ContentType == "" {
+			continue
+		}
+		partEncoding := mappingNode()
+		appendKeyValue(partEncoding, "contentType", stringNode(part.ContentType))
+		appendKeyValue(encoding, part.Name, partEncoding)
+	}
+	if len(encoding.Content) == 0 {
+		return nil
+	}
+	return encoding
 }
 
 func securityRequirementsNode(requirements []ir.SecurityRequirement) *yaml.Node {
@@ -487,21 +556,14 @@ func (r *exampleResolver) parameterExample(parameter ir.Parameter) any {
 	return r.schemaRefExample(parameter.Schema)
 }
 
-func (r *exampleResolver) requestBodyExample(body ir.RequestBody) any {
-	if body.Example != nil {
-		return cloneExampleValue(body.Example)
+func (r *exampleResolver) contentExample(content ir.BodyContent) any {
+	if content.Example != nil {
+		return cloneExampleValue(content.Example)
 	}
-	return r.schemaRefExample(body.Schema)
-}
-
-func (r *exampleResolver) responseExample(response ir.Response) any {
-	if response.Example != nil {
-		return cloneExampleValue(response.Example)
+	if content.Schema != nil {
+		return r.schemaRefExample(*content.Schema)
 	}
-	if response.Schema != nil {
-		return r.schemaRefExample(*response.Schema)
-	}
-	for _, ref := range response.AnyOf {
+	for _, ref := range content.AnyOf {
 		if example := r.schemaRefExample(ref); example != nil {
 			return example
 		}
@@ -705,6 +767,13 @@ func schemaRefNode(ref ir.SchemaRef) *yaml.Node {
 	appendKeyValue(node, "type", stringNode(ref.Type))
 	if ref.Format != "" {
 		appendKeyValue(node, "format", stringNode(ref.Format))
+	}
+	if len(ref.Enum) > 0 {
+		enum := sequenceNode()
+		for _, value := range ref.Enum {
+			enum.Content = append(enum.Content, stringNode(value))
+		}
+		appendKeyValue(node, "enum", enum)
 	}
 	if ref.Items != nil {
 		appendKeyValue(node, "items", schemaRefNode(*ref.Items))
