@@ -1,140 +1,6 @@
 {
-  "schema_version": "v2",
   "api": {
     "base_path": "/"
-  },
-  "info": {
-    "title": "APIGen Todo Example",
-    "version": "0.1.0",
-    "description": "Small in-memory todo API authored in TypeSpec to showcase APIGen generation and strict server wiring."
-  },
-  "openapi": {
-    "version": "3.0.0",
-    "tag_order": [
-      "Todos"
-    ],
-    "security": [
-      {
-        "BearerAuth": []
-      },
-      {
-        "ApiKeyAuth": []
-      }
-    ],
-    "security_schemes": {
-      "ApiKeyAuth": {
-        "type": "apiKey",
-        "in": "header",
-        "name": "X-API-Key"
-      },
-      "BearerAuth": {
-        "type": "http",
-        "scheme": "Bearer"
-      }
-    }
-  },
-  "servers": [
-    {
-      "url": "http://127.0.0.1:8081",
-      "description": "Example development server"
-    }
-  ],
-  "tags": [
-    {
-      "name": "Todos",
-      "description": "Todo lifecycle endpoints for the APIGen example."
-    }
-  ],
-  "schemas": {
-    "CreateTodoRequest": {
-      "type": "object",
-      "properties": {
-        "title": {
-          "schema": {
-            "type": "string"
-          }
-        }
-      },
-      "property_order": [
-        "title"
-      ],
-      "required": [
-        "title"
-      ]
-    },
-    "Error": {
-      "type": "object",
-      "properties": {
-        "code": {
-          "schema": {
-            "type": "integer",
-            "format": "int32"
-          }
-        },
-        "message": {
-          "schema": {
-            "type": "string"
-          }
-        }
-      },
-      "property_order": [
-        "code",
-        "message"
-      ],
-      "required": [
-        "code",
-        "message"
-      ]
-    },
-    "ListTodosResponse": {
-      "type": "object",
-      "properties": {
-        "data": {
-          "schema": {
-            "type": "array",
-            "items": {
-              "ref": "Todo"
-            }
-          }
-        }
-      },
-      "property_order": [
-        "data"
-      ],
-      "required": [
-        "data"
-      ]
-    },
-    "Todo": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "schema": {
-            "type": "string"
-          }
-        },
-        "status": {
-          "schema": {
-            "type": "string"
-          }
-        },
-        "title": {
-          "schema": {
-            "type": "string"
-          }
-        }
-      },
-      "property_order": [
-        "id",
-        "title",
-        "status"
-      ],
-      "required": [
-        "id",
-        "title",
-        "status"
-      ]
-    }
   },
   "endpoints": [
     {
@@ -206,14 +72,32 @@
           "items_field": "data"
         }
       },
-      "extensions": {
-        "x-agent": {
-          "enabled": true,
-          "name": "list_todos",
-          "risk": "read",
-          "tags": [
-            "todos",
-            "read"
+      "tool": {
+        "name": "list_todos",
+        "effect": "read",
+        "confirmation": "never",
+        "tags": [
+          "todos",
+          "read"
+        ],
+        "output": {
+          "mode": "project",
+          "select": [
+            {
+              "source": "/data",
+              "select": [
+                {
+                  "source": "/id"
+                },
+                {
+                  "source": "/title"
+                },
+                {
+                  "source": "/status"
+                }
+              ],
+              "count_as": "count"
+            }
           ]
         }
       }
@@ -339,6 +223,14 @@
         ],
         "body_input": "none",
         "confirm": "always",
+        "output": {
+          "mode": "empty"
+        }
+      },
+      "tool": {
+        "name": "delete_todo",
+        "effect": "destructive",
+        "confirmation": "always",
         "output": {
           "mode": "empty"
         }
@@ -479,6 +371,140 @@
           ]
         }
       }
+    }
+  ],
+  "info": {
+    "title": "APIGen Todo Example",
+    "version": "0.1.0",
+    "description": "Small in-memory todo API authored in TypeSpec to showcase APIGen generation and strict server wiring."
+  },
+  "openapi": {
+    "version": "3.0.0",
+    "tag_order": [
+      "Todos"
+    ],
+    "security": [
+      {
+        "BearerAuth": []
+      },
+      {
+        "ApiKeyAuth": []
+      }
+    ],
+    "security_schemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      },
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "Bearer"
+      }
+    }
+  },
+  "schema_version": "v3",
+  "schemas": {
+    "CreateTodoRequest": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "schema": {
+            "type": "string"
+          }
+        }
+      },
+      "property_order": [
+        "title"
+      ],
+      "required": [
+        "title"
+      ]
+    },
+    "Error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "schema": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "message": {
+          "schema": {
+            "type": "string"
+          }
+        }
+      },
+      "property_order": [
+        "code",
+        "message"
+      ],
+      "required": [
+        "code",
+        "message"
+      ]
+    },
+    "ListTodosResponse": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "schema": {
+            "type": "array",
+            "items": {
+              "ref": "Todo"
+            }
+          }
+        }
+      },
+      "property_order": [
+        "data"
+      ],
+      "required": [
+        "data"
+      ]
+    },
+    "Todo": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "schema": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "schema": {
+            "type": "string"
+          }
+        },
+        "title": {
+          "schema": {
+            "type": "string"
+          }
+        }
+      },
+      "property_order": [
+        "id",
+        "title",
+        "status"
+      ],
+      "required": [
+        "id",
+        "title",
+        "status"
+      ]
+    }
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8081",
+      "description": "Example development server"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Todos",
+      "description": "Todo lifecycle endpoints for the APIGen example."
     }
   ]
 }

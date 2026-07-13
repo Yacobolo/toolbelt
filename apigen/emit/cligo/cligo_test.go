@@ -11,7 +11,7 @@ import (
 func TestEmit(t *testing.T) {
 	t.Helper()
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/v1"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -61,7 +61,7 @@ func TestEmit(t *testing.T) {
 func TestEmit_IncludesMultipartPartSpecs(t *testing.T) {
 	t.Helper()
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/v1"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -111,7 +111,7 @@ func TestEmit_RejectsInvalidCLI(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/v1"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{

@@ -51,32 +51,32 @@ Optional:
 - `TODO_EXAMPLE_ADDR` overrides the server listen address
 - `TODO_EXAMPLE_BASE_URL` or `--base-url` overrides the CLI target URL
 
-## Operation vendor extension
+## Typed agent tools
 
-The `listTodos` TypeSpec operation includes an `x-agent` extension:
+The `listTodos` and `deleteTodo` operations demonstrate typed read and destructive tools:
 
 ```typespec
-@extension("x-agent", #{
-  enabled: true,
+@apigen.tool(#{
   name: "list_todos",
-  risk: "read",
+  effect: "read",
   tags: #["todos", "read"],
+  output: #{ mode: "project", select: #[#{ source: "/items", countAs: "count" }] },
 })
 ```
 
-Regeneration preserves that metadata in:
+Regeneration compiles normalized descriptors into:
 
 - `api/gen/json-ir.json`
-- `api/gen/openapi.yaml`
-- `internal/api/gen/server.apigen.gen.go` via `GenOperationContract.Extensions`
+- `api/gen/openapi.yaml` as `x-apigen-tool`
+- `internal/api/gen/server.apigen.gen.go` via the generated tool registry
 
 Consumers can inspect it without patching generated files:
 
 ```go
-contract, ok := gen.GetAPIGenOperationContract("listTodos")
+contract, ok := gen.GetAPIGenToolContract("list_todos")
 if ok {
-	agent, _ := contract.Extensions["x-agent"].(map[string]any)
-	_ = agent["name"]
+	_ = contract.Effect
+	_ = contract.InputSchema
 }
 ```
 
@@ -86,4 +86,4 @@ if ok {
 - strict handler integration via `RegisterAPIGenStrictRoutes`
 - handwritten handlers in `internal/api` using generated request and response types from `internal/api/gen`
 - generated Cobra commands with path args, query params, JSON body input, detail output, collection output, and confirmation
-- operation-level vendor extensions preserved through generated OpenAPI and Go operation contracts
+- typed endpoint-derived tool contracts with portable input/output schemas

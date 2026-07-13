@@ -67,11 +67,14 @@ model DeleteTodoNoContent {
 @summary("List todos")
 @route("/todos")
 @get
-@extension("x-agent", #{
-  enabled: true,
+@apigen.tool(#{
   name: "list_todos",
-  risk: "read",
+  effect: "read",
   tags: #["todos", "read"],
+  output: #{
+    mode: "project",
+    select: #[#{ source: "/data", countAs: "count", select: #[#{ source: "/id" }, #{ source: "/title" }, #{ source: "/status" }] }],
+  },
 })
 @apigen.cli(#{
   command: #["todos", "list"],
@@ -120,6 +123,11 @@ op completeTodo(@path todo_id: string): CompleteTodoOk | NotFound;
 @summary("Delete todo")
 @route("/todos/{todo_id}")
 @delete
+@apigen.tool(#{
+  name: "delete_todo",
+  effect: "destructive",
+  output: #{ mode: "empty" },
+})
 @apigen.cli(#{
   command: #["todos", "delete"],
   args: #[#{ source: "path", name: "todo_id", displayName: "todo-id" }],

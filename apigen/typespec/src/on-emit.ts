@@ -2,6 +2,10 @@ import {
   emitFile,
   getAllTags,
   getDoc,
+  getMaxLength,
+  getMaxValue,
+  getMinLength,
+  getMinValue,
   getOverloadedOperation,
   getOverloads,
   getService,
@@ -38,11 +42,20 @@ import {
   type HttpService,
 } from "@typespec/http";
 import { getExtensions, getOperationId, getTagsMetadata, resolveInfo, resolveOperationId } from "@typespec/openapi";
-import { getAuthz, getCLI, getResponseShape, isManual } from "./decorators.js";
+import {
+  getAuthz,
+  getCLI,
+  getContracts,
+  getMetadata,
+  getPackages,
+  getResponseShape,
+  getTool,
+  isManual,
+} from "./decorators.js";
 import { type EmitterOptions, reportDiagnostic } from "./lib.js";
 
 interface Document {
-  schema_version: "v2";
+  schema_version: "v3";
   api: { base_path: string };
   info: { title: string; version: string; description?: string };
   openapi?: {
@@ -54,7 +67,9 @@ interface Document {
   servers?: Server[];
   tags?: Tag[];
   schemas?: Record<string, Schema>;
-  endpoints: Endpoint[];
+  contracts?: Contract[];
+  endpoints?: Endpoint[];
+  extensions?: Record<string, unknown>;
 }
 
 interface Server {
@@ -85,7 +100,17 @@ interface Endpoint {
   request_body?: RequestBody;
   responses: Response[];
   cli?: unknown;
+  tool?: unknown;
   security?: Record<string, string[]>[];
+  extensions?: Record<string, unknown>;
+}
+
+interface Contract {
+  name: string;
+  schema: SchemaRef;
+  kind?: string;
+  tags?: string[];
+  description?: string;
   extensions?: Record<string, unknown>;
 }
 
@@ -180,11 +205,13 @@ interface Schema {
   required?: string[];
   items?: SchemaRef;
   enum?: string[];
+  extensions?: Record<string, unknown>;
 }
 
 interface SchemaProperty {
   description?: string;
   schema: SchemaRef;
+  extensions?: Record<string, unknown>;
 }
 
 interface SchemaRef {
@@ -192,6 +219,10 @@ interface SchemaRef {
   type?: string;
   format?: string;
   enum?: string[];
+  minimum?: number;
+  maximum?: number;
+  min_length?: number;
+  max_length?: number;
   items?: SchemaRef;
   additional_properties?: { any?: boolean; schema?: SchemaRef };
 }
@@ -227,7 +258,7 @@ class IRBuilder {
       return this.inlineObjectRef(type, context);
     }
     if (type.kind === "Scalar") {
-      return scalarSchemaRef(type);
+      return withSchemaConstraints(this.program, type, scalarSchemaRef(type));
     }
     if (type.kind === "Enum") {
       if (type.name !== "") {
@@ -240,8 +271,7 @@ class IRBuilder {
     if (type.kind === "Union") {
       const enumValuesForUnion = stringLiteralUnionValues(type);
       if (enumValuesForUnion) {
-        this.report("unsupported-inline-enum", { context }, type);
-        return { type: "string" };
+        return { type: "string", enum: enumValuesForUnion };
       }
     }
     if (type.kind === "String") {
@@ -252,6 +282,9 @@ class IRBuilder {
     }
     if (type.kind === "Number") {
       return { type: "integer" };
+    }
+    if (type.kind === "Intrinsic" && type.name === "unknown") {
+      return {};
     }
     this.unsupported(type, context);
     return { type: "string" };
@@ -302,15 +335,15 @@ class IRBuilder {
     );
   }
 
-  reservedExtension(key: string, target: Operation) {
+  reservedExtension(key: string, target: Operation | Model | ModelProperty | Enum | Namespace) {
     this.report("reserved-extension", { key }, target);
   }
 
-  invalidExtensionKey(key: string, target: Operation) {
+  invalidExtensionKey(key: string, target: Operation | Model | ModelProperty | Enum | Namespace) {
     this.report("invalid-extension-key", { key }, target);
   }
 
-  invalidExtensionValue(key: string, path: string, target: Operation) {
+  invalidExtensionValue(key: string, path: string, target: Operation | Model | ModelProperty | Enum | Namespace) {
     this.report("invalid-extension-value", { key, path }, target);
   }
 
@@ -342,6 +375,10 @@ class IRBuilder {
     if (doc) {
       schema.description = doc;
     }
+    const extensions = validatedMetadata(this.program, this, model);
+    if (extensions) {
+      schema.extensions = extensions;
+    }
     const properties = [...walkPropertiesInherited(model)];
     if (properties.length > 0) {
       schema.properties = {};
@@ -370,16 +407,24 @@ class IRBuilder {
     if (doc) {
       schema.description = doc;
     }
+    const extensions = validatedMetadata(this.program, this, type);
+    if (extensions) {
+      schema.extensions = extensions;
+    }
     return schema;
   }
 
   private schemaProperty(property: ModelProperty): SchemaProperty {
     const schemaProperty: SchemaProperty = {
-      schema: this.schemaRef(property.type, `property ${property.name}`),
+      schema: withSchemaConstraints(this.program, property, this.schemaRef(property.type, `property ${property.name}`)),
     };
     const doc = getDoc(this.program, property);
     if (doc) {
       schemaProperty.description = doc;
+    }
+    const extensions = validatedMetadata(this.program, this, property);
+    if (extensions) {
+      schemaProperty.extensions = extensions;
     }
     return schemaProperty;
   }
@@ -397,7 +442,7 @@ class IRBuilder {
     this.report("unsupported-type", { kind: type.kind, context }, type);
   }
 
-  private report(code: Parameters<typeof reportDiagnostic>[1]["code"], format: any, target: Type) {
+  private report(code: Parameters<typeof reportDiagnostic>[1]["code"], format: any, target: Type | Namespace) {
     this.failed = true;
     reportDiagnostic(this.program, {
       code,
@@ -419,7 +464,9 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
   if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
     return;
   }
-  if (services.length !== 1) {
+  const builder = new IRBuilder(context.program);
+  const contracts = contractRoots(context.program, builder);
+  if (services.length > 1) {
     reportDiagnostic(context.program, {
       code: "multiple-services",
       format: { count: String(services.length) },
@@ -428,9 +475,24 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
     return;
   }
 
-  const service = services[0];
-  const builder = new IRBuilder(context.program);
-  const doc = buildDocument(context.program, builder, service, context.options);
+  let doc: Document;
+  const httpServices = services.filter((service) => service.operations.length > 0);
+  if (httpServices.length === 1) {
+    doc = buildDocument(context.program, builder, httpServices[0], context.options);
+    if (contracts.length > 0) {
+      doc.contracts = contracts;
+    }
+  } else {
+    if (contracts.length === 0 || httpServices.length > 1) {
+      reportDiagnostic(context.program, {
+        code: "multiple-services",
+        format: { count: String(httpServices.length) },
+        target: context.program.getGlobalNamespaceType(),
+      });
+      return;
+    }
+    doc = buildContractDocument(context.program, contracts, context.options);
+  }
   doc.schemas = builder.emitSchemas();
   if (builder.hasFailed()) {
     return;
@@ -440,6 +502,86 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
     path: outputFile,
     content: `${JSON.stringify(doc, null, 2)}\n`,
   });
+}
+
+function buildContractDocument(
+  program: Program,
+  contracts: Contract[],
+  options: EmitterOptions,
+): Document {
+  const pkg = packageMetadata(program);
+  return prune({
+    schema_version: "v3",
+    api: { base_path: options["base-path"] ?? "/" },
+    info: prune({
+      title: pkg.title,
+      version: pkg.version,
+      description: pkg.description,
+    }),
+    contracts,
+  }) as Document;
+}
+
+function packageMetadata(program: Program): { title: string; version: string; description?: string } {
+  const packages = getPackages({ program });
+  if (packages.length > 0) {
+    const [, pkg] = packages[0];
+    return {
+      title: pkg.title,
+      version: pkg.version,
+      description: pkg.description,
+    };
+  }
+  return {
+    title: "Data Contracts",
+    version: "0.1.0",
+  };
+}
+
+function contractRoots(program: Program, builder: IRBuilder): Contract[] {
+  const roots: Contract[] = [];
+  for (const [target, options] of getContracts({ program })) {
+    const schema = builder.namedSchemaRef(target, `contract ${target.name}`);
+    const root = prune({
+      name: options.name ?? target.name,
+      schema,
+      kind: options.kind,
+      tags: options.tags,
+      description: getDoc(program, target),
+      extensions: validatedMetadata(program, builder, target),
+    }) as Contract;
+    roots.push(root);
+  }
+  roots.sort((left, right) => left.name.localeCompare(right.name));
+  return roots;
+}
+
+function validatedMetadata(
+  program: Program,
+  builder: IRBuilder,
+  target: Model | ModelProperty | Enum,
+): Record<string, unknown> | undefined {
+  const metadata = getMetadata({ program }, target);
+  if (!metadata) {
+    return undefined;
+  }
+  const output: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(metadata).sort(([left], [right]) => left.localeCompare(right))) {
+    if (!key.startsWith("x-")) {
+      builder.invalidExtensionKey(key, target);
+      continue;
+    }
+    if (isReservedExtensionKey(key)) {
+      builder.reservedExtension(key, target);
+      continue;
+    }
+    if (!isJSONCompatible(value)) {
+      builder.invalidExtensionValue(key, key, target);
+      continue;
+    }
+    output[key] = value;
+  }
+  return Object.keys(output).length > 0 ? output : undefined;
 }
 
 function buildDocument(
@@ -462,7 +604,7 @@ function buildDocument(
   const endpoints = mergedEndpoints(program, builder, service.operations, authentication.operationsAuth, defaultSecurity);
 
   return prune({
-    schema_version: "v2",
+    schema_version: "v3",
     api: { base_path: options["base-path"] ?? "/" },
     info: prune({
       title: info.title ?? serviceInfo?.title ?? "API",
@@ -578,6 +720,7 @@ function endpoint(
     request_body: mergedRequestBody(builder, group.operations),
     responses: endpointResponses(program, builder, group.operations.flatMap((item) => item.responses)),
     cli: cliMetadata(program, operation),
+    tool: toolMetadata(program, operation),
     security: mergedOperationSecurity(builder, group.operations, operationsAuth, defaultSecurity),
   }) as Endpoint;
   if (Object.keys(extensions).length > 0) {
@@ -593,12 +736,16 @@ function validateSharedRouteMetadata(
   canonical: HttpOperation,
 ) {
   const canonicalCLI = stableJSONString(cliMetadata(program, canonical));
+  const canonicalTool = stableJSONString(toolMetadata(program, canonical));
   const canonicalAuthz = stableJSONString(getAuthz({ program }, canonical.operation));
   const canonicalManual = isManual({ program }, canonical.operation);
   const canonicalExtensions = stableJSONString(operationVendorExtensions(program, builder, canonical.operation));
   for (const operation of operations) {
     if (stableJSONString(cliMetadata(program, operation)) !== canonicalCLI) {
       builder.unsupportedSharedRoute(operation.operation, "incompatible cli metadata");
+    }
+    if (stableJSONString(toolMetadata(program, operation)) !== canonicalTool) {
+      builder.unsupportedSharedRoute(operation.operation, "incompatible tool metadata");
     }
     if (stableJSONString(getAuthz({ program }, operation.operation)) !== canonicalAuthz) {
       builder.unsupportedSharedRoute(operation.operation, "incompatible authz metadata");
@@ -745,7 +892,7 @@ function extensionObjectPropertyName(property: ExtensionObjectPropertyNodeLike):
 }
 
 function isReservedExtensionKey(key: string): boolean {
-  return key === "x-authz" || key.startsWith("x-apigen-");
+  return key === "x-authz" || key === "x-agent" || key.startsWith("x-apigen-");
 }
 
 function isJSONCompatible(value: unknown): boolean {
@@ -800,6 +947,79 @@ function cliMetadata(program: Program, operation: HttpOperation): unknown {
   });
 }
 
+function toolMetadata(program: Program, operation: HttpOperation): unknown {
+  const tool = getTool({ program }, operation.operation);
+  if (!tool) {
+    return undefined;
+  }
+  const metadata: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(tool.metadata ?? {}).sort(([left], [right]) => left.localeCompare(right))) {
+    if (!key.startsWith("x-") || isReservedExtensionKey(key) || !isJSONCompatible(value)) {
+      reportDiagnostic(program, {
+        code: !key.startsWith("x-") ? "invalid-extension-key" : isReservedExtensionKey(key) ? "reserved-extension" : "invalid-extension-value",
+        target: operation.operation,
+        format: !key.startsWith("x-") || isReservedExtensionKey(key) ? { key } : { key, path: key },
+      } as any);
+      continue;
+    }
+    metadata[key] = value;
+  }
+  return prune({
+    name: tool.name,
+    description: tool.description,
+    effect: tool.effect,
+    confirmation: tool.confirmation ?? defaultToolConfirmation(tool.effect),
+    tags: tool.tags,
+    input: tool.input
+      ? {
+          fields: tool.input.fields?.map((field) =>
+            prune({
+              source: field.source,
+              name: field.name,
+              mode: field.mode,
+              alias: field.alias,
+              context_key: field.contextKey,
+              description: field.description,
+              default: field.default,
+            }),
+          ),
+        }
+      : undefined,
+    output: {
+      mode: tool.output.mode,
+      select: tool.output.select?.map(toolProjectionMetadata),
+      cursor: tool.output.cursor
+        ? prune({
+            source: tool.output.cursor.source,
+            target: tool.output.cursor.target,
+            has_more_target: tool.output.cursor.hasMoreTarget,
+          })
+        : undefined,
+    },
+    metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+  });
+}
+
+function toolProjectionMetadata(projection: import("./decorators.js").ToolProjectionOptions): unknown {
+  return prune({
+    source: projection.source,
+    target: projection.target,
+    select: projection.select?.map(toolProjectionMetadata),
+    count_as: projection.countAs,
+  });
+}
+
+function defaultToolConfirmation(effect: string): string {
+  switch (effect) {
+    case "read":
+      return "never";
+    case "destructive":
+      return "always";
+    default:
+      return "policy";
+  }
+}
+
 function endpointParameter(
   program: Program,
   builder: IRBuilder,
@@ -815,7 +1035,7 @@ function endpointParameter(
     required: parameter.type === "path" ? true : !param.optional,
     description: getDoc(program, param),
     explode: shouldEmitExplode(builder, param.type, parameter) ? parameter.explode : undefined,
-    schema: parameterSchemaRef(builder, param.type, `parameter ${param.name}`),
+    schema: withSchemaConstraints(program, param, parameterSchemaRef(builder, param.type, `parameter ${param.name}`)),
   }) as Parameter;
 }
 
@@ -1152,7 +1372,7 @@ function responseHeaders(
       name,
       required: !property.optional,
       description: getDoc(program, property),
-      schema: builder.schemaRef(property.type, `response header ${name}`),
+      schema: withSchemaConstraints(program, property, builder.schemaRef(property.type, `response header ${name}`)),
     }),
   ) as Header[];
   return headers.length > 0 ? headers : undefined;
@@ -1236,13 +1456,13 @@ function authRequirements(
         }
         builder.unsupportedAuth(
           context,
-          "APIGen IR v2 does not support NoAuth operation overrides for secured services.",
+          "APIGen IR v3 does not support NoAuth operation overrides for secured services.",
           target,
         );
         continue;
       }
       if (ref.kind === "oauth2") {
-        builder.unsupportedAuth(context, "oauth2 authentication is not supported by APIGen v0.3.2.", target);
+        builder.unsupportedAuth(context, "oauth2 authentication is not supported by APIGen.", target);
         continue;
       }
       if (!isSupportedAuth(ref.auth)) {
@@ -1270,17 +1490,17 @@ function isSupportedAuth(auth: HttpAuth): boolean {
 
 function unsupportedAuthReason(auth: HttpAuth): string {
   if (auth.type === "http") {
-    return `http ${auth.scheme} authentication is not supported by APIGen v0.3.2. Use Bearer HTTP auth.`;
+    return `http ${auth.scheme} authentication is not supported by APIGen. Use Bearer HTTP auth.`;
   }
   if (auth.type === "apiKey") {
     if (auth.in !== "header") {
-      return `apiKey authentication in ${auth.in} is not supported by APIGen v0.3.2. Use ApiKeyAuth<ApiKeyLocation.header, "X-API-Key">.`;
+      return `apiKey authentication in ${auth.in} is not supported by APIGen. Use ApiKeyAuth<ApiKeyLocation.header, "X-API-Key">.`;
     }
     if (auth.name !== "X-API-Key") {
-      return `header API key name ${auth.name} is not supported by APIGen v0.3.2. Use X-API-Key.`;
+      return `header API key name ${auth.name} is not supported by APIGen. Use X-API-Key.`;
     }
   }
-  return `${auth.type} authentication is not supported by APIGen v0.3.2.`;
+  return `${auth.type} authentication is not supported by APIGen.`;
 }
 
 function authScopes(ref: HttpAuthRef): string[] {
@@ -1306,6 +1526,44 @@ function securityScheme(scheme: HttpAuth): SecurityScheme {
     default:
       return { type: scheme.type };
   }
+}
+
+function withSchemaConstraints(program: Program, target: Type, schema: SchemaRef): SchemaRef {
+  const candidates = schemaConstraintCandidates(target);
+  const minimum = firstSchemaConstraint(candidates, (candidate) => getMinValue(program, candidate));
+  const maximum = firstSchemaConstraint(candidates, (candidate) => getMaxValue(program, candidate));
+  const minLength = firstSchemaConstraint(candidates, (candidate) => getMinLength(program, candidate));
+  const maxLength = firstSchemaConstraint(candidates, (candidate) => getMaxLength(program, candidate));
+  return prune({
+    ...schema,
+    minimum,
+    maximum,
+    min_length: minLength,
+    max_length: maxLength,
+  }) as SchemaRef;
+}
+
+function schemaConstraintCandidates(target: Type): Type[] {
+  const candidates: Type[] = [target];
+  let current: Type | undefined = target.kind === "ModelProperty" ? target.type : target;
+  if (current !== target) {
+    candidates.push(current);
+  }
+  while (current?.kind === "Scalar" && current.baseScalar) {
+    current = current.baseScalar;
+    candidates.push(current);
+  }
+  return candidates;
+}
+
+function firstSchemaConstraint(candidates: Type[], read: (candidate: Type) => number | undefined): number | undefined {
+  for (const candidate of candidates) {
+    const value = read(candidate);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 function scalarSchemaRef(scalar: Scalar): SchemaRef {

@@ -43,10 +43,19 @@ paths:
                 message: example
       tags:
         - Todos
-      x-agent:
-        enabled: true
+      x-apigen-tool:
+        confirmation: never
+        effect: read
         name: list_todos
-        risk: read
+        output:
+          mode: project
+          select:
+            - count_as: count
+              select:
+                - source: /id
+                - source: /title
+                - source: /status
+              source: /data
         tags:
           - todos
           - read
@@ -109,6 +118,12 @@ paths:
                 message: example
       tags:
         - Todos
+      x-apigen-tool:
+        confirmation: always
+        effect: destructive
+        name: delete_todo
+        output:
+          mode: empty
     get:
       operationId: getTodo
       summary: Get todo

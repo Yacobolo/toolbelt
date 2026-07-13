@@ -1,13 +1,14 @@
-# JSON IR Contract (`v2`)
+# JSON IR Contract (`v3`)
 
 `github.com/Yacobolo/toolbelt/apigen/ir` defines the versioned JSON intermediate representation consumed by APIGen.
 
 ## Versioning
 
-- Current supported version: `v2`
-- The root document must contain `schema_version: "v2"`
+- Current emitted version: `v3`
+- The root document must contain `schema_version: "v3"`
+- `ir.Load` rejects every other schema version
 - Breaking IR changes require a new schema version
-- v0.3.2 intentionally breaks the v1 all-JSON body shape
+- `v3` defines HTTP endpoints, generic data contract roots, schema metadata, and typed endpoint tools
 
 ## Root Document
 
@@ -16,15 +17,40 @@ Required fields:
 - `schema_version`
 - `info.title`
 - `info.version`
-- `endpoints` with at least one entry
+- at least one `endpoints` entry or one `contracts` entry
 
 Optional fields:
 
+- `api`
 - `info.description`
 - `servers`
 - `tags`
 - `schemas`
+- `contracts`
+- `endpoints`
 - `extensions`
+
+`schemas` is the shared named schema registry for HTTP bodies, parameters, generated model types, and generic contract roots.
+
+## Contracts
+
+`contracts[]` declares named data-contract roots. Contracts are intentionally generic and are not tied to HTTP, Datastar, signals, or any single runtime.
+
+Each contract must define:
+
+- `name`
+- `schema` with a resolvable named `ref`
+
+Optional fields:
+
+- `kind`
+- `tags`
+- `description`
+- `extensions`
+
+Contract routes are unique by `name`. Contract-level `extensions` preserve downstream metadata. Generic extensions must use `x-*` keys and JSON-compatible values. APIGen-owned `x-apigen-*` keys are reserved.
+
+HTTP generators ignore `contracts[]`. Model generators select contract roots and the transitive schema dependencies reachable from those roots.
 
 ## Endpoints
 
@@ -43,12 +69,42 @@ Endpoint-level `extensions` preserve operation vendor metadata. Generic extensio
 
 Endpoint parameters support `path`, `query`, and `header` locations. Other locations, including `cookie`, are rejected by IR validation until all generated surfaces support them consistently.
 
-Supported security schemes in v0.3.2 are HTTP Bearer auth and `ApiKeyAuth<ApiKeyLocation.header, "X-API-Key">`. Unsupported schemes fail closed before IR emission.
+Supported security schemes are HTTP Bearer auth and `ApiKeyAuth<ApiKeyLocation.header, "X-API-Key">`. Unsupported schemes fail closed before IR emission.
 
 APIGen-owned endpoint extensions in current consumers:
 
 - `x-authz`
 - `x-apigen-manual`
+
+Legacy `x-agent` extensions are reserved and rejected. Typed tool metadata belongs in the endpoint's `tool` field.
+
+## Endpoint Tools
+
+An endpoint with `tool` is exposed as an SDK-neutral agent tool. Tool names match `^[a-z][a-z0-9_]{0,63}$` and are unique across the document.
+
+Required tool fields:
+
+- `name`
+- `effect`: `read`, `idempotent-write`, `write`, or `destructive`
+- `output`
+
+Confirmation defaults are resolved into IR: `never` for reads, `policy` for idempotent writes and writes, and `always` for destructive operations. Authored confirmation may strengthen but never weaken the effect's minimum.
+
+`input.fields[]` overrides endpoint fields by `source` (`path`, `query`, `header`, or `body`) and wire `name`. `$` identifies an entire scalar JSON body. Modes are:
+
+- `model`: visible in the portable input schema; may define `alias`, `description`, or a JSON-compatible `default`
+- `context`: hidden from model input and supplied by a consumer-owned `context_key`
+- `omit`: hidden from model input; required transport fields must define a valid default
+
+Defaults and wire formats are retained in generated bindings. They are deliberately omitted from model-visible JSON Schemas so those schemas contain only portable validation keywords.
+
+APIGen flattens endpoint parameters and JSON object-body properties into the model-visible input. Tool endpoints may have no body or exactly one JSON request shape. Binary, file, form-urlencoded, and multipart tool inputs are rejected.
+
+Output modes are `raw`, `project`, and `empty`. Project mode uses recursive selection nodes with an RFC 6901 `source`, optional `target`, optional child `select`, and optional `count_as`. Child selection applies to objects, array items, and map values according to the resolved schema. Optional cursor metadata defines a source pointer plus `target` and `has_more_target` names.
+
+Every successful response variant must be empty or share one compatible JSON schema. Projection pointers, node kinds, aliases, count targets, cursor targets, and collisions are validated against that schema. Tool `metadata` accepts only JSON-compatible `x-*` keys.
+
+Generated runtime descriptors include operation ID, transport, effect, resolved confirmation, tags, input/output JSON Schemas, bindings, projection, and metadata. Canonical OpenAPI emits the normalized value as `x-apigen-tool`.
 
 ## Body Contents
 
@@ -128,11 +184,13 @@ Response headers are unique case-insensitively per response.
 
 ## Schemas
 
-`schemas` is a named registry used by both emitted OpenAPI and generated Go code.
+`schemas` is a named registry used by emitted OpenAPI, generated Go code, generated TypeScript types, generated JSON Schema, and generic contract roots.
 
 `SchemaRef.ref` values are normalized against component-style paths and resolved against this registry.
 
 JSON and urlencoded form object bodies intended for generated Go output should resolve to named schema entries in this registry. Text bodies generate `string`; raw binary `bytes` bodies generate `[]byte`; TypeSpec `Http.File` bodies generate streaming-capable `GenFile` with byte contents or a reader, content type, optional filename, and optional size metadata. Generators reject anonymous object bodies when they cannot be mapped to a stable generated Go type.
+
+Schema-level and schema-property-level `extensions` preserve downstream-owned metadata. Generic extensions must use `x-*` keys and JSON-compatible values. APIGen validates and preserves this metadata; interpretation belongs to downstream application logic and emitters.
 
 ## Contract Roles
 
@@ -140,3 +198,4 @@ JSON and urlencoded form object bodies intended for generated Go output should r
 - canonical OpenAPI is the published API contract artifact
 - TypeSpec HTTP semantics are the source of truth for body kind, content type, routes, status codes, and parameters
 - canonical OpenAPI may carry repo-owned metadata extensions such as `x-authz`
+- `contracts[]` declares generic model roots for generated Go models, TypeScript types, and JSON Schema

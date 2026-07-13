@@ -27,7 +27,7 @@ func TestEmit(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -74,7 +74,7 @@ func TestEmit_UsesIRPathAsIs(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -93,7 +93,7 @@ func TestEmit_UsesAPIBasePathForRoutes(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/v1"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -111,7 +111,7 @@ func TestValidateOperationIDs(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -128,7 +128,7 @@ func TestEmit_DispatchParityAndHealthHandling(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -165,7 +165,7 @@ func TestEmit_OperationContractsIncludeManualAndBodyMetadata(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -205,7 +205,7 @@ func TestEmit_OperationContractsIncludeExtensionDefensiveCopies(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -216,7 +216,7 @@ func TestEmit_OperationContractsIncludeExtensionDefensiveCopies(t *testing.T) {
 				Tags:        []string{"Widgets"},
 				Responses:   []ir.Response{{StatusCode: 200, Description: "ok"}},
 				Extensions: map[string]any{
-					"x-agent": map[string]any{
+					"x-downstream": map[string]any{
 						"enabled": true,
 						"name":    "list_workspace_assets",
 						"risk":    "read",
@@ -234,7 +234,7 @@ func TestEmit_OperationContractsIncludeExtensionDefensiveCopies(t *testing.T) {
 	require.NoError(t, err)
 	content := string(b)
 	require.Contains(t, content, "Extensions map[string]any")
-	require.Contains(t, content, `Extensions: map[string]any{"x-agent": map[string]any{`)
+	require.Contains(t, content, `Extensions: map[string]any{"x-downstream": map[string]any{`)
 
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte(`module generatedtest
@@ -257,7 +257,7 @@ type Error struct {
 
 func TestExtensionDefensiveCopies(t *testing.T) {
 	contracts := GetAPIGenOperationContracts()
-	agent := contracts["listWidgets"].Extensions["x-agent"].(map[string]any)
+	agent := contracts["listWidgets"].Extensions["x-downstream"].(map[string]any)
 	agent["enabled"] = false
 	agent["tags"].([]any)[0] = "mutated"
 	agent["nested"].(map[string]any)["count"] = 99
@@ -266,7 +266,7 @@ func TestExtensionDefensiveCopies(t *testing.T) {
 	if !ok {
 		t.Fatal("missing operation")
 	}
-	firstAgent := first.Extensions["x-agent"].(map[string]any)
+	firstAgent := first.Extensions["x-downstream"].(map[string]any)
 	if firstAgent["enabled"] != true {
 		t.Fatalf("enabled mutated: %#v", firstAgent["enabled"])
 	}
@@ -282,7 +282,7 @@ func TestExtensionDefensiveCopies(t *testing.T) {
 
 	firstAgent["enabled"] = false
 	second, _ := GetAPIGenOperationContract("listWidgets")
-	if second.Extensions["x-agent"].(map[string]any)["enabled"] != true {
+	if second.Extensions["x-downstream"].(map[string]any)["enabled"] != true {
 		t.Fatal("single-operation accessor returned mutable global state")
 	}
 }
@@ -298,7 +298,7 @@ func TestEmit_RejectsInvalidExtensionValues(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -307,7 +307,7 @@ func TestEmit_RejectsInvalidExtensionValues(t *testing.T) {
 				Path:        "/widgets",
 				OperationID: "listWidgets",
 				Responses:   []ir.Response{{StatusCode: 200, Description: "ok"}},
-				Extensions:  map[string]any{"x-agent": map[string]any{"score": math.Inf(1)}},
+				Extensions:  map[string]any{"x-downstream": map[string]any{"score": math.Inf(1)}},
 			},
 		},
 	}
@@ -322,7 +322,7 @@ func TestEmit_DoesNotMutateInputDocument(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -341,7 +341,7 @@ func TestEmit_GeneratesPathQueryAndHeaderBinding(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -403,7 +403,7 @@ func TestEmit_GeneratesStrictJSONBodyDecoding(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -440,7 +440,7 @@ func TestEmit_GeneratesTransportAwareBodies(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -492,7 +492,7 @@ func TestEmit_GeneratesMultiContentResponseVariants(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -548,7 +548,7 @@ func TestEmit_GeneratesMultipartBodyDecoding(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -630,7 +630,7 @@ func TestEmit_GeneratesMixedMultipartBodyDecodingByOrder(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -679,7 +679,7 @@ func TestEmit_GeneratesGenFileRequestAndResponse(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -729,7 +729,7 @@ func TestEmit_UsesNamedRequestBodySchemas(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -775,7 +775,7 @@ func TestEmit_FailsForUnnamedRequestBodySchema(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -799,7 +799,7 @@ func TestEmit_ImportsTimeForDateTimeParameters(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -835,7 +835,7 @@ func TestEmit_EmitsCanonicalResponseTypesOnly(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -903,7 +903,7 @@ func TestEmit_UsesIRResponseHeadersForVisitMethods(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{{

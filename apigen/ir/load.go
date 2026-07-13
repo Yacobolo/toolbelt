@@ -6,12 +6,15 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
 
 // CurrentSchemaVersion is the supported JSON IR schema version.
-const CurrentSchemaVersion = "v2"
+const CurrentSchemaVersion = "v3"
+
+var toolNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
 // Load parses and validates an IR document from disk.
 func Load(path string) (Document, error) {
@@ -55,12 +58,30 @@ func Validate(doc Document) error {
 	if strings.TrimSpace(doc.Info.Version) == "" {
 		return fmt.Errorf("info.version is required")
 	}
-	if len(doc.Endpoints) == 0 {
-		return fmt.Errorf("at least one endpoint is required")
+	if len(doc.Endpoints) == 0 && len(doc.Contracts) == 0 {
+		return fmt.Errorf("at least one endpoint or contract is required")
+	}
+
+	seenContract := make(map[string]struct{}, len(doc.Contracts))
+	for _, contract := range doc.Contracts {
+		if strings.TrimSpace(contract.Name) == "" {
+			return fmt.Errorf("contract name is required")
+		}
+		if _, exists := seenContract[contract.Name]; exists {
+			return fmt.Errorf("duplicate contract name %q", contract.Name)
+		}
+		seenContract[contract.Name] = struct{}{}
+		if err := validateSchemaRefExists(doc, contract.Schema, fmt.Sprintf("contract %q schema", contract.Name)); err != nil {
+			return err
+		}
+		if err := validateGenericExtensions(contract.Extensions, fmt.Sprintf("contract %q", contract.Name)); err != nil {
+			return err
+		}
 	}
 
 	seenOperation := make(map[string]struct{}, len(doc.Endpoints))
 	seenRoute := make(map[string]struct{}, len(doc.Endpoints))
+	seenTool := make(map[string]string, len(doc.Endpoints))
 	seenCLI := make(map[string]string, len(doc.Endpoints))
 	commandPaths := make(map[string][]string, len(doc.Endpoints))
 	for _, endpoint := range doc.Endpoints {
@@ -78,6 +99,15 @@ func Validate(doc Document) error {
 		}
 		if err := validateEndpointExtensions(endpoint.Extensions, fmt.Sprintf("endpoint %q", endpoint.OperationID)); err != nil {
 			return err
+		}
+		if endpoint.Tool != nil {
+			if err := validateTool(doc, endpoint); err != nil {
+				return err
+			}
+			if operationID, exists := seenTool[endpoint.Tool.Name]; exists {
+				return fmt.Errorf("duplicate tool name %q for operations %q and %q", endpoint.Tool.Name, operationID, endpoint.OperationID)
+			}
+			seenTool[endpoint.Tool.Name] = endpoint.OperationID
 		}
 		for _, parameter := range endpoint.Parameters {
 			if err := validateParameterSchema(doc, endpoint, parameter); err != nil {
@@ -181,6 +211,9 @@ func Validate(doc Document) error {
 		if err := validateSchemaDefinition(doc, name, schema); err != nil {
 			return err
 		}
+		if err := validateGenericExtensions(schema.Extensions, fmt.Sprintf("schema %q", name)); err != nil {
+			return err
+		}
 		if len(schema.PropertyOrder) > 0 {
 			for _, propertyName := range schema.PropertyOrder {
 				if _, ok := schema.Properties[propertyName]; !ok {
@@ -208,6 +241,9 @@ func validateEndpointExtensions(extensions map[string]any, context string) error
 				return fmt.Errorf("%s extension %q: x-apigen-manual must be boolean", context, key)
 			}
 		default:
+			if key == "x-agent" {
+				return fmt.Errorf("%s extension %q is reserved; use endpoint.tool", context, key)
+			}
 			if strings.HasPrefix(key, "x-apigen-") {
 				return fmt.Errorf("%s unsupported APIGen-owned extension %q", context, key)
 			}
@@ -217,6 +253,410 @@ func validateEndpointExtensions(extensions map[string]any, context string) error
 		}
 	}
 	return nil
+}
+
+func validateTool(doc Document, endpoint Endpoint) error {
+	tool := endpoint.Tool
+	context := fmt.Sprintf("endpoint %q tool", endpoint.OperationID)
+	if !toolNamePattern.MatchString(tool.Name) {
+		return fmt.Errorf("%s name %q must match %s", context, tool.Name, toolNamePattern.String())
+	}
+	switch tool.Effect {
+	case "read", "idempotent-write", "write", "destructive":
+	default:
+		return fmt.Errorf("%s has unsupported effect %q", context, tool.Effect)
+	}
+	confirmation := tool.Confirmation
+	if confirmation == "" {
+		confirmation = defaultToolConfirmation(tool.Effect)
+	}
+	switch confirmation {
+	case "never", "policy", "always":
+	default:
+		return fmt.Errorf("%s has unsupported confirmation %q", context, confirmation)
+	}
+	minimum := defaultToolConfirmation(tool.Effect)
+	if confirmationStrength(confirmation) < confirmationStrength(minimum) {
+		return fmt.Errorf("%s confirmation %q is weaker than required %q for effect %q", context, confirmation, minimum, tool.Effect)
+	}
+	if err := validateGenericExtensions(tool.Metadata, context+" metadata"); err != nil {
+		return err
+	}
+	if err := validateToolInput(doc, endpoint); err != nil {
+		return err
+	}
+	return validateToolOutput(doc, endpoint)
+}
+
+func defaultToolConfirmation(effect string) string {
+	switch effect {
+	case "read":
+		return "never"
+	case "destructive":
+		return "always"
+	default:
+		return "policy"
+	}
+}
+
+func confirmationStrength(value string) int {
+	switch value {
+	case "always":
+		return 2
+	case "policy":
+		return 1
+	default:
+		return 0
+	}
+}
+
+type toolInputSource struct {
+	Schema      SchemaRef
+	Required    bool
+	Description string
+}
+
+func validateToolInput(doc Document, endpoint Endpoint) error {
+	context := fmt.Sprintf("endpoint %q tool input", endpoint.OperationID)
+	sources := make(map[string]toolInputSource, len(endpoint.Parameters))
+	for _, parameter := range endpoint.Parameters {
+		sources[parameter.In+"\x00"+parameter.Name] = toolInputSource{Schema: parameter.Schema, Required: parameter.Required, Description: parameter.Description}
+	}
+	if endpoint.RequestBody != nil {
+		if len(endpoint.RequestBody.Contents) != 1 || endpoint.RequestBody.Contents[0].BodyKind != "json" || endpoint.RequestBody.Contents[0].Schema == nil {
+			return fmt.Errorf("%s requires exactly one JSON request body shape", context)
+		}
+		bodyRef := *endpoint.RequestBody.Contents[0].Schema
+		if bodySchema, ok := concreteSchema(doc, bodyRef); ok && bodySchema.Type == "object" {
+			required := stringSet(bodySchema.Required)
+			for name, property := range bodySchema.Properties {
+				sources["body\x00"+name] = toolInputSource{Schema: property.Schema, Required: required[name], Description: property.Description}
+			}
+		} else {
+			sources["body\x00$"] = toolInputSource{Schema: bodyRef, Required: endpoint.RequestBody.Required}
+		}
+	}
+
+	overrides := map[string]ToolInputField{}
+	if endpoint.Tool.Input != nil {
+		for _, field := range endpoint.Tool.Input.Fields {
+			key := field.Source + "\x00" + field.Name
+			if _, exists := overrides[key]; exists {
+				return fmt.Errorf("%s has duplicate field override %s.%s", context, field.Source, field.Name)
+			}
+			source, exists := sources[key]
+			if !exists {
+				return fmt.Errorf("%s field %s.%s does not exist on the endpoint", context, field.Source, field.Name)
+			}
+			mode := field.Mode
+			if mode == "" {
+				mode = "model"
+			}
+			switch mode {
+			case "model":
+				if field.ContextKey != "" {
+					return fmt.Errorf("%s field %s.%s model mode cannot set context_key", context, field.Source, field.Name)
+				}
+			case "context":
+				if strings.TrimSpace(field.ContextKey) == "" {
+					return fmt.Errorf("%s field %s.%s context mode requires context_key", context, field.Source, field.Name)
+				}
+				if field.Alias != "" || field.Default != nil {
+					return fmt.Errorf("%s field %s.%s context mode cannot set alias or default", context, field.Source, field.Name)
+				}
+			case "omit":
+				if source.Required && field.Default == nil {
+					return fmt.Errorf("%s field %s.%s is required and omitted without a default", context, field.Source, field.Name)
+				}
+				if field.Alias != "" || field.ContextKey != "" {
+					return fmt.Errorf("%s field %s.%s omit mode cannot set alias or context_key", context, field.Source, field.Name)
+				}
+			default:
+				return fmt.Errorf("%s field %s.%s has unsupported mode %q", context, field.Source, field.Name, field.Mode)
+			}
+			if field.Default != nil {
+				if err := validateJSONCompatibleExtensionValue(field.Default); err != nil {
+					return fmt.Errorf("%s field %s.%s default: %w", context, field.Source, field.Name, err)
+				}
+				if !toolValueMatchesSchema(doc, field.Default, source.Schema) {
+					return fmt.Errorf("%s field %s.%s default does not match its schema", context, field.Source, field.Name)
+				}
+			}
+			overrides[key] = field
+		}
+	}
+
+	arguments := map[string]string{}
+	for key := range sources {
+		field, hasOverride := overrides[key]
+		mode := field.Mode
+		if mode == "" {
+			mode = "model"
+		}
+		if hasOverride && mode != "model" {
+			continue
+		}
+		name := field.Alias
+		if name == "" {
+			_, name, _ = strings.Cut(key, "\x00")
+			if name == "$" {
+				name = "body"
+			}
+		}
+		if previous, exists := arguments[name]; exists {
+			return fmt.Errorf("%s argument %q collides between %s and %s; add an alias", context, name, previous, strings.ReplaceAll(key, "\x00", "."))
+		}
+		arguments[name] = strings.ReplaceAll(key, "\x00", ".")
+	}
+	return nil
+}
+
+func validateToolOutput(doc Document, endpoint Endpoint) error {
+	output := endpoint.Tool.Output
+	context := fmt.Sprintf("endpoint %q tool output", endpoint.OperationID)
+	successRef, hasBody, err := compatibleToolSuccessSchema(endpoint)
+	if err != nil {
+		return fmt.Errorf("%s: %w", context, err)
+	}
+	switch output.Mode {
+	case "empty":
+		if hasBody {
+			return fmt.Errorf("%s mode empty requires bodyless success responses", context)
+		}
+	case "raw":
+		if len(output.Select) > 0 || output.Cursor != nil {
+			return fmt.Errorf("%s mode raw cannot declare select or cursor", context)
+		}
+	case "project":
+		if !hasBody {
+			return fmt.Errorf("%s mode project requires a JSON success response", context)
+		}
+		if len(output.Select) == 0 {
+			return fmt.Errorf("%s mode project requires select", context)
+		}
+		targets := map[string]struct{}{}
+		for i, projection := range output.Select {
+			if err := validateToolProjection(doc, successRef, projection, targets, fmt.Sprintf("%s select[%d]", context, i)); err != nil {
+				return err
+			}
+		}
+		if output.Cursor != nil {
+			if _, err := resolveToolPointer(doc, successRef, output.Cursor.Source); err != nil {
+				return fmt.Errorf("%s cursor: %w", context, err)
+			}
+			for _, target := range []string{defaultString(output.Cursor.Target, "nextCursor"), defaultString(output.Cursor.HasMoreTarget, "hasMore")} {
+				if _, exists := targets[target]; exists {
+					return fmt.Errorf("%s cursor target %q collides with projected output", context, target)
+				}
+				targets[target] = struct{}{}
+			}
+		}
+	default:
+		return fmt.Errorf("%s has unsupported mode %q", context, output.Mode)
+	}
+	return nil
+}
+
+func compatibleToolSuccessSchema(endpoint Endpoint) (SchemaRef, bool, error) {
+	var found *SchemaRef
+	var canonical []byte
+	for _, response := range endpoint.Responses {
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			continue
+		}
+		if len(response.Contents) == 0 {
+			if found != nil {
+				return SchemaRef{}, false, fmt.Errorf("success responses mix body and bodyless shapes")
+			}
+			continue
+		}
+		if len(response.Contents) != 1 || response.Contents[0].BodyKind != "json" || response.Contents[0].Schema == nil {
+			return SchemaRef{}, false, fmt.Errorf("success responses must use one JSON body shape")
+		}
+		ref := *response.Contents[0].Schema
+		encoded, _ := json.Marshal(ref)
+		if found != nil && string(encoded) != string(canonical) {
+			return SchemaRef{}, false, fmt.Errorf("success responses have incompatible body schemas")
+		}
+		copyRef := ref
+		found = &copyRef
+		canonical = encoded
+	}
+	if found == nil {
+		return SchemaRef{}, false, nil
+	}
+	return *found, true, nil
+}
+
+func validateToolProjection(doc Document, scope SchemaRef, projection ToolProjection, targets map[string]struct{}, context string) error {
+	selected, err := resolveToolPointer(doc, scope, projection.Source)
+	if err != nil {
+		return fmt.Errorf("%s: %w", context, err)
+	}
+	target := projection.Target
+	if target == "" {
+		segments, _ := toolPointerSegments(projection.Source)
+		if len(segments) == 0 {
+			return fmt.Errorf("%s target is required for the root pointer", context)
+		}
+		target = segments[len(segments)-1]
+	}
+	if _, exists := targets[target]; exists {
+		return fmt.Errorf("%s target %q is duplicated", context, target)
+	}
+	targets[target] = struct{}{}
+	childScope, kind := toolProjectionChildScope(doc, selected)
+	if projection.CountAs != "" {
+		if kind != "array" && kind != "map" {
+			return fmt.Errorf("%s count_as requires an array or map source", context)
+		}
+		if _, exists := targets[projection.CountAs]; exists {
+			return fmt.Errorf("%s count target %q is duplicated", context, projection.CountAs)
+		}
+		targets[projection.CountAs] = struct{}{}
+	}
+	if len(projection.Select) > 0 {
+		if kind != "object" && kind != "array" && kind != "map" {
+			return fmt.Errorf("%s select requires an object, array, or map source", context)
+		}
+		childTargets := map[string]struct{}{}
+		for i, child := range projection.Select {
+			if err := validateToolProjection(doc, childScope, child, childTargets, fmt.Sprintf("%s select[%d]", context, i)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func resolveToolPointer(doc Document, scope SchemaRef, pointer string) (SchemaRef, error) {
+	segments, err := toolPointerSegments(pointer)
+	if err != nil {
+		return SchemaRef{}, err
+	}
+	current := scope
+	for _, segment := range segments {
+		if current.AdditionalProperties != nil {
+			if current.AdditionalProperties.Schema != nil {
+				current = *current.AdditionalProperties.Schema
+			} else if current.AdditionalProperties.Any {
+				current = SchemaRef{Type: "object"}
+			} else {
+				return SchemaRef{}, fmt.Errorf("pointer %q cannot traverse %q", pointer, segment)
+			}
+			continue
+		}
+		schema, ok := concreteSchema(doc, current)
+		if ok && schema.Type == "object" {
+			property, exists := schema.Properties[segment]
+			if !exists {
+				return SchemaRef{}, fmt.Errorf("pointer %q references unknown property %q", pointer, segment)
+			}
+			current = property.Schema
+			continue
+		}
+		return SchemaRef{}, fmt.Errorf("pointer %q cannot traverse %q", pointer, segment)
+	}
+	return current, nil
+}
+
+func toolPointerSegments(pointer string) ([]string, error) {
+	if pointer == "" {
+		return nil, nil
+	}
+	if !strings.HasPrefix(pointer, "/") {
+		return nil, fmt.Errorf("pointer %q must be an RFC 6901 pointer", pointer)
+	}
+	raw := strings.Split(strings.TrimPrefix(pointer, "/"), "/")
+	segments := make([]string, len(raw))
+	for i, value := range raw {
+		if strings.Contains(value, "~") {
+			for j := 0; j < len(value); j++ {
+				if value[j] == '~' && (j+1 >= len(value) || (value[j+1] != '0' && value[j+1] != '1')) {
+					return nil, fmt.Errorf("pointer %q has invalid escape", pointer)
+				}
+			}
+		}
+		segments[i] = strings.ReplaceAll(strings.ReplaceAll(value, "~1", "/"), "~0", "~")
+	}
+	return segments, nil
+}
+
+func toolProjectionChildScope(doc Document, ref SchemaRef) (SchemaRef, string) {
+	if ref.AdditionalProperties != nil {
+		if ref.AdditionalProperties.Schema != nil {
+			return *ref.AdditionalProperties.Schema, "map"
+		}
+		return SchemaRef{Type: "object"}, "map"
+	}
+	if schema, ok := concreteSchema(doc, ref); ok {
+		switch schema.Type {
+		case "array":
+			if schema.Items != nil {
+				return *schema.Items, "array"
+			}
+		case "object":
+			return ref, "object"
+		}
+	}
+	if ref.Type == "array" && ref.Items != nil {
+		return *ref.Items, "array"
+	}
+	return ref, ref.Type
+}
+
+func concreteSchema(doc Document, ref SchemaRef) (Schema, bool) {
+	if ref.Ref != "" {
+		return ResolveSchema(doc, ref)
+	}
+	if ref.Type == "" {
+		return Schema{}, false
+	}
+	return Schema{Type: ref.Type, Items: ref.Items}, true
+}
+
+func toolValueMatchesSchema(doc Document, value any, ref SchemaRef) bool {
+	typeName := ref.Type
+	if schema, ok := concreteSchema(doc, ref); ok {
+		typeName = schema.Type
+	}
+	switch typeName {
+	case "string":
+		_, ok := value.(string)
+		return ok
+	case "integer", "number":
+		switch value.(type) {
+		case int, int32, int64, uint, uint32, uint64, float32, float64, json.Number:
+			return true
+		}
+		return false
+	case "boolean":
+		_, ok := value.(bool)
+		return ok
+	case "array":
+		_, ok := value.([]any)
+		return ok
+	case "object":
+		_, ok := value.(map[string]any)
+		return ok
+	default:
+		return true
+	}
+}
+
+func stringSet(values []string) map[string]bool {
+	out := make(map[string]bool, len(values))
+	for _, value := range values {
+		out[value] = true
+	}
+	return out
+}
+
+func defaultString(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func validateResponseExtensions(extensions map[string]any, context string) error {
@@ -229,6 +669,21 @@ func validateResponseExtensions(extensions map[string]any, context string) error
 				return fmt.Errorf("%s unsupported APIGen-owned extension %q", context, key)
 			}
 			return fmt.Errorf("%s unsupported response extension %q", context, key)
+		}
+		if err := validateJSONCompatibleExtensionValue(value); err != nil {
+			return fmt.Errorf("%s extension %q: %w", context, key, err)
+		}
+	}
+	return nil
+}
+
+func validateGenericExtensions(extensions map[string]any, context string) error {
+	for key, value := range extensions {
+		if !strings.HasPrefix(key, "x-") {
+			return fmt.Errorf("%s extension %q must start with \"x-\"", context, key)
+		}
+		if strings.HasPrefix(key, "x-apigen-") {
+			return fmt.Errorf("%s unsupported APIGen-owned extension %q", context, key)
 		}
 		if err := validateJSONCompatibleExtensionValue(value); err != nil {
 			return fmt.Errorf("%s extension %q: %w", context, key, err)
@@ -452,6 +907,9 @@ func validateSchemaDefinition(doc Document, name string, schema Schema) error {
 		if err := validateSchemaRefExists(doc, property.Schema, fmt.Sprintf("schema %q property %q", name, propertyName)); err != nil {
 			return err
 		}
+		if err := validateGenericExtensions(property.Extensions, fmt.Sprintf("schema %q property %q", name, propertyName)); err != nil {
+			return err
+		}
 	}
 	if schema.Items != nil {
 		if err := validateSchemaRefExists(doc, *schema.Items, fmt.Sprintf("schema %q items", name)); err != nil {
@@ -480,6 +938,18 @@ func validateSchemaRefExists(doc Document, schemaRef SchemaRef, context string) 
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("%s enum[%d] is required", context, idx)
 		}
+	}
+	if schemaRef.Minimum != nil && (math.IsNaN(*schemaRef.Minimum) || math.IsInf(*schemaRef.Minimum, 0)) || schemaRef.Maximum != nil && (math.IsNaN(*schemaRef.Maximum) || math.IsInf(*schemaRef.Maximum, 0)) {
+		return fmt.Errorf("%s numeric bounds must be finite", context)
+	}
+	if schemaRef.Minimum != nil && schemaRef.Maximum != nil && *schemaRef.Minimum > *schemaRef.Maximum {
+		return fmt.Errorf("%s minimum must not exceed maximum", context)
+	}
+	if schemaRef.MinLength != nil && *schemaRef.MinLength < 0 || schemaRef.MaxLength != nil && *schemaRef.MaxLength < 0 {
+		return fmt.Errorf("%s length bounds must be non-negative", context)
+	}
+	if schemaRef.MinLength != nil && schemaRef.MaxLength != nil && *schemaRef.MinLength > *schemaRef.MaxLength {
+		return fmt.Errorf("%s min_length must not exceed max_length", context)
 	}
 	if schemaRef.AdditionalProperties != nil && schemaRef.AdditionalProperties.Schema != nil {
 		if err := validateSchemaRefExists(doc, *schemaRef.AdditionalProperties.Schema, context+" additional_properties"); err != nil {
@@ -521,6 +991,9 @@ func resolvedParameterArrayItemType(doc Document, schemaRef SchemaRef, context s
 
 // Normalize applies deterministic ordering for generation.
 func Normalize(doc *Document) error {
+	sort.Slice(doc.Contracts, func(i, j int) bool {
+		return doc.Contracts[i].Name < doc.Contracts[j].Name
+	})
 	sort.Slice(doc.Endpoints, func(i, j int) bool {
 		if doc.Endpoints[i].Path == doc.Endpoints[j].Path {
 			return strings.ToLower(doc.Endpoints[i].Method) < strings.ToLower(doc.Endpoints[j].Method)
@@ -528,6 +1001,9 @@ func Normalize(doc *Document) error {
 		return doc.Endpoints[i].Path < doc.Endpoints[j].Path
 	})
 	for i := range doc.Endpoints {
+		if tool := doc.Endpoints[i].Tool; tool != nil && tool.Confirmation == "" {
+			tool.Confirmation = defaultToolConfirmation(tool.Effect)
+		}
 		normalizedCLI, err := normalizeEndpointCLI(*doc, doc.Endpoints[i])
 		if err != nil {
 			return err

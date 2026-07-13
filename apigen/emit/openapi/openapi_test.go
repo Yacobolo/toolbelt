@@ -14,7 +14,7 @@ func TestEmitYAML(t *testing.T) {
 	t.Helper()
 
 	docIR := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		Info:          ir.Info{Title: "test", Version: "1.0.0"},
 		Schemas: map[string]ir.Schema{
 			"Item": {
@@ -43,7 +43,7 @@ func TestEmitYAML(t *testing.T) {
 					{Name: "accept", In: "header", Required: true, Schema: ir.SchemaRef{Type: "string", Enum: []string{"application/json", "application/octet-stream"}}},
 				},
 				Extensions: map[string]any{
-					"x-agent": map[string]any{
+					"x-downstream": map[string]any{
 						"enabled": true,
 						"name":    "get_item",
 						"score":   1.5,
@@ -83,9 +83,9 @@ func TestEmitYAML(t *testing.T) {
 	require.Equal(t, "item_123", doc.Paths.Value("/items/{id}").Get.Parameters[0].Value.Example)
 	require.Equal(t, []any{"application/json", "application/octet-stream"}, doc.Paths.Value("/items/{id}").Get.Parameters[1].Value.Schema.Value.Enum)
 	require.Equal(t, "item_123", doc.Components.Schemas["Item"].Value.Example.(map[string]any)["id"])
-	require.Equal(t, true, doc.Paths.Value("/items/{id}").Get.Extensions["x-agent"].(map[string]any)["enabled"])
-	require.Equal(t, []any{"items", "read"}, doc.Paths.Value("/items/{id}").Get.Extensions["x-agent"].(map[string]any)["tags"])
-	require.Equal(t, nil, doc.Paths.Value("/items/{id}").Get.Extensions["x-agent"].(map[string]any)["nested"].(map[string]any)["nullable"])
+	require.Equal(t, true, doc.Paths.Value("/items/{id}").Get.Extensions["x-downstream"].(map[string]any)["enabled"])
+	require.Equal(t, []any{"items", "read"}, doc.Paths.Value("/items/{id}").Get.Extensions["x-downstream"].(map[string]any)["tags"])
+	require.Equal(t, nil, doc.Paths.Value("/items/{id}").Get.Extensions["x-downstream"].(map[string]any)["nested"].(map[string]any)["nullable"])
 	headers := doc.Paths.Value("/items/{id}").Get.Responses.Value("200").Value.Headers
 	require.Contains(t, headers, "X-RateLimit-Remaining")
 	require.Equal(t, openapi3.Types{"integer"}, *headers["X-RateLimit-Remaining"].Value.Schema.Value.Type)
@@ -99,11 +99,33 @@ func TestEmitYAML(t *testing.T) {
 	require.Contains(t, string(b), "example:")
 }
 
+func TestEmitYAMLIncludesTypedToolMetadata(t *testing.T) {
+	doc := ir.Document{
+		SchemaVersion: ir.CurrentSchemaVersion,
+		API:           ir.API{BasePath: "/"},
+		Info:          ir.Info{Title: "Tools", Version: "1"},
+		Endpoints: []ir.Endpoint{{
+			Method: "get", Path: "/items", OperationID: "listItems",
+			Responses: []ir.Response{{StatusCode: 204, Description: "ok"}},
+			Tool:      &ir.Tool{Name: "list_items", Effect: "read", Confirmation: "never", Output: ir.ToolOutput{Mode: "empty"}},
+		}},
+	}
+
+	content, err := EmitYAML(doc, Options{})
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, yaml.Unmarshal(content, &raw))
+	operation := raw["paths"].(map[string]any)["/items"].(map[string]any)["get"].(map[string]any)
+	require.Equal(t, map[string]any{
+		"name": "list_items", "effect": "read", "confirmation": "never", "output": map[string]any{"mode": "empty"},
+	}, operation["x-apigen-tool"])
+}
+
 func TestEmitYAML_EmitsMultipleContentKinds(t *testing.T) {
 	t.Helper()
 
 	docIR := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		Info:          ir.Info{Title: "test", Version: "1.0.0"},
 		Endpoints: []ir.Endpoint{{
 			Method:      "get",
@@ -136,7 +158,7 @@ func TestEmitYAML_EmitsMultipartMetadata(t *testing.T) {
 	t.Helper()
 
 	docIR := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		Info:          ir.Info{Title: "test", Version: "1.0.0"},
 		Schemas: map[string]ir.Schema{
 			"Metadata": {Type: "object", Properties: map[string]ir.SchemaProperty{"name": {Schema: ir.SchemaRef{Type: "string"}}}},
@@ -176,7 +198,7 @@ func TestEmitYAML_EmitsMultipartMixedVendorMetadata(t *testing.T) {
 	t.Helper()
 
 	docIR := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		Info:          ir.Info{Title: "test", Version: "1.0.0"},
 		Endpoints: []ir.Endpoint{{
 			Method:      "post",
@@ -218,7 +240,7 @@ func TestEmitYAML_UsesAPIBasePathForVisibleRoutes(t *testing.T) {
 	t.Helper()
 
 	docIR := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/v1"},
 		Info:          ir.Info{Title: "test", Version: "1.0.0"},
 		Endpoints: []ir.Endpoint{

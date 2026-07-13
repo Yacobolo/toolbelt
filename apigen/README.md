@@ -1,6 +1,6 @@
 # apigen
 
-`apigen` compiles authored API contracts into canonical OpenAPI, versioned JSON IR, generated Go server code, generated request-model types, and generated Cobra CLI registries.
+`apigen` compiles authored API and data contracts into versioned JSON IR, canonical OpenAPI, generated Go server code, generated request-model types, generated Cobra CLI registries, and generated model artifacts.
 
 Module path: `github.com/Yacobolo/toolbelt/apigen`
 
@@ -9,16 +9,16 @@ Module path: `github.com/Yacobolo/toolbelt/apigen`
 APIGen has two contract layers:
 
 - TypeSpec authoring input for humans
-- JSON IR `v2` for generators
+- JSON IR `v3` for generators
 
-Canonical OpenAPI is the published API artifact. JSON IR is the compatibility boundary between TypeSpec and the Go emitters. Repo-owned OpenAPI extensions such as `x-authz` are preserved there.
+Canonical OpenAPI is the published API artifact for HTTP targets. JSON IR is the compatibility boundary between TypeSpec and emitters. Repo-owned OpenAPI extensions such as `x-authz` are preserved there. Generic data-contract roots live in the same IR under `contracts[]` and reuse the shared `schemas` registry.
 
 ## CLI
 
 Install the CLI:
 
 ```bash
-go install github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.3.2
+go install github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.4.0
 ```
 
 Or run from this module during local development:
@@ -29,11 +29,11 @@ go run ./cmd/apigen --help
 
 Commands:
 
-- `typespec-compile`: TypeSpec -> JSON IR + OpenAPI
+- `typespec-compile`: TypeSpec -> JSON IR, plus OpenAPI for HTTP targets
 - `openapi`: JSON IR -> OpenAPI
 - `server`: JSON IR -> server + request models
 - `cli`: JSON IR -> Cobra registry
-- `all`: JSON IR -> all Go outputs
+- `all`: JSON IR -> all configured outputs
 
 The CLI supports direct flags or a manifest selected with `-manifest <file>` and `-target <name>`.
 
@@ -42,6 +42,7 @@ Recommended grouped manifest shape:
 ```yaml
 targets:
   - name: example
+    kind: http
     typespec_dir: api/typespec
     ir_out: api/gen/json-ir.json
     openapi_out: api/gen/openapi.yaml
@@ -49,10 +50,20 @@ targets:
       dir: internal/api/gen
     cli_out:
       dir: cmd/cli/gen
+
+  - name: data-contracts
+    kind: contracts
+    typespec_dir: contracts/typespec
+    ir_out: contracts/gen/json-ir.json
+    go_models_out: internal/contracts/models.gen.go
+    go_models_package: contracts
+    ts_out: contracts/gen/contracts.ts
+    json_schema_out: contracts/gen/contracts.schema.json
 ```
 
 Manifest target fields:
 
+- `kind` (`http` by default, or `contracts`)
 - `typespec_dir`
 - `ir_out`
 - `openapi_out`
@@ -63,6 +74,14 @@ Manifest target fields:
 - `cli_out.dir`
 - `cli_out.package`
 - `cli_out.file`
+- `go_models_out`
+- `go_models_package`
+- `ts_out`
+- `json_schema_out`
+
+HTTP targets require `typespec_dir`, `ir_out`, and `openapi_out`. Contract targets require `typespec_dir`, `ir_out`, and at least one of `go_models_out`, `ts_out`, or `json_schema_out`. `openapi`, `server`, and `cli` are HTTP-target commands and fail clearly for contract targets.
+
+Direct flags support the same split with `-kind http` or `-kind contracts`.
 
 ## Public Surface
 
@@ -73,14 +92,18 @@ Supported packages:
 - `github.com/Yacobolo/toolbelt/apigen/emit/requestmodelgo`
 - `github.com/Yacobolo/toolbelt/apigen/emit/servergo`
 - `github.com/Yacobolo/toolbelt/apigen/emit/cligo`
+- `github.com/Yacobolo/toolbelt/apigen/emit/modelgo`
+- `github.com/Yacobolo/toolbelt/apigen/emit/modelts`
+- `github.com/Yacobolo/toolbelt/apigen/emit/jsonschema`
 - `github.com/Yacobolo/toolbelt/apigen/runtime/chi`
 - `github.com/Yacobolo/toolbelt/apigen/runtime/cobra`
+- `github.com/Yacobolo/toolbelt/apigen/runtime/agenttool`
 
 Package roles:
 
 - `typespec`: TypeSpec emitter package used by `typespec-compile`
 - `ir`: versioned generator contract
-- `emit/*`: OpenAPI, server, request-model, and CLI emitters
+- `emit/*`: OpenAPI, server, request-model, CLI, model, and JSON Schema emitters
 - `runtime/*`: thin runtime helpers used by generated code
 - `cmd/apigen`: CLI entrypoint
 
@@ -95,56 +118,109 @@ Recommended TypeSpec flow:
 3. Run `all` to generate server, request-model, and CLI outputs.
 4. Build your service against `runtime/chi` and your CLI against `runtime/cobra`.
 
-The runnable reference showcase lives in `example/`. It is a small todo app with checked-in `json-ir`, OpenAPI, server transport, request-model aliases, CLI registry metadata, handwritten strict handlers, and a generated Cobra CLI.
+The runnable reference showcase lives in `example/`. It is a small todo app with checked-in `json-ir`, OpenAPI, server transport, request-model aliases, CLI registry metadata, handwritten strict handlers, and a generated Cobra CLI. The same example also includes a generic contract target shaped like dashboard UI signal envelopes, with checked-in Go models, TypeScript types, JSON Schema, and IR.
 
 The in-repo TypeSpec emitter lives in `typespec/` with a checked-in `package-lock.json`. Use `npm ci` there for reproducible local TypeSpec development; `typespec-compile` also bootstraps that pinned toolchain when needed. Project TypeSpec sources may use conventional package imports such as `import "@typespec/http";`, `import "@typespec/openapi";`, and `import "@yacobolo/apigen";`; the CLI resolves those imports from its managed cache.
 
-## Operation Vendor Extensions
+## Typed Agent Tools
 
-Use TypeSpec's native OpenAPI extension decorator to attach downstream-owned operation metadata:
+Agent tools are endpoint capabilities, not standalone data contracts. Mark a TypeSpec operation with `@apigen.tool`; APIGen derives the model-visible input from its path, query, header, and JSON body fields:
 
 ```typespec
-using TypeSpec.OpenAPI;
-
-@extension("x-agent", #{
-  enabled: true,
+@apigen.tool(#{
   name: "list_workspace_assets",
-  risk: "read",
+  effect: "read",
   tags: #["workspace", "lineage"],
+  input: #{ fields: #[
+    #{ source: "path", name: "workspace", mode: "context", contextKey: "workspace" },
+    #{ source: "query", name: "limit", default: 25 },
+  ] },
+  output: #{
+    mode: "project",
+    select: #[#{ source: "/items", countAs: "count", select: #[#{ source: "/id" }, #{ source: "/title" }] }],
+    cursor: #{ source: "/page/nextCursor" },
+  },
 })
-@route("/workspaces")
+@route("/workspaces/{workspace}/assets")
 @get
-op listWorkspaces(): Workspace[];
+op listWorkspaceAssets(
+  @path workspace: string,
+  @query limit?: int32,
+): AssetListResponse;
 ```
 
-APIGen preserves operation-level `x-*` extensions through TypeSpec -> JSON IR -> canonical OpenAPI -> generated Go operation contracts. Extension values must be JSON-compatible: `null`, strings, booleans, finite numbers, arrays, and objects.
+Effects are `read`, `idempotent-write`, `write`, and `destructive`. Their minimum confirmation defaults are `never`, `policy`, `policy`, and `always`; authored confirmation may strengthen but never weaken that requirement. Tool names are portable lowercase identifiers and unique across the document.
 
-Generated server packages expose extensions through `GenOperationContract.Extensions`:
+Input overrides bind endpoint wire fields as model arguments, trusted context, or omitted/defaulted transport values. Tool endpoints accept no body or one JSON body; binary, file, form, and multipart inputs fail closed. Output modes are `raw`, `project`, and `empty`; recursive RFC 6901 projections support object fields, array items, map values, aliases, counts, and cursors.
+
+Generated model-visible schemas use a provider-portable validation subset. Defaults and transport formats remain on typed bindings rather than appearing as `default` or `format` schema annotations.
+
+Generated server packages expose defensive copies of SDK-neutral descriptors:
 
 ```go
-contract, ok := gen.GetAPIGenOperationContract("listWorkspaces")
+contract, ok := gen.GetAPIGenToolContract("list_workspace_assets")
 if ok {
-	agent, _ := contract.Extensions["x-agent"].(map[string]any)
-	enabled, _ := agent["enabled"].(bool)
-	_ = enabled
+	request, err := agenttool.BuildRequest(
+		contract,
+		json.RawMessage(`{"limit":10}`),
+		agenttool.Context{"workspace": "sales"},
+	)
+	_ = request
+	_ = err
 }
 ```
 
-Accessors return defensive copies, so callers may filter or reshape extension metadata without mutating generated global state. APIGen does not interpret downstream extension semantics; policy such as agent allowlists, risk handling, auth checks, and workspace scoping belongs in the consuming application.
+`runtime/agenttool` strictly validates arguments, builds HTTP requests, preserves non-2xx responses, and projects successful JSON responses. APIGen remains provider-neutral: authorization, credentials, policy decisions, confirmation UI, agent SDK conversion, and operation dispatch stay in the consumer. Canonical OpenAPI publishes normalized descriptors as `x-apigen-tool`.
 
-APIGen-owned extension keys are reserved. Use APIGen decorators for `x-authz` and `x-apigen-*` metadata instead of generic `@extension`.
+Generic operation `x-*` extensions remain available for downstream metadata. `x-agent` is reserved and rejected; there is no raw compatibility parser.
 
 Install as a dependency with:
 
 ```bash
-go get github.com/Yacobolo/toolbelt/apigen@v0.3.2
+go get github.com/Yacobolo/toolbelt/apigen@v0.4.0
 ```
 
 ## Contract Notes
 
-JSON IR currently supports schema version `v2`. Required root fields are `schema_version`, `info.title`, `info.version`, and at least one endpoint. Request and response bodies use ordered `contents` entries with explicit `content_type` and `body_kind`. Endpoint extensions preserve operation-level `x-*` vendor metadata; APIGen-owned endpoint extensions include `x-authz` and `x-apigen-manual`. Supported response extensions include `x-apigen-response-shape`.
+JSON IR emits and accepts schema version `v3` only. Required root fields are `schema_version`, `info.title`, `info.version`, and at least one endpoint or contract root. Request and response bodies use ordered `contents` entries with explicit `content_type` and `body_kind`. Endpoint extensions preserve operation-level `x-*` vendor metadata; APIGen-owned endpoint extensions include `x-authz` and `x-apigen-manual`. Typed tools live on `Endpoint.tool` and never create `contracts[]` entries.
 
-Endpoint parameters support TypeSpec path, query, and header parameters across IR, OpenAPI, generated server binding, and generated CLI flags. Cookie parameters intentionally fail closed in v0.3.2.
+Contract targets use the shared `schemas` registry plus `contracts[]` roots:
+
+```json
+{
+  "name": "DashboardEnvelope",
+  "schema": {"ref": "DashboardEnvelope"},
+  "kind": "ui-signal",
+  "tags": ["dashboard"],
+  "extensions": {"x-libredash-surface": "dashboard"}
+}
+```
+
+Schema and schema-property `extensions` preserve downstream-owned `x-*` metadata. APIGen validates that metadata is JSON-compatible and has `x-*` keys, but does not interpret downstream rules.
+
+Contract TypeSpec sources can use APIGen decorators:
+
+```typespec
+import "@yacobolo/apigen";
+
+@apigen.`package`(#{ title: "Data Contracts", version: "1.0.0" })
+namespace Contracts;
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["dashboard"] })
+@apigen.`metadata`(#{ "x-owner": "analytics" })
+model DashboardEnvelope {
+  @apigen.`metadata`(#{ "x-libredash-signal-key": "page" })
+  page: DashboardPageSignal;
+}
+```
+
+The contract emitters generate selected contract roots and transitive dependencies:
+
+- `emit/modelgo`: Go structs and aliases; optional TypeSpec properties become pointers.
+- `emit/modelts`: TypeScript interfaces and aliases; optional properties use `?`.
+- `emit/jsonschema`: draft 2020-12 JSON Schema with `$defs`, `anyOf` contract roots, required fields, maps, arrays, enums, and metadata extensions.
+
+Endpoint parameters support TypeSpec path, query, and header parameters across IR, OpenAPI, generated server binding, and generated CLI flags. Cookie parameters intentionally fail closed.
 
 Supported TypeSpec auth is intentionally narrow and runtime-backed: HTTP Bearer auth and `ApiKeyAuth<ApiKeyLocation.header, "X-API-Key">`. Basic/Digest/custom HTTP schemes, OAuth/OpenID, non-header API keys, and header API keys with other names fail closed instead of emitting misleading runtime or OpenAPI metadata.
 
@@ -203,7 +279,7 @@ namespace Artifacts {
 }
 ```
 
-APIGen v0.3.2 follows resolved `@typespec/http` semantics for JSON, text, binary, file, urlencoded form, multipart, optional bodies, response helpers, aliased response unions, and route containers.
+APIGen follows resolved `@typespec/http` semantics for JSON, text, binary, file, urlencoded form, multipart, optional bodies, response helpers, aliased response unions, and route containers.
 Content negotiation can use TypeSpec `@sharedRoute` or `@overload`; APIGen coalesces compatible same-method/same-path operations into one endpoint, merges literal `Accept`/`contentType` headers into enum-like parameters, and fails closed when auth, APIGen CLI/authz/manual metadata, operation extensions, parameters, or request bodies disagree.
 
 LibreDash-style contracts should use standard HTTP transport instead of raw-body extensions. Before:
@@ -235,23 +311,14 @@ namespace Deployments {
 }
 ```
 
-## v0.3.2 Migration Notes
+## v0.4.0 Migration Notes
 
-- JSON IR changes from `schema_version: "v1"` to `"v2"`.
-- `request_body.schema/content_type` becomes `request_body.contents[]`.
-- `response.schema/content_type/any_of` becomes `response.contents[]`.
-- Generated non-JSON request/response types are no longer named `JSONBody` or `JSONResponse`.
-- Multi-content responses now generate media-specific concrete response names such as `ApplicationJSONResponse` and `ApplicationOctetStreamResponse`.
-- Raw `bytes` request/response bodies generate `[]byte`; TypeSpec `Http.File` request/response/multipart bodies generate `GenFile`.
-- `GenFile` adds streaming fields: `Reader io.ReadCloser` and `Size *int64`. Existing simple in-memory use via `Contents []byte` remains valid.
-- Multipart requests now generate typed multipart body structs and streaming multipart decoding for `Http.File` parts. Repeated parts are slices; optional single parts are pointers; named form-data parts use the TypeSpec part name and mixed tuple parts use wire order.
-- Generated strict request structs now include typed `Gen<Operation>Headers` when the operation has header parameters; generated CLI exposes those headers as flags and sends them as HTTP headers.
-- Multipart server decoding now rejects unknown form-data parts, duplicate non-repeated form-data parts, and extra mixed tuple parts.
-- Generated CLI multipart input uses repeated `--part` flags. JSON/form parts accept raw JSON, `@file`, or stdin; text parts accept raw text, `@file`, or stdin; binary/file parts require `@file` or stdin.
-- `multipart/mixed` OpenAPI output includes APIGen vendor metadata `x-apigen-multipart-kind: "mixed"` and ordered `x-apigen-multipart-parts` because OpenAPI 3.0 cannot fully model ordered mixed tuples as ordinary named fields.
-- v0.3.2 fails closed for cookie parameters, unsupported status ranges, Basic/Digest/custom HTTP auth, OAuth/OpenID auth, non-header API-key auth, header API keys other than `X-API-Key`, NoAuth operation overrides on secured services, incompatible duplicate response content variants, and incompatible shared-route/overload merges.
-- `@sharedRoute` and same-endpoint `@overload` operations now coalesce into one APIGen endpoint when their transport metadata is compatible.
-- `GenericRequest` inference is removed; name the TypeSpec model you want APIGen to generate.
-- v0.3.1 remains the pinned all-JSON release for users who need the old generated shape.
+- JSON IR `v3` is the only accepted IR version; v2 loading and normalization are removed.
+- Generic `contracts[]` roots generate Go models, TypeScript types, and draft 2020-12 JSON Schema.
+- Endpoint-derived tools use `@apigen.tool`, generated descriptors, and `runtime/agenttool`.
+- Legacy `x-agent` authoring and extension parsing are rejected rather than deprecated.
+- Generated tool registries expose `GetAPIGenToolContracts` and `GetAPIGenToolContract` with defensive copies.
+- Canonical OpenAPI emits normalized typed metadata as `x-apigen-tool`.
+- Existing HTTP generation remains contract-first and keeps strict transport validation.
 
 See [`ir/CONTRACT.md`](./ir/CONTRACT.md) for the full IR contract and run `go test ./...` for the module smoke coverage.

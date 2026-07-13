@@ -41,8 +41,10 @@ func TestExample_TypeSpecToGeneratedBuildAndRun(t *testing.T) {
 
 	cleanupPaths := []string{
 		filepath.Join(exampleRoot, "api", "gen"),
+		filepath.Join(exampleRoot, "contracts", "gen"),
 		filepath.Join(exampleRoot, "internal", "api", "gen", "server.apigen.gen.go"),
 		filepath.Join(exampleRoot, "internal", "api", "gen", "request_models.gen.go"),
+		filepath.Join(exampleRoot, "internal", "contracts", "models.gen.go"),
 		filepath.Join(exampleRoot, "cmd", "cli", "gen", "apigen_registry.gen.go"),
 		filepath.Join(exampleRoot, "server"),
 		filepath.Join(exampleRoot, "cli"),
@@ -73,9 +75,31 @@ func TestExample_TypeSpecToGeneratedBuildAndRun(t *testing.T) {
 		"go",
 		"run",
 		"./cmd/apigen",
+		"typespec-compile",
+		"-manifest", manifestPath,
+		"-target", "signal-contracts",
+	)
+
+	runCommand(
+		t,
+		apigenRoot,
+		"go",
+		"run",
+		"./cmd/apigen",
 		"all",
 		"-manifest", manifestPath,
 		"-target", "example",
+	)
+
+	runCommand(
+		t,
+		apigenRoot,
+		"go",
+		"run",
+		"./cmd/apigen",
+		"all",
+		"-manifest", manifestPath,
+		"-target", "signal-contracts",
 	)
 
 	serverBinary := filepath.Join(exampleRoot, "server")
@@ -89,18 +113,43 @@ func TestExample_TypeSpecToGeneratedBuildAndRun(t *testing.T) {
 	require.Contains(t, serverGenerated, `type GenStrictServerInterface interface`)
 	require.Contains(t, serverGenerated, `"/todos"`)
 	require.Contains(t, serverGenerated, "package gen")
+	require.Contains(t, serverGenerated, "GetAPIGenToolContracts")
+	require.Contains(t, serverGenerated, `"list_todos"`)
+	require.Contains(t, serverGenerated, `"delete_todo"`)
 
 	cliGenerated := mustReadFile(t, filepath.Join(exampleRoot, "cmd", "cli", "gen", "apigen_registry.gen.go"))
 	require.Contains(t, cliGenerated, `Command: []string{"todos", "list"}`)
 	require.Contains(t, cliGenerated, `Command: []string{"todos", "create"}`)
 	require.Contains(t, cliGenerated, `Command: []string{"todos", "complete"}`)
+	openAPI := mustReadFile(t, filepath.Join(exampleRoot, "api", "gen", "openapi.yaml"))
+	require.Contains(t, openAPI, "x-apigen-tool:")
+	require.NotContains(t, openAPI, "x-agent:")
 	require.Contains(t, cliGenerated, `Command: []string{"todos", "delete"}`)
 	require.Contains(t, cliGenerated, `Confirm: "always"`)
 	require.NotContains(t, cliGenerated, "widgets")
 
 	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "gen", "server.apigen.gen.go"))
 	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "api", "gen", "request_models.gen.go"))
+	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "internal", "contracts", "models.gen.go"))
 	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "cmd", "cli", "gen", "apigen_registry.gen.go"))
+
+	contractIR := mustReadFile(t, filepath.Join(exampleRoot, "contracts", "gen", "json-ir.json"))
+	require.Contains(t, contractIR, `"schema_version": "v3"`)
+	require.Contains(t, contractIR, `"contracts":`)
+	require.Contains(t, contractIR, `"DashboardEnvelope"`)
+	require.NotContains(t, contractIR, `"openapi"`)
+
+	contractGo := mustReadFile(t, filepath.Join(exampleRoot, "internal", "contracts", "models.gen.go"))
+	require.Contains(t, contractGo, "type DashboardEnvelope struct")
+	require.Contains(t, contractGo, "Visuals map[string]DashboardVisual")
+
+	contractTS := mustReadFile(t, filepath.Join(exampleRoot, "contracts", "gen", "contracts.ts"))
+	require.Contains(t, contractTS, "export interface DashboardEnvelope")
+	require.Contains(t, contractTS, "visuals: Record<string, DashboardVisual>")
+
+	contractSchema := mustReadFile(t, filepath.Join(exampleRoot, "contracts", "gen", "contracts.schema.json"))
+	require.Contains(t, contractSchema, `"x-apigen-contracts"`)
+	require.Contains(t, contractSchema, `"x-libredash-signal-key"`)
 
 	routerSource := mustReadFile(t, filepath.Join(exampleRoot, "internal", "api", "router.go"))
 	require.Contains(t, routerSource, "gen.RegisterAPIGenStrictRoutes")
