@@ -1,4 +1,4 @@
-import type { DecoratorContext, Model, Operation } from "@typespec/compiler";
+import type { DecoratorContext, Enum, Model, ModelProperty, Namespace, Operation } from "@typespec/compiler";
 
 export interface CLIArg {
   source: "path" | "query" | "body";
@@ -31,10 +31,60 @@ export interface ResponseShapeOptions {
   bodyType?: string;
 }
 
+export interface PackageOptions {
+  title: string;
+  version: string;
+  description?: string;
+}
+
+export interface ContractOptions {
+  name?: string;
+  kind?: string;
+  tags?: string[];
+}
+
+export interface ToolInputFieldOptions {
+  source: "path" | "query" | "header" | "body";
+  name: string;
+  mode?: "model" | "context" | "omit";
+  alias?: string;
+  contextKey?: string;
+  description?: string;
+  default?: unknown;
+}
+
+export interface ToolProjectionOptions {
+  source: string;
+  target?: string;
+  select?: ToolProjectionOptions[];
+  countAs?: string;
+}
+
+export interface ToolOutputOptions {
+  mode: "raw" | "project" | "empty";
+  select?: ToolProjectionOptions[];
+  cursor?: { source: string; target?: string; hasMoreTarget?: string };
+}
+
+export interface ToolOptions {
+  name: string;
+  description?: string;
+  effect: "read" | "idempotent-write" | "write" | "destructive";
+  confirmation?: "never" | "policy" | "always";
+  tags?: string[];
+  input?: { fields?: ToolInputFieldOptions[] };
+  output: ToolOutputOptions;
+  metadata?: Record<string, unknown>;
+}
+
 const cliKey = Symbol.for("@yacobolo/apigen.cli");
 const authzKey = Symbol.for("@yacobolo/apigen.authz");
 const manualKey = Symbol.for("@yacobolo/apigen.manual");
 const responseShapeKey = Symbol.for("@yacobolo/apigen.responseShape");
+const packageKey = Symbol.for("@yacobolo/apigen.package");
+const contractKey = Symbol.for("@yacobolo/apigen.contract");
+const metadataKey = Symbol.for("@yacobolo/apigen.metadata");
+const toolKey = Symbol.for("@yacobolo/apigen.tool");
 
 export function $cli(context: DecoratorContext, target: Operation, options: CLIOptions) {
   context.program.stateMap(cliKey).set(target, options);
@@ -56,12 +106,40 @@ export function $responseShape(
   context.program.stateMap(responseShapeKey).set(target, options);
 }
 
+export function $package(context: DecoratorContext, target: Namespace, options: PackageOptions) {
+  context.program.stateMap(packageKey).set(target, options);
+}
+
+export function $contract(
+  context: DecoratorContext,
+  target: Model | Enum,
+  options: ContractOptions = {},
+) {
+  context.program.stateMap(contractKey).set(target, options);
+}
+
+export function $metadata(
+  context: DecoratorContext,
+  target: Model | ModelProperty | Enum,
+  value: Record<string, unknown>,
+) {
+  context.program.stateMap(metadataKey).set(target, value);
+}
+
+export function $tool(context: DecoratorContext, target: Operation, options: ToolOptions) {
+  context.program.stateMap(toolKey).set(target, options);
+}
+
 export const $decorators = {
   apigen: {
     cli: $cli,
     authz: $authz,
     manual: $manual,
     responseShape: $responseShape,
+    package: $package,
+    contract: $contract,
+    metadata: $metadata,
+    tool: $tool,
   },
 };
 
@@ -82,4 +160,23 @@ export function getResponseShape(
   target: Model,
 ) {
   return context.program.stateMap(responseShapeKey).get(target) as ResponseShapeOptions | undefined;
+}
+
+export function getPackages(context: { program: DecoratorContext["program"] }) {
+  return [...context.program.stateMap(packageKey).entries()] as [Namespace, PackageOptions][];
+}
+
+export function getContracts(context: { program: DecoratorContext["program"] }) {
+  return [...context.program.stateMap(contractKey).entries()] as [Model | Enum, ContractOptions][];
+}
+
+export function getMetadata(
+  context: { program: DecoratorContext["program"] },
+  target: Model | ModelProperty | Enum,
+) {
+  return context.program.stateMap(metadataKey).get(target) as Record<string, unknown> | undefined;
+}
+
+export function getTool(context: { program: DecoratorContext["program"] }, target: Operation) {
+  return context.program.stateMap(toolKey).get(target) as ToolOptions | undefined;
 }

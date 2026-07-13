@@ -18,7 +18,7 @@ describe("APIGen TypeSpec emitter", () => {
     await compileFixture("todo", irPath);
 
     const doc = JSON.parse(await readFile(irPath, "utf8"));
-    expect(doc.schema_version).toBe("v2");
+    expect(doc.schema_version).toBe("v3");
     expect(doc.info.title).toBe("APIGen Todo Example");
     expect(doc.endpoints.map((x: any) => x.operation_id)).toEqual([
       "listTodos",
@@ -89,7 +89,7 @@ describe("APIGen TypeSpec emitter", () => {
     expect(doc.endpoints[1].request_body.contents[0].schema).toEqual({ ref: "WidgetStatus" });
   });
 
-  it("emits v2 IR for optimized TypeSpec HTTP authoring", async () => {
+  it("emits v3 IR for optimized TypeSpec HTTP authoring", async () => {
     const doc = await compileSource(`
       using Http;
 
@@ -169,7 +169,7 @@ describe("APIGen TypeSpec emitter", () => {
       }
     `);
 
-    expect(doc.schema_version).toBe("v2");
+    expect(doc.schema_version).toBe("v3");
     expect(doc.endpoints.map((x: any) => x.path)).toEqual([
       "/artifacts/{id}",
       "/artifacts",
@@ -806,32 +806,26 @@ describe("APIGen TypeSpec emitter", () => {
     ]);
   });
 
-  it("fails without writing IR for inline string literal unions", async () => {
-    const outDir = await mkdtemp(join(tmpdir(), "apigen-typespec-"));
-    const irPath = join(outDir, "json-ir.json");
+  it("emits inline string literal unions as enum schemas", async () => {
+    const doc = await compileSource(`
+      using Http;
 
-    await expect(
-      compileSource(
-        `
-          using Http;
+      @service(#{ title: "Inline Union API" })
+      namespace InlineUnionAPI;
 
-          @service(#{ title: "Inline Union API" })
-          namespace InlineUnionAPI;
+      model Widget {
+        status: "active" | "archived";
+      }
 
-          model Widget {
-            status: "active" | "archived";
-          }
+      @route("/widgets")
+      @get
+      op list(): Widget;
+    `);
 
-          @route("/widgets")
-          @get
-          op list(): Widget;
-        `,
-        irPath,
-      ),
-    ).rejects.toSatisfy((error: any) =>
-      `${error.stdout}\n${error.stderr}`.includes("Unsupported inline enum-like union"),
-    );
-    await expect(stat(irPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(doc.schemas.Widget.properties.status.schema).toEqual({
+      type: "string",
+      enum: ["active", "archived"],
+    });
   });
 
   it("fails without writing IR for response status ranges", async () => {
@@ -893,49 +887,84 @@ describe("APIGen TypeSpec emitter", () => {
     expect(doc.endpoints[1].security).toEqual([{ BearerAuth: [], ApiKeyAuth: [] }]);
   });
 
-  it("emits operation vendor extensions from TypeSpec OpenAPI decorators", async () => {
+  it("emits typed endpoint tools", async () => {
     const doc = await compileSource(`
       using Http;
-      using TypeSpec.OpenAPI;
 
-      @service(#{ title: "Extensions API" })
-      namespace ExtensionsAPI;
+      @service(#{ title: "Tools API" })
+      namespace ToolsAPI;
+
+      model PageInfo {
+        nextCursor?: string;
+      }
+
+      model WorkspaceList {
+        items: Workspace[];
+        page: PageInfo;
+      }
 
       model Workspace {
         id: string;
       }
 
-      @extension("x-agent", #{
-        enabled: true,
-        disabled: false,
+      @minValue(1)
+      @maxValue(100)
+      scalar ToolLimit extends int32;
+
+      @apigen.tool(#{
         name: "list_workspace_assets",
-        risk: "read",
-        retries: 0,
-        score: 1.5,
-        scopes: #[],
+        effect: "read",
         tags: #["workspace", "lineage"],
-        nested: #{ nullable: null, count: 3, empty: #{} },
+        input: #{ fields: #[
+          #{ source: "path", name: "workspace", mode: "context", contextKey: "workspace" },
+          #{ source: "query", name: "limit", default: 25 },
+        ] },
+        output: #{
+          mode: "project",
+          select: #[#{ source: "/items", countAs: "count", select: #[#{ source: "/id" }] }],
+          cursor: #{ source: "/page/nextCursor" },
+        },
+        metadata: #{ \`x-product-surface\`: "catalog" },
       })
-      @extension("x-flags", #[])
-      @route("/workspaces")
+      @route("/workspaces/{workspace}/assets")
       @get
-      op listWorkspaces(): Workspace[];
+      op listWorkspaces(@path workspace: string, @query limit?: ToolLimit): WorkspaceList;
     `);
 
-    expect(doc.endpoints[0].extensions).toEqual({
-      "x-agent": {
-        enabled: true,
-        disabled: false,
-        name: "list_workspace_assets",
-        risk: "read",
-        retries: 0,
-        score: 1.5,
-        scopes: [],
-        tags: ["workspace", "lineage"],
-        nested: { nullable: null, count: 3, empty: {} },
+    expect(doc.endpoints[0].tool).toEqual({
+      name: "list_workspace_assets",
+      effect: "read",
+      confirmation: "never",
+      tags: ["workspace", "lineage"],
+      input: {
+        fields: [
+          { source: "path", name: "workspace", mode: "context", context_key: "workspace" },
+          { source: "query", name: "limit", default: 25 },
+        ],
       },
-      "x-flags": [],
+      output: {
+        mode: "project",
+        select: [{ source: "/items", count_as: "count", select: [{ source: "/id" }] }],
+        cursor: { source: "/page/nextCursor" },
+      },
+      metadata: { "x-product-surface": "catalog" },
     });
+    expect(doc.endpoints[0].parameters[1].schema).toEqual({
+      type: "integer",
+      format: "int32",
+      minimum: 1,
+      maximum: 100,
+    });
+  });
+
+  it("rejects legacy x-agent extensions", async () => {
+    await expectCompileFails(`
+      using Http;
+      using TypeSpec.OpenAPI;
+      @service(#{ title: "Legacy Tool" }) namespace LegacyTool;
+      @extension("x-agent", #{ name: "legacy" })
+      @route("/legacy") @get op legacy(): string;
+    `, "reserved for APIGen-owned metadata");
   });
 
   it("fails without writing IR for APIGen-reserved generic operation extensions", async () => {
@@ -1062,6 +1091,76 @@ describe("APIGen TypeSpec emitter", () => {
     expect(doc.openapi.security).toBeUndefined();
     expect(doc.openapi.security_schemes).toBeUndefined();
     expect(doc.endpoints[0].security).toBeUndefined();
+  });
+
+  it("emits contract-only IR with roots and metadata", async () => {
+    const doc = await compileSource(`
+      @apigen.\`package\`(#{ title: "LibreDash Signal Contracts", version: "1.0.0", description: "UI contracts" })
+      namespace SignalContracts;
+
+      model DashboardPageSignal {
+        dashboardId: string;
+        pageId: string;
+      }
+
+      model DashboardVisual {
+        id: string;
+        data: Record<unknown>;
+      }
+
+      @apigen.contract(#{ kind: "ui-signal", tags: #["dashboard"] })
+      @apigen.\`metadata\`(#{ \`x-libredash-surface\`: "dashboard" })
+      model DashboardEnvelope {
+        @apigen.\`metadata\`(#{ \`x-libredash-signal-key\`: "page" })
+        page: DashboardPageSignal;
+
+        @apigen.\`metadata\`(#{ \`x-libredash-signal-key\`: "visuals", \`x-libredash-patch-mode\`: "merge" })
+        visuals: Record<DashboardVisual>;
+      }
+    `);
+
+    expect(doc.schema_version).toBe("v3");
+    expect(doc.info).toEqual({
+      title: "LibreDash Signal Contracts",
+      version: "1.0.0",
+      description: "UI contracts",
+    });
+    expect(doc.endpoints).toBeUndefined();
+    expect(doc.contracts).toEqual([
+      {
+        name: "DashboardEnvelope",
+        schema: { ref: "DashboardEnvelope" },
+        kind: "ui-signal",
+        tags: ["dashboard"],
+        extensions: { "x-libredash-surface": "dashboard" },
+      },
+    ]);
+    expect(doc.schemas.DashboardEnvelope.properties.page.extensions).toEqual({
+      "x-libredash-signal-key": "page",
+    });
+    expect(doc.schemas.DashboardEnvelope.properties.visuals).toMatchObject({
+      schema: {
+        type: "object",
+        additional_properties: { schema: { ref: "DashboardVisual" } },
+      },
+      extensions: {
+        "x-libredash-signal-key": "visuals",
+        "x-libredash-patch-mode": "merge",
+      },
+    });
+  });
+
+  it("fails without writing IR for invalid contract metadata keys", async () => {
+    await expectCompileFails(
+      `
+        @apigen.contract
+        @apigen.\`metadata\`(#{ invalid: "metadata" })
+        model DashboardEnvelope {
+          page: string;
+        }
+      `,
+      "must start with 'x-'",
+    );
   });
 
   it("fails clearly when multiple services are declared", async () => {

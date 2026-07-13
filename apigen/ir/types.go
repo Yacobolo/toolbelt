@@ -10,7 +10,8 @@ type Document struct {
 	Servers       []Server          `json:"servers,omitempty"`
 	Tags          []Tag             `json:"tags,omitempty"`
 	Schemas       map[string]Schema `json:"schemas,omitempty"`
-	Endpoints     []Endpoint        `json:"endpoints"`
+	Contracts     []Contract        `json:"contracts,omitempty"`
+	Endpoints     []Endpoint        `json:"endpoints,omitempty"`
 	Extensions    map[string]any    `json:"extensions,omitempty"`
 }
 
@@ -46,6 +47,16 @@ type Tag struct {
 	Description string `json:"description,omitempty"`
 }
 
+// Contract describes one data-contract root.
+type Contract struct {
+	Name        string         `json:"name"`
+	Schema      SchemaRef      `json:"schema"`
+	Kind        string         `json:"kind,omitempty"`
+	Tags        []string       `json:"tags,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Extensions  map[string]any `json:"extensions,omitempty"`
+}
+
 // OpenAPI contains canonical OpenAPI document metadata that is not directly
 // represented by the generator-oriented endpoint/schema model.
 type OpenAPI struct {
@@ -78,8 +89,59 @@ type Endpoint struct {
 	RequestBody *RequestBody          `json:"request_body,omitempty"`
 	Responses   []Response            `json:"responses"`
 	CLI         *CLI                  `json:"cli,omitempty"`
+	Tool        *Tool                 `json:"tool,omitempty"`
 	Security    []SecurityRequirement `json:"security,omitempty"`
 	Extensions  map[string]any        `json:"extensions,omitempty"`
+}
+
+// Tool describes an SDK-neutral agent tool projected from an endpoint.
+type Tool struct {
+	Name         string         `json:"name"`
+	Description  string         `json:"description,omitempty"`
+	Effect       string         `json:"effect"`
+	Confirmation string         `json:"confirmation,omitempty"`
+	Tags         []string       `json:"tags,omitempty"`
+	Input        *ToolInput     `json:"input,omitempty"`
+	Output       ToolOutput     `json:"output"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
+}
+
+// ToolInput customizes how endpoint fields become tool arguments.
+type ToolInput struct {
+	Fields []ToolInputField `json:"fields,omitempty"`
+}
+
+// ToolInputField overrides one endpoint parameter or request body field.
+type ToolInputField struct {
+	Source      string `json:"source"`
+	Name        string `json:"name"`
+	Mode        string `json:"mode,omitempty"`
+	Alias       string `json:"alias,omitempty"`
+	ContextKey  string `json:"context_key,omitempty"`
+	Description string `json:"description,omitempty"`
+	Default     any    `json:"default,omitempty"`
+}
+
+// ToolOutput describes the successful response presented to an agent.
+type ToolOutput struct {
+	Mode   string           `json:"mode"`
+	Select []ToolProjection `json:"select,omitempty"`
+	Cursor *ToolCursor      `json:"cursor,omitempty"`
+}
+
+// ToolProjection recursively selects one response value.
+type ToolProjection struct {
+	Source  string           `json:"source"`
+	Target  string           `json:"target,omitempty"`
+	Select  []ToolProjection `json:"select,omitempty"`
+	CountAs string           `json:"count_as,omitempty"`
+}
+
+// ToolCursor exposes pagination state in a stable tool result shape.
+type ToolCursor struct {
+	Source        string `json:"source"`
+	Target        string `json:"target,omitempty"`
+	HasMoreTarget string `json:"has_more_target,omitempty"`
 }
 
 // CLI describes APIGen-owned CLI metadata for one operation.
@@ -186,6 +248,10 @@ type SchemaRef struct {
 	Type                 string                `json:"type,omitempty"`
 	Format               string                `json:"format,omitempty"`
 	Enum                 []string              `json:"enum,omitempty"`
+	Minimum              *float64              `json:"minimum,omitempty"`
+	Maximum              *float64              `json:"maximum,omitempty"`
+	MinLength            *int                  `json:"min_length,omitempty"`
+	MaxLength            *int                  `json:"max_length,omitempty"`
 	Items                *SchemaRef            `json:"items,omitempty"`
 	AdditionalProperties *AdditionalProperties `json:"additional_properties,omitempty"`
 }
@@ -207,11 +273,13 @@ type Schema struct {
 	Required      []string                  `json:"required,omitempty"`
 	Items         *SchemaRef                `json:"items,omitempty"`
 	Enum          []string                  `json:"enum,omitempty"`
+	Extensions    map[string]any            `json:"extensions,omitempty"`
 }
 
 // SchemaProperty describes one schema property.
 type SchemaProperty struct {
-	Description string    `json:"description,omitempty"`
-	Example     any       `json:"example,omitempty"`
-	Schema      SchemaRef `json:"schema"`
+	Description string         `json:"description,omitempty"`
+	Example     any            `json:"example,omitempty"`
+	Schema      SchemaRef      `json:"schema"`
+	Extensions  map[string]any `json:"extensions,omitempty"`
 }

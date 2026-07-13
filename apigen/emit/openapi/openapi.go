@@ -3,6 +3,7 @@ package openapi
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -185,6 +186,17 @@ func operationNode(endpoint ir.Endpoint, examples *exampleResolver) (*yaml.Node,
 
 	if endpoint.RequestBody != nil {
 		appendKeyValue(node, "requestBody", requestBodyNode(*endpoint.RequestBody, examples))
+	}
+	if endpoint.Tool != nil {
+		encoded, err := json.Marshal(endpoint.Tool)
+		if err != nil {
+			return nil, fmt.Errorf("marshal tool %q: %w", endpoint.Tool.Name, err)
+		}
+		var value any
+		if err := json.Unmarshal(encoded, &value); err != nil {
+			return nil, fmt.Errorf("decode tool %q: %w", endpoint.Tool.Name, err)
+		}
+		appendKeyValue(node, "x-apigen-tool", anyToNode(value))
 	}
 
 	security := endpoint.Security
@@ -729,7 +741,7 @@ func exampleStringForFormat(format string) string {
 }
 
 func isPureRef(ref ir.SchemaRef) bool {
-	return ref.Ref != "" && ref.Type == "" && ref.Format == "" && ref.Items == nil && ref.AdditionalProperties == nil
+	return ref.Ref != "" && ref.Type == "" && ref.Format == "" && len(ref.Enum) == 0 && ref.Minimum == nil && ref.Maximum == nil && ref.MinLength == nil && ref.MaxLength == nil && ref.Items == nil && ref.AdditionalProperties == nil
 }
 
 func cloneExampleValue(value any) any {
@@ -754,17 +766,22 @@ func cloneExampleValue(value any) any {
 }
 
 func schemaRefNode(ref ir.SchemaRef) *yaml.Node {
-	if ref.Ref != "" && ref.AdditionalProperties == nil {
+	if isPureRef(ref) {
 		node := mappingNode()
 		appendKeyValue(node, "$ref", stringNode("#/components/schemas/"+ref.Ref))
 		return node
 	}
-	if ref.Type == "" && ref.Format == "" && ref.Items == nil && ref.AdditionalProperties == nil {
+	if ref.Ref == "" && ref.Type == "" && ref.Format == "" && ref.Items == nil && ref.AdditionalProperties == nil {
 		return mappingNode()
 	}
 
 	node := mappingNode()
-	appendKeyValue(node, "type", stringNode(ref.Type))
+	if ref.Ref != "" {
+		appendKeyValue(node, "$ref", stringNode("#/components/schemas/"+ref.Ref))
+	}
+	if ref.Type != "" {
+		appendKeyValue(node, "type", stringNode(ref.Type))
+	}
 	if ref.Format != "" {
 		appendKeyValue(node, "format", stringNode(ref.Format))
 	}
@@ -774,6 +791,18 @@ func schemaRefNode(ref ir.SchemaRef) *yaml.Node {
 			enum.Content = append(enum.Content, stringNode(value))
 		}
 		appendKeyValue(node, "enum", enum)
+	}
+	if ref.Minimum != nil {
+		appendKeyValue(node, "minimum", floatNode(*ref.Minimum))
+	}
+	if ref.Maximum != nil {
+		appendKeyValue(node, "maximum", floatNode(*ref.Maximum))
+	}
+	if ref.MinLength != nil {
+		appendKeyValue(node, "minLength", intNode(*ref.MinLength))
+	}
+	if ref.MaxLength != nil {
+		appendKeyValue(node, "maxLength", intNode(*ref.MaxLength))
 	}
 	if ref.Items != nil {
 		appendKeyValue(node, "items", schemaRefNode(*ref.Items))

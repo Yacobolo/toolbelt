@@ -12,25 +12,19 @@ export const $lib = createTypeSpecLibrary({
     "unsupported-response-status": {
       severity: "error",
       messages: {
-        default: paramMessage`Unsupported response status '${"status"}' for operation '${"operation"}'. APIGen IR v2 requires concrete numeric status codes.`,
+        default: paramMessage`Unsupported response status '${"status"}' for operation '${"operation"}'. APIGen IR v3 requires concrete numeric status codes.`,
       },
     },
     "unsupported-response-content": {
       severity: "error",
       messages: {
-        default: paramMessage`Unsupported response content for operation '${"operation"}': incompatible response content for status ${"status"} and content type ${"contentType"}. APIGen IR v2 requires one concrete content entry per status/content type.`,
-      },
-    },
-    "unsupported-inline-enum": {
-      severity: "error",
-      messages: {
-        default: paramMessage`Unsupported inline enum-like union in ${"context"}. APIGen IR v2 requires a named enum schema.`,
+        default: paramMessage`Unsupported response content for operation '${"operation"}': incompatible response content for status ${"status"} and content type ${"contentType"}. APIGen IR v3 requires one concrete content entry per status/content type.`,
       },
     },
     "unsupported-cookie": {
       severity: "error",
       messages: {
-        default: "cookie parameters are not supported by APIGen v0.3.2 generated server, OpenAPI, and CLI outputs.",
+        default: "cookie parameters are not supported by APIGen generated server, OpenAPI, and CLI outputs.",
       },
     },
     "unsupported-shared-route": {
@@ -54,25 +48,25 @@ export const $lib = createTypeSpecLibrary({
     "reserved-extension": {
       severity: "error",
       messages: {
-        default: paramMessage`Operation extension '${"key"}' is reserved for APIGen-owned metadata. Use the matching APIGen decorator instead.`,
+        default: paramMessage`Extension '${"key"}' is reserved for APIGen-owned metadata. Use the matching APIGen decorator instead.`,
       },
     },
     "invalid-extension-key": {
       severity: "error",
       messages: {
-        default: paramMessage`Operation extension '${"key"}' must start with 'x-'.`,
+        default: paramMessage`Extension '${"key"}' must start with 'x-'.`,
       },
     },
     "invalid-extension-value": {
       severity: "error",
       messages: {
-        default: paramMessage`Operation extension '${"key"}' contains a non-JSON-compatible value at ${"path"}.`,
+        default: paramMessage`Extension '${"key"}' contains a non-JSON-compatible value at ${"path"}.`,
       },
     },
     "unnamed-schema": {
       severity: "error",
       messages: {
-        default: paramMessage`APIGen IR v2 requires ${"context"} to resolve to a named model schema.`,
+        default: paramMessage`APIGen IR v3 requires ${"context"} to resolve to a named model schema.`,
       },
     },
     "missing-output-file": {

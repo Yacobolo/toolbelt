@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	agenttoolemit "github.com/Yacobolo/toolbelt/apigen/emit/agenttool"
 	openapiemit "github.com/Yacobolo/toolbelt/apigen/emit/openapi"
 	"github.com/Yacobolo/toolbelt/apigen/ir"
 	"go.yaml.in/yaml/v4"
@@ -115,6 +116,14 @@ func cloneSecurityRequirements(requirements []ir.SecurityRequirement) []ir.Secur
 }
 
 func emit(doc ir.Document, opts Options) ([]byte, error) {
+	toolContracts, err := agenttoolemit.Build(doc)
+	if err != nil {
+		return nil, err
+	}
+	toolContractsJSON, err := json.Marshal(toolContracts)
+	if err != nil {
+		return nil, fmt.Errorf("marshal agent tool contracts: %w", err)
+	}
 	specJSON := opts.EmbeddedOpenAPISpecJSON
 	if specJSON == "" {
 		var err error
@@ -131,6 +140,7 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	hasRequestBodies := false
 	hasMultipartBodies := false
 	hasFileBodies := docUsesFileBodies(doc)
+	hasTools := len(toolContracts) > 0
 	for _, endpoint := range doc.Endpoints {
 		if endpoint.OperationID != "getHealth" {
 			hasStrictOperations = true
@@ -166,6 +176,9 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		b.WriteString("\t\"time\"\n\n")
 	}
 	b.WriteString("\tapigenchi \"github.com/Yacobolo/toolbelt/apigen/runtime/chi\"\n")
+	if hasTools {
+		b.WriteString("\tapigenagenttool \"github.com/Yacobolo/toolbelt/apigen/runtime/agenttool\"\n")
+	}
 	b.WriteString(")\n\n")
 	b.WriteString("const embeddedOpenAPISpecJSON = `")
 	b.WriteString(specJSON)
@@ -178,6 +191,28 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("\t}\n")
 	b.WriteString("\treturn doc, nil\n")
 	b.WriteString("}\n\n")
+	if hasTools {
+		b.WriteString("const embeddedAPIGenToolContractsJSON = `")
+		b.Write(toolContractsJSON)
+		b.WriteString("`\n\n")
+		b.WriteString("var genAPIGenToolContracts = func() map[string]apigenagenttool.Contract {\n")
+		b.WriteString("\tcontracts, err := apigenagenttool.DecodeContracts([]byte(embeddedAPIGenToolContractsJSON))\n")
+		b.WriteString("\tif err != nil { panic(err) }\n")
+		b.WriteString("\treturn contracts\n")
+		b.WriteString("}()\n\n")
+		b.WriteString("// GetAPIGenToolContracts returns defensive copies of generated endpoint-derived tools.\n")
+		b.WriteString("func GetAPIGenToolContracts() map[string]apigenagenttool.Contract {\n")
+		b.WriteString("\tout := make(map[string]apigenagenttool.Contract, len(genAPIGenToolContracts))\n")
+		b.WriteString("\tfor name, contract := range genAPIGenToolContracts { out[name] = apigenagenttool.CloneContract(contract) }\n")
+		b.WriteString("\treturn out\n")
+		b.WriteString("}\n\n")
+		b.WriteString("// GetAPIGenToolContract returns one generated endpoint-derived tool.\n")
+		b.WriteString("func GetAPIGenToolContract(name string) (apigenagenttool.Contract, bool) {\n")
+		b.WriteString("\tcontract, ok := genAPIGenToolContracts[name]\n")
+		b.WriteString("\tif !ok { return apigenagenttool.Contract{}, false }\n")
+		b.WriteString("\treturn apigenagenttool.CloneContract(contract), true\n")
+		b.WriteString("}\n\n")
+	}
 	b.WriteString("// GenOperationContract captures APIGen-owned contract metadata for one operation.\n")
 	b.WriteString("type GenOperationContract struct {\n")
 	b.WriteString("\tOperationID string\n")

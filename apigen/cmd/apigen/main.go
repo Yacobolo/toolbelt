@@ -18,6 +18,9 @@ import (
 	"strings"
 
 	cligoemit "github.com/Yacobolo/toolbelt/apigen/emit/cligo"
+	jsonschemaemit "github.com/Yacobolo/toolbelt/apigen/emit/jsonschema"
+	modelgoemit "github.com/Yacobolo/toolbelt/apigen/emit/modelgo"
+	modeltsemit "github.com/Yacobolo/toolbelt/apigen/emit/modelts"
 	openapiemit "github.com/Yacobolo/toolbelt/apigen/emit/openapi"
 	requestmodelgoemit "github.com/Yacobolo/toolbelt/apigen/emit/requestmodelgo"
 	servergoemit "github.com/Yacobolo/toolbelt/apigen/emit/servergo"
@@ -27,6 +30,7 @@ import (
 )
 
 type commandConfig struct {
+	Kind                 string
 	IRPath               string
 	IROut                string
 	OpenAPIOut           string
@@ -39,6 +43,10 @@ type commandConfig struct {
 	CLIOut               string
 	CLIPackage           string
 	GenerateCLI          bool
+	GoModelsOut          string
+	GoModelsPackage      string
+	TSOut                string
+	JSONSchemaOut        string
 }
 
 type targetManifest struct {
@@ -60,6 +68,7 @@ type cliOutputSpec struct {
 
 type targetSpec struct {
 	Name                 string         `yaml:"name"`
+	Kind                 string         `yaml:"kind"`
 	TypeSpecDir          string         `yaml:"typespec_dir"`
 	IROut                string         `yaml:"ir_out"`
 	OpenAPIOut           string         `yaml:"openapi_out"`
@@ -74,6 +83,10 @@ type targetSpec struct {
 	GenerateCLI          *bool          `yaml:"generate_cli"`
 	GoOut                *goOutputSpec  `yaml:"go_out"`
 	CLIOutGroup          *cliOutputSpec `yaml:"-"`
+	GoModelsOut          string         `yaml:"go_models_out"`
+	GoModelsPackage      string         `yaml:"go_models_package"`
+	TSOut                string         `yaml:"ts_out"`
+	JSONSchemaOut        string         `yaml:"json_schema_out"`
 }
 
 var goPackagePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
@@ -88,6 +101,7 @@ type typeSpecPackage struct {
 func (target *targetSpec) UnmarshalYAML(unmarshal func(any) error) error {
 	type rawTargetSpec struct {
 		Name                 string        `yaml:"name"`
+		Kind                 string        `yaml:"kind"`
 		TypeSpecDir          string        `yaml:"typespec_dir"`
 		IROut                string        `yaml:"ir_out"`
 		OpenAPIOut           string        `yaml:"openapi_out"`
@@ -101,6 +115,10 @@ func (target *targetSpec) UnmarshalYAML(unmarshal func(any) error) error {
 		CLIPackage           string        `yaml:"cli_package"`
 		GenerateCLI          *bool         `yaml:"generate_cli"`
 		GoOut                *goOutputSpec `yaml:"go_out"`
+		GoModelsOut          string        `yaml:"go_models_out"`
+		GoModelsPackage      string        `yaml:"go_models_package"`
+		TSOut                string        `yaml:"ts_out"`
+		JSONSchemaOut        string        `yaml:"json_schema_out"`
 	}
 
 	var raw rawTargetSpec
@@ -110,6 +128,7 @@ func (target *targetSpec) UnmarshalYAML(unmarshal func(any) error) error {
 
 	*target = targetSpec{
 		Name:                 raw.Name,
+		Kind:                 raw.Kind,
 		TypeSpecDir:          raw.TypeSpecDir,
 		IROut:                raw.IROut,
 		OpenAPIOut:           raw.OpenAPIOut,
@@ -122,6 +141,10 @@ func (target *targetSpec) UnmarshalYAML(unmarshal func(any) error) error {
 		CLIPackage:           raw.CLIPackage,
 		GenerateCLI:          raw.GenerateCLI,
 		GoOut:                raw.GoOut,
+		GoModelsOut:          raw.GoModelsOut,
+		GoModelsPackage:      raw.GoModelsPackage,
+		TSOut:                raw.TSOut,
+		JSONSchemaOut:        raw.JSONSchemaOut,
 	}
 
 	if raw.CLIOut == nil {
@@ -169,6 +192,7 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	manifestPath := fs.String("manifest", "", "optional APIGen target manifest path")
 	targetName := fs.String("target", "", "manifest target name")
+	kind := fs.String("kind", "http", "target kind: http or contracts")
 	irPath := fs.String("ir", "gen/json-ir.json", "input JSON IR path")
 	irOut := fs.String("ir-out", "gen/json-ir.json", "output JSON IR path for TypeSpec compilation")
 	openapiOut := fs.String("openapi-out", "gen/openapi.yaml", "output OpenAPI YAML path for optional debug/compat emission")
@@ -180,6 +204,10 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 	requestModelsPackage := fs.String("request-models-package", "api", "generated request models Go package name")
 	cliOut := fs.String("cli-out", "pkg/cli/gen/apigen_registry.gen.go", "output CLI Go path")
 	cliPackage := fs.String("cli-package", "gen", "generated CLI Go package name")
+	goModelsOut := fs.String("go-models-out", "", "output data-contract Go models path")
+	goModelsPackage := fs.String("go-models-package", "contracts", "generated data-contract Go package name")
+	tsOut := fs.String("ts-out", "", "output data-contract TypeScript path")
+	jsonSchemaOut := fs.String("json-schema-out", "", "output data-contract JSON Schema path")
 	if err := fs.Parse(args[1:]); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -188,6 +216,7 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	config, err := resolveCommandConfig(command, *manifestPath, *targetName, commandConfig{
+		Kind:                 *kind,
 		IRPath:               *irPath,
 		IROut:                *irOut,
 		OpenAPIOut:           *openapiOut,
@@ -200,6 +229,10 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 		CLIOut:               *cliOut,
 		CLIPackage:           *cliPackage,
 		GenerateCLI:          true,
+		GoModelsOut:          *goModelsOut,
+		GoModelsPackage:      *goModelsPackage,
+		TSOut:                *tsOut,
+		JSONSchemaOut:        *jsonSchemaOut,
 	})
 	if err != nil {
 		return failf(stderr, "resolve command config: %v", err)
@@ -242,6 +275,12 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 		if err != nil {
 			return failf(stderr, "load ir: %v", err)
 		}
+		if config.Kind == "contracts" {
+			if err := generateContracts(doc, config); err != nil {
+				return failf(stderr, "generate contracts: %v", err)
+			}
+			return 0
+		}
 		if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CanonicalOpenAPIPath); err != nil {
 			return failf(stderr, "generate server: %v", err)
 		}
@@ -268,12 +307,17 @@ func resolveCommandConfig(command string, manifestPath string, targetName string
 	}
 
 	config := defaults
+	config.Kind = target.kind()
 	config.TypeSpecDir = target.TypeSpecDir
 	config.IRPath = target.IROut
 	config.IROut = target.IROut
 	config.OpenAPIOut = target.OpenAPIOut
 	config.CanonicalOpenAPIPath = target.OpenAPIOut
-	if target.usesGroupedGoOut() {
+	config.GoModelsOut = target.GoModelsOut
+	config.GoModelsPackage = coalesceString(target.GoModelsPackage, defaults.GoModelsPackage)
+	config.TSOut = target.TSOut
+	config.JSONSchemaOut = target.JSONSchemaOut
+	if config.Kind == "http" && target.usesGroupedGoOut() {
 		config.ServerOut = filepath.Join(target.GoOut.Dir, coalesceString(target.GoOut.ServerFile, "server.apigen.gen.go"))
 		config.ServerPackage, err = inferOrValidateManifestPackage("go_out", target.GoOut.Package, target.GoOut.Dir)
 		if err != nil {
@@ -281,7 +325,7 @@ func resolveCommandConfig(command string, manifestPath string, targetName string
 		}
 		config.RequestModelsOut = filepath.Join(target.GoOut.Dir, coalesceString(target.GoOut.RequestModelsFile, "request_models.gen.go"))
 		config.RequestModelsPackage = config.ServerPackage
-	} else {
+	} else if config.Kind == "http" {
 		return commandConfig{}, fmt.Errorf("target %q must declare go_out", target.Name)
 	}
 	if target.usesGroupedCLIOut() {
@@ -343,6 +387,9 @@ func resolveTargetPaths(target targetSpec, baseDir string) targetSpec {
 	target.TypeSpecDir = resolveManifestPath(baseDir, target.TypeSpecDir)
 	target.IROut = resolveManifestPath(baseDir, target.IROut)
 	target.OpenAPIOut = resolveManifestPath(baseDir, target.OpenAPIOut)
+	target.GoModelsOut = resolveManifestPath(baseDir, target.GoModelsOut)
+	target.TSOut = resolveManifestPath(baseDir, target.TSOut)
+	target.JSONSchemaOut = resolveManifestPath(baseDir, target.JSONSchemaOut)
 	return target
 }
 
@@ -357,24 +404,56 @@ func resolveManifestPath(baseDir string, value string) string {
 }
 
 func validateCommandConfig(command string, config commandConfig) error {
+	if config.Kind == "" {
+		config.Kind = "http"
+	}
+	switch config.Kind {
+	case "http", "contracts":
+	default:
+		return fmt.Errorf("unsupported target kind %q", config.Kind)
+	}
 	switch command {
 	case "typespec-compile":
+		if config.Kind == "contracts" {
+			if config.TypeSpecDir == "" || config.IROut == "" {
+				return fmt.Errorf("manifest target must declare typespec_dir and ir_out")
+			}
+			return nil
+		}
 		if config.TypeSpecDir == "" || config.IROut == "" || config.OpenAPIOut == "" {
 			return fmt.Errorf("manifest target must declare typespec_dir, ir_out, and openapi_out")
 		}
 	case "openapi":
+		if config.Kind != "http" {
+			return fmt.Errorf("openapi command requires an http target")
+		}
 		if config.IRPath == "" || config.OpenAPIOut == "" {
 			return fmt.Errorf("manifest target must declare ir_out and openapi_out")
 		}
 	case "server":
+		if config.Kind != "http" {
+			return fmt.Errorf("server command requires an http target")
+		}
 		if config.IRPath == "" || config.OpenAPIOut == "" || config.ServerOut == "" || config.RequestModelsOut == "" {
 			return fmt.Errorf("manifest target must declare ir_out, openapi_out, server_out, and request_models_out")
 		}
 	case "cli":
+		if config.Kind != "http" {
+			return fmt.Errorf("cli command requires an http target")
+		}
 		if config.IRPath == "" || config.CLIOut == "" {
 			return fmt.Errorf("manifest target must declare ir_out and cli_out")
 		}
 	case "all":
+		if config.Kind == "contracts" {
+			if config.IRPath == "" {
+				return fmt.Errorf("manifest target must declare ir_out")
+			}
+			if config.GoModelsOut == "" && config.TSOut == "" && config.JSONSchemaOut == "" {
+				return fmt.Errorf("contracts target must declare at least one of go_models_out, ts_out, or json_schema_out")
+			}
+			return nil
+		}
 		if config.IRPath == "" || config.OpenAPIOut == "" || config.ServerOut == "" || config.RequestModelsOut == "" {
 			return fmt.Errorf("manifest target must declare ir_out, openapi_out, server_out, and request_models_out")
 		}
@@ -400,6 +479,13 @@ func (target targetSpec) usesGroupedCLIOut() bool {
 	return target.CLIOutGroup != nil
 }
 
+func (target targetSpec) kind() string {
+	if strings.TrimSpace(target.Kind) == "" {
+		return "http"
+	}
+	return strings.TrimSpace(target.Kind)
+}
+
 func (target targetSpec) usesLegacyGoOut() bool {
 	return strings.TrimSpace(target.ServerOut) != "" ||
 		strings.TrimSpace(target.ServerPackage) != "" ||
@@ -416,11 +502,31 @@ func (target targetSpec) usesLegacyCLIOut() bool {
 }
 
 func validateTargetSpec(target targetSpec) error {
+	switch target.kind() {
+	case "http", "contracts":
+	default:
+		return fmt.Errorf("target %q has unsupported kind %q", target.Name, target.Kind)
+	}
 	if target.usesLegacyGoOut() || target.usesLegacyCLIOut() {
 		return fmt.Errorf("target %q uses legacy flat manifest fields that are not supported", target.Name)
 	}
 	if strings.TrimSpace(target.TypeSpecDir) == "" {
 		return fmt.Errorf("target %q typespec_dir is required", target.Name)
+	}
+	if target.kind() == "contracts" {
+		if strings.TrimSpace(target.IROut) == "" {
+			return fmt.Errorf("target %q ir_out is required", target.Name)
+		}
+		if strings.TrimSpace(target.GoModelsOut) == "" && strings.TrimSpace(target.TSOut) == "" && strings.TrimSpace(target.JSONSchemaOut) == "" {
+			return fmt.Errorf("target %q must declare at least one of go_models_out, ts_out, or json_schema_out", target.Name)
+		}
+		if target.usesGroupedGoOut() || target.usesGroupedCLIOut() || strings.TrimSpace(target.OpenAPIOut) != "" {
+			return fmt.Errorf("target %q kind=contracts must not declare go_out, cli_out, or openapi_out", target.Name)
+		}
+		return nil
+	}
+	if strings.TrimSpace(target.IROut) == "" || strings.TrimSpace(target.OpenAPIOut) == "" {
+		return fmt.Errorf("target %q ir_out and openapi_out are required", target.Name)
 	}
 	if !target.usesGroupedGoOut() {
 		return fmt.Errorf("target %q must declare go_out", target.Name)
@@ -454,9 +560,12 @@ func compileTypeSpec(typeSpecDir string, irOutPath string, openAPIOutPath string
 	if err != nil {
 		return fmt.Errorf("resolve ir output path: %w", err)
 	}
-	absOpenAPIOutPath, err := filepath.Abs(openAPIOutPath)
-	if err != nil {
-		return fmt.Errorf("resolve openapi output path: %w", err)
+	absOpenAPIOutPath := ""
+	if strings.TrimSpace(openAPIOutPath) != "" {
+		absOpenAPIOutPath, err = filepath.Abs(openAPIOutPath)
+		if err != nil {
+			return fmt.Errorf("resolve openapi output path: %w", err)
+		}
 	}
 
 	pkg, err := resolveTypeSpecPackage()
@@ -477,11 +586,14 @@ func compileTypeSpec(typeSpecDir string, irOutPath string, openAPIOutPath string
 		return err
 	}
 	defer func() { _ = os.Remove(tempIRPath) }()
-	tempOpenAPIPath, err := tempOutputPath(absOpenAPIOutPath)
-	if err != nil {
-		return err
+	tempOpenAPIPath := ""
+	if absOpenAPIOutPath != "" {
+		tempOpenAPIPath, err = tempOutputPath(absOpenAPIOutPath)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = os.Remove(tempOpenAPIPath) }()
 	}
-	defer func() { _ = os.Remove(tempOpenAPIPath) }()
 
 	tsp := filepath.Join(pkg.Dir, "node_modules", "@typespec", "compiler", "cmd", "tsp.js")
 	cmd := exec.Command(
@@ -511,14 +623,18 @@ func compileTypeSpec(typeSpecDir string, irOutPath string, openAPIOutPath string
 	if err := writeJSONDocument(tempIRPath, doc); err != nil {
 		return err
 	}
-	if err := generateOpenAPI(doc, tempOpenAPIPath); err != nil {
-		return err
+	if tempOpenAPIPath != "" {
+		if err := generateOpenAPI(doc, tempOpenAPIPath); err != nil {
+			return err
+		}
 	}
 	if err := replaceFile(tempIRPath, absIROutPath); err != nil {
 		return err
 	}
-	if err := replaceFile(tempOpenAPIPath, absOpenAPIOutPath); err != nil {
-		return err
+	if tempOpenAPIPath != "" {
+		if err := replaceFile(tempOpenAPIPath, absOpenAPIOutPath); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -825,6 +941,44 @@ func generateCLI(doc ir.Document, outPath string, packageName string) error {
 	return nil
 }
 
+func generateContracts(doc ir.Document, config commandConfig) error {
+	if len(doc.Contracts) == 0 {
+		return fmt.Errorf("document does not declare contracts")
+	}
+	if config.GoModelsOut != "" {
+		b, err := modelgoemit.Emit(doc, modelgoemit.Options{PackageName: config.GoModelsPackage})
+		if err != nil {
+			return fmt.Errorf("emit go models: %w", err)
+		}
+		formatted, err := format.Source(b)
+		if err != nil {
+			return fmt.Errorf("format go models output: %w", err)
+		}
+		if err := writeFile(config.GoModelsOut, formatted); err != nil {
+			return err
+		}
+	}
+	if config.TSOut != "" {
+		b, err := modeltsemit.Emit(doc, modeltsemit.Options{})
+		if err != nil {
+			return fmt.Errorf("emit typescript models: %w", err)
+		}
+		if err := writeFile(config.TSOut, b); err != nil {
+			return err
+		}
+	}
+	if config.JSONSchemaOut != "" {
+		b, err := jsonschemaemit.Emit(doc, jsonschemaemit.Options{})
+		if err != nil {
+			return fmt.Errorf("emit json schema: %w", err)
+		}
+		if err := writeFile(config.JSONSchemaOut, b); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func loadDocument(path string) (ir.Document, error) {
 	doc, err := ir.Load(path)
 	if err != nil {
@@ -834,11 +988,48 @@ func loadDocument(path string) (ir.Document, error) {
 }
 
 func writeJSONDocument(path string, doc ir.Document) error {
-	content, err := json.MarshalIndent(doc, "", "  ")
+	content, err := json.MarshalIndent(documentJSON(doc), "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal ir document: %w", err)
 	}
 	return writeFile(path, content)
+}
+
+func documentJSON(doc ir.Document) map[string]any {
+	out := map[string]any{
+		"schema_version": doc.SchemaVersion,
+		"api":            doc.API,
+		"info":           doc.Info,
+	}
+	if !openAPIEmpty(doc.OpenAPI) {
+		out["openapi"] = doc.OpenAPI
+	}
+	if len(doc.Servers) > 0 {
+		out["servers"] = doc.Servers
+	}
+	if len(doc.Tags) > 0 {
+		out["tags"] = doc.Tags
+	}
+	if len(doc.Schemas) > 0 {
+		out["schemas"] = doc.Schemas
+	}
+	if len(doc.Contracts) > 0 {
+		out["contracts"] = doc.Contracts
+	}
+	if len(doc.Endpoints) > 0 {
+		out["endpoints"] = doc.Endpoints
+	}
+	if len(doc.Extensions) > 0 {
+		out["extensions"] = doc.Extensions
+	}
+	return out
+}
+
+func openAPIEmpty(value ir.OpenAPI) bool {
+	return value.Version == "" &&
+		len(value.TagOrder) == 0 &&
+		len(value.Security) == 0 &&
+		len(value.SecuritySchemes) == 0
 }
 
 func writeFile(outPath string, content []byte) error {

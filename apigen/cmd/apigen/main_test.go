@@ -81,7 +81,7 @@ func TestGenerateArtifacts(t *testing.T) {
 	irPath := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(irPath, []byte(`{
-  "schema_version": "v2",
+  "schema_version": "v3",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0", "description": "test"},
   "servers": [{"url": "https://localhost:8080", "description": "local"}],
@@ -158,6 +158,37 @@ func TestResolveCommandConfig_GroupedManifestTarget(t *testing.T) {
 	require.Equal(t, filepath.Join(dir, "cmd", "cli", "gen", "apigen_registry.gen.go"), config.CLIOut)
 	require.Equal(t, "gen", config.CLIPackage)
 	require.True(t, config.GenerateCLI)
+}
+
+func TestResolveCommandConfig_ContractsManifestTarget(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
+	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
+  - name: signal-contracts
+    kind: contracts
+    typespec_dir: contracts/typespec
+    ir_out: contracts/gen/json-ir.json
+    go_models_out: contracts/gen/models.gen.go
+    go_models_package: contracts
+    ts_out: web/generated/contracts.ts
+    json_schema_out: schemas/contracts.schema.json
+`), 0o644))
+
+	config, err := resolveCommandConfig("all", manifestPath, "signal-contracts", commandConfig{})
+	require.NoError(t, err)
+	require.Equal(t, "contracts", config.Kind)
+	require.Equal(t, filepath.Join(dir, "contracts", "typespec"), config.TypeSpecDir)
+	require.Equal(t, filepath.Join(dir, "contracts", "gen", "json-ir.json"), config.IRPath)
+	require.Equal(t, filepath.Join(dir, "contracts", "gen", "models.gen.go"), config.GoModelsOut)
+	require.Equal(t, "contracts", config.GoModelsPackage)
+	require.Equal(t, filepath.Join(dir, "web", "generated", "contracts.ts"), config.TSOut)
+	require.Equal(t, filepath.Join(dir, "schemas", "contracts.schema.json"), config.JSONSchemaOut)
+
+	_, err = resolveCommandConfig("openapi", manifestPath, "signal-contracts", commandConfig{})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "openapi command requires an http target")
 }
 
 func TestResolveCommandConfig_TypeSpecCompileRequiresTypeSpecDir(t *testing.T) {
@@ -1041,7 +1072,7 @@ func TestGenerateServer_FailsForUnnamedRequestBodySchema(t *testing.T) {
 
 	dir := t.TempDir()
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/v1"},
 		Info:          ir.Info{Title: "Widget API", Version: "1.0.0"},
 		OpenAPI:       ir.OpenAPI{Version: "3.0.0"},
@@ -1080,7 +1111,7 @@ func TestGenerateServer_AllowsInlineBinaryRequestBody(t *testing.T) {
 
 	dir := t.TempDir()
 	doc := ir.Document{
-		SchemaVersion: "v2",
+		SchemaVersion: "v3",
 		API:           ir.API{BasePath: "/v1"},
 		Info:          ir.Info{Title: "Artifact API", Version: "1.0.0"},
 		OpenAPI:       ir.OpenAPI{Version: "3.0.0"},
