@@ -297,7 +297,10 @@ func schemaRefJSON(doc ir.Document, ref ir.SchemaRef, seen map[string]bool) map[
 		delete(seen, name)
 		return out
 	}
-	out := map[string]any{"type": ref.Type}
+	out := map[string]any{}
+	if ref.Type != "" {
+		out["type"] = ref.Type
+	}
 	if len(ref.Enum) > 0 {
 		out["enum"] = ref.Enum
 	}
@@ -327,7 +330,10 @@ func schemaRefJSON(doc ir.Document, ref ir.SchemaRef, seen map[string]bool) map[
 }
 
 func schemaJSON(doc ir.Document, schema ir.Schema, seen map[string]bool) map[string]any {
-	out := map[string]any{"type": schema.Type}
+	out := map[string]any{}
+	if schema.Type != "" {
+		out["type"] = schema.Type
+	}
 	if schema.Description != "" {
 		out["description"] = schema.Description
 	}

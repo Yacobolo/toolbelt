@@ -74,3 +74,96 @@ func TestBuildCompilesEndpointToolContract(t *testing.T) {
 	require.NotContains(t, properties["limit"].(map[string]any), "default")
 	require.Equal(t, false, inputSchema["additionalProperties"])
 }
+
+func TestBuildEmitsUnconstrainedSchemasWithoutEmptyTypes(t *testing.T) {
+	unknown := ir.SchemaRef{}
+	doc := ir.Document{
+		SchemaVersion: ir.CurrentSchemaVersion,
+		API:           ir.API{BasePath: "/api/v1"},
+		Info:          ir.Info{Title: "Tools", Version: "1"},
+		Schemas: map[string]ir.Schema{
+			"SemanticFilter": {
+				Type: "object",
+				Properties: map[string]ir.SchemaProperty{
+					"values": {
+						Schema: ir.SchemaRef{Type: "array", Items: &unknown},
+					},
+					"metadata": {
+						Schema: ir.SchemaRef{
+							Type:                 "object",
+							AdditionalProperties: &ir.AdditionalProperties{Schema: &unknown},
+						},
+					},
+					"mode": {
+						Schema: ir.SchemaRef{Type: "string", Enum: []string{"all", "any"}},
+					},
+					"next": {
+						Schema: ir.SchemaRef{Ref: "SemanticFilter"},
+					},
+				},
+				Required: []string{"values"},
+			},
+		},
+		Endpoints: []ir.Endpoint{{
+			Method: "post", Path: "/search", OperationID: "search", Summary: "Search",
+			RequestBody: &ir.RequestBody{
+				Required: true,
+				Contents: []ir.BodyContent{{
+					ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Ref: "SemanticFilter"},
+				}},
+			},
+			Responses: []ir.Response{{
+				StatusCode: 200, Description: "ok",
+				Contents: []ir.BodyContent{{
+					ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Ref: "SemanticFilter"},
+				}},
+			}},
+			Tool: &ir.Tool{
+				Name: "search", Effect: "read", Confirmation: "never",
+				Output: ir.ToolOutput{Mode: "raw"},
+			},
+		}},
+	}
+
+	contracts, err := Build(doc)
+	require.NoError(t, err)
+	contract := contracts["search"]
+
+	var inputSchema map[string]any
+	require.NoError(t, json.Unmarshal(contract.InputSchema, &inputSchema))
+	inputProperties := inputSchema["properties"].(map[string]any)
+	require.Equal(t, map[string]any{}, inputProperties["values"].(map[string]any)["items"])
+	require.Equal(t, map[string]any{}, inputProperties["metadata"].(map[string]any)["additionalProperties"])
+	require.Equal(t, "string", inputProperties["mode"].(map[string]any)["type"])
+	require.Equal(t, []any{"all", "any"}, inputProperties["mode"].(map[string]any)["enum"])
+	requireNoEmptySchemaTypes(t, inputSchema)
+
+	var outputSchema map[string]any
+	require.NoError(t, json.Unmarshal(contract.OutputSchema, &outputSchema))
+	outputProperties := outputSchema["properties"].(map[string]any)
+	require.Equal(t, map[string]any{}, outputProperties["values"].(map[string]any)["items"])
+	require.Equal(t, map[string]any{}, outputProperties["metadata"].(map[string]any)["additionalProperties"])
+	require.Equal(t, "object", outputProperties["next"].(map[string]any)["type"])
+	requireNoEmptySchemaTypes(t, outputSchema)
+}
+
+func TestSchemaJSONOmitsEmptyType(t *testing.T) {
+	require.NotContains(t, schemaJSON(ir.Document{}, ir.Schema{}, map[string]bool{}), "type")
+}
+
+func requireNoEmptySchemaTypes(t *testing.T, value any) {
+	t.Helper()
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if key == "type" {
+				require.NotEqual(t, "", child)
+			}
+			requireNoEmptySchemaTypes(t, child)
+		}
+	case []any:
+		for _, child := range typed {
+			requireNoEmptySchemaTypes(t, child)
+		}
+	}
+}
