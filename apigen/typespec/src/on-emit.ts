@@ -2,6 +2,9 @@ import {
   emitFile,
   getAllTags,
   getDoc,
+  getDiscriminatedUnion,
+  getDiscriminatedUnionFromInheritance,
+  getDiscriminator,
   getMaxLength,
   getMaxValue,
   getMinLength,
@@ -12,7 +15,6 @@ import {
   getSummary,
   isArrayModelType,
   isRecordModelType,
-  walkPropertiesInherited,
   type EmitContext,
   type Enum,
   type Model,
@@ -50,12 +52,13 @@ import {
   getPackages,
   getResponseShape,
   getTool,
+  getTransportErrors,
   isManual,
 } from "./decorators.js";
 import { type EmitterOptions, reportDiagnostic } from "./lib.js";
 
 interface Document {
-  schema_version: "v3";
+  schema_version: "v4";
   api: { base_path: string };
   info: { title: string; version: string; description?: string };
   openapi?: {
@@ -69,6 +72,11 @@ interface Document {
   schemas?: Record<string, Schema>;
   contracts?: Contract[];
   endpoints?: Endpoint[];
+  transport_errors?: {
+    schema: SchemaRef;
+    content_type: string;
+    failures: Record<string, { status_code: number; code: string; public_detail: string }>;
+  };
   extensions?: Record<string, unknown>;
 }
 
@@ -204,6 +212,9 @@ interface Schema {
   property_order?: string[];
   required?: string[];
   items?: SchemaRef;
+  base?: SchemaRef;
+  one_of?: SchemaRef[];
+  discriminator?: { property_name: string; mapping: Record<string, string> };
   enum?: string[];
   extensions?: Record<string, unknown>;
 }
@@ -230,8 +241,12 @@ interface SchemaRef {
 class IRBuilder {
   readonly schemas = new Map<string, Model>();
   readonly enums = new Map<string, Enum>();
+  readonly unions = new Map<string, Union>();
+  readonly syntheticSchemas = new Map<string, Schema>();
   private readonly emittedSchemas = new Set<string>();
   private readonly emittedEnums = new Set<string>();
+  private readonly emittedUnions = new Set<string>();
+  private readonly emittedSyntheticSchemas = new Set<string>();
   private failed = false;
 
   constructor(readonly program: Program) {}
@@ -273,9 +288,13 @@ class IRBuilder {
       if (enumValuesForUnion) {
         return { type: "string", enum: enumValuesForUnion };
       }
+      if (type.name) {
+        this.unions.set(type.name, type);
+        return { ref: type.name };
+      }
     }
     if (type.kind === "String") {
-      return { type: "string" };
+      return { type: "string", enum: [type.value] };
     }
     if (type.kind === "Boolean") {
       return { type: "boolean" };
@@ -362,15 +381,61 @@ class IRBuilder {
         output[nextEnum.name] = this.enumSchema(nextEnum);
         continue;
       }
+      const nextUnion = [...this.unions.values()].find(
+        (type) => type.name && !this.emittedUnions.has(type.name),
+      );
+      if (nextUnion?.name) {
+        this.emittedUnions.add(nextUnion.name);
+        output[nextUnion.name] = this.unionSchema(nextUnion);
+        continue;
+      }
+      const nextSynthetic = [...this.syntheticSchemas.entries()].find(
+        ([name]) => !this.emittedSyntheticSchemas.has(name),
+      );
+      if (nextSynthetic) {
+        this.emittedSyntheticSchemas.add(nextSynthetic[0]);
+        output[nextSynthetic[0]] = nextSynthetic[1];
+        continue;
+      }
       break;
     }
     return Object.keys(output).length > 0 ? output : undefined;
   }
 
   private schema(model: Model): Schema {
+    const discriminator = getDiscriminator(this.program, model);
+    if (discriminator) {
+      const [union, diagnostics] = getDiscriminatedUnionFromInheritance(model, discriminator);
+      this.program.reportDiagnostics(diagnostics);
+      const baseName = `${model.name}Base`;
+      this.syntheticSchemas.set(baseName, this.objectSchema(model));
+      const oneOf: SchemaRef[] = [];
+      const mapping: Record<string, string> = {};
+      for (const [value, variant] of union.variants) {
+        this.schemas.set(variant.name, variant);
+        oneOf.push({ ref: variant.name });
+        mapping[value] = variant.name;
+      }
+      return {
+        type: "union",
+        one_of: oneOf,
+        discriminator: { property_name: union.propertyName, mapping },
+      };
+    }
+    return this.objectSchema(model);
+  }
+
+  private objectSchema(model: Model): Schema {
     const schema: Schema = {
       type: "object",
     };
+    if (model.baseModel) {
+      const baseName = getDiscriminator(this.program, model.baseModel)
+        ? `${model.baseModel.name}Base`
+        : model.baseModel.name;
+      this.schemas.set(model.baseModel.name, model.baseModel);
+      schema.base = { ref: baseName };
+    }
     const doc = getDoc(this.program, model);
     if (doc) {
       schema.description = doc;
@@ -379,7 +444,7 @@ class IRBuilder {
     if (extensions) {
       schema.extensions = extensions;
     }
-    const properties = [...walkPropertiesInherited(model)];
+    const properties = [...model.properties.values()];
     if (properties.length > 0) {
       schema.properties = {};
       schema.property_order = [];
@@ -396,6 +461,52 @@ class IRBuilder {
       }
     }
     return schema;
+  }
+
+  private unionSchema(type: Union): Schema {
+    const [union, diagnostics] = getDiscriminatedUnion(this.program, type);
+    this.program.reportDiagnostics(diagnostics);
+    if (!union || !type.name) {
+      this.unsupported(type, `union ${type.name ?? "(anonymous)"}`);
+      return { type: "object" };
+    }
+
+    const oneOf: SchemaRef[] = [];
+    const mapping: Record<string, string> = {};
+    for (const [value, variant] of union.variants) {
+      const name = `${type.name}${schemaNamePart(value)}Variant`;
+      const variantRef = this.schemaRef(variant, `union ${type.name} variant ${value}`);
+      const properties: Record<string, SchemaProperty> = {
+        [union.options.discriminatorPropertyName]: {
+          schema: { type: "string", enum: [value] },
+        },
+      };
+      const required = [union.options.discriminatorPropertyName];
+      const schema: Schema = {
+        type: "object",
+        properties,
+        property_order: [...required],
+        required: [...required],
+      };
+      if (union.options.envelope === "none") {
+        schema.base = variantRef;
+      } else {
+        properties[union.options.envelopePropertyName] = { schema: variantRef };
+        schema.property_order!.push(union.options.envelopePropertyName);
+        schema.required!.push(union.options.envelopePropertyName);
+      }
+      this.syntheticSchemas.set(name, schema);
+      oneOf.push({ ref: name });
+      mapping[value] = name;
+    }
+    return {
+      type: "union",
+      one_of: oneOf,
+      discriminator: {
+        property_name: union.options.discriminatorPropertyName,
+        mapping,
+      },
+    };
   }
 
   private enumSchema(type: Enum): Schema {
@@ -511,7 +622,7 @@ function buildContractDocument(
 ): Document {
   const pkg = packageMetadata(program);
   return prune({
-    schema_version: "v3",
+    schema_version: "v4",
     api: { base_path: options["base-path"] ?? "/" },
     info: prune({
       title: pkg.title,
@@ -602,9 +713,27 @@ function buildDocument(
   const defaultSecurity = authRequirements(builder, authentication.defaultAuth, namespace, "service authentication", true);
   const securitySchemes = collectSecuritySchemes(builder, authentication.schemes, namespace);
   const endpoints = mergedEndpoints(program, builder, service.operations, authentication.operationsAuth, defaultSecurity);
+  const transportErrors = getTransportErrors({ program }, namespace);
+  let transportErrorContract: Document["transport_errors"];
+  if (transportErrors) {
+    const schema = builder.namedSchemaRef(transportErrors.schema, "transport error schema");
+    const failures: NonNullable<Document["transport_errors"]>["failures"] = {};
+    for (const failure of transportErrors.failures) {
+      failures[failure.kind] = {
+        status_code: failure.statusCode,
+        code: failure.code,
+        public_detail: failure.publicDetail,
+      };
+    }
+    transportErrorContract = {
+      schema,
+      content_type: transportErrors.contentType,
+      failures,
+    };
+  }
 
   return prune({
-    schema_version: "v3",
+    schema_version: "v4",
     api: { base_path: options["base-path"] ?? "/" },
     info: prune({
       title: info.title ?? serviceInfo?.title ?? "API",
@@ -620,6 +749,7 @@ function buildDocument(
     servers: servers.length > 0 ? servers : undefined,
     tags: tags.map((tag) => prune({ name: tag.name, description: tag.description })),
     endpoints,
+    transport_errors: transportErrorContract,
   }) as Document;
 }
 
@@ -1456,7 +1586,7 @@ function authRequirements(
         }
         builder.unsupportedAuth(
           context,
-          "APIGen IR v3 does not support NoAuth operation overrides for secured services.",
+          "APIGen IR v4 does not support NoAuth operation overrides for secured services.",
           target,
         );
         continue;
@@ -1636,6 +1766,12 @@ function uniqueStrings(values: string[]): string[] {
     output.push(value);
   }
   return output;
+}
+
+function schemaNamePart(value: string): string {
+  const parts = value.split(/[^A-Za-z0-9]+/).filter(Boolean);
+  const name = parts.map((part) => part[0].toUpperCase() + part.slice(1)).join("");
+  return name || "Variant";
 }
 
 function isNamedUserModel(type: Model): boolean {

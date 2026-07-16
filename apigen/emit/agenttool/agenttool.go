@@ -331,8 +331,18 @@ func schemaRefJSON(doc ir.Document, ref ir.SchemaRef, seen map[string]bool) map[
 
 func schemaJSON(doc ir.Document, schema ir.Schema, seen map[string]bool) map[string]any {
 	out := map[string]any{}
-	if schema.Type != "" {
+	if schema.Type != "" && schema.Type != "union" {
 		out["type"] = schema.Type
+	}
+	if schema.Base != nil && schema.Type != "object" {
+		out["allOf"] = []any{schemaRefJSON(doc, *schema.Base, seen)}
+	}
+	if len(schema.OneOf) > 0 {
+		variants := make([]any, 0, len(schema.OneOf))
+		for _, variant := range schema.OneOf {
+			variants = append(variants, schemaRefJSON(doc, variant, seen))
+		}
+		out["oneOf"] = variants
 	}
 	if schema.Description != "" {
 		out["description"] = schema.Description
@@ -341,6 +351,7 @@ func schemaJSON(doc ir.Document, schema ir.Schema, seen map[string]bool) map[str
 		out["enum"] = schema.Enum
 	}
 	if schema.Type == "object" {
+		schema = flattenObjectSchema(doc, schema, map[string]bool{})
 		properties := map[string]any{}
 		for _, name := range orderedProperties(schema) {
 			property := schema.Properties[name]
@@ -360,6 +371,47 @@ func schemaJSON(doc ir.Document, schema ir.Schema, seen map[string]bool) map[str
 		out["items"] = schemaRefJSON(doc, *schema.Items, seen)
 	}
 	return out
+}
+
+func flattenObjectSchema(doc ir.Document, schema ir.Schema, active map[string]bool) ir.Schema {
+	if schema.Base == nil {
+		return schema
+	}
+	baseName, ok := ir.NormalizedSchemaRefName(*schema.Base)
+	if !ok || active[baseName] {
+		return schema
+	}
+	base, ok := ir.ResolveSchema(doc, *schema.Base)
+	if !ok || base.Type != "object" {
+		return schema
+	}
+	active[baseName] = true
+	base = flattenObjectSchema(doc, base, active)
+	delete(active, baseName)
+
+	properties := make(map[string]ir.SchemaProperty, len(base.Properties)+len(schema.Properties))
+	for name, property := range base.Properties {
+		properties[name] = property
+	}
+	for name, property := range schema.Properties {
+		properties[name] = property
+	}
+	requiredSet := make(map[string]struct{}, len(base.Required)+len(schema.Required))
+	for _, name := range base.Required {
+		requiredSet[name] = struct{}{}
+	}
+	for _, name := range schema.Required {
+		requiredSet[name] = struct{}{}
+	}
+	required := make([]string, 0, len(requiredSet))
+	for name := range requiredSet {
+		required = append(required, name)
+	}
+	sort.Strings(required)
+	schema.Base = nil
+	schema.Properties = properties
+	schema.Required = required
+	return schema
 }
 
 func projectedSchema(_ ir.Document, output runtime.Output) map[string]any {

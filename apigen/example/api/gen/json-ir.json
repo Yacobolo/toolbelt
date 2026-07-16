@@ -403,7 +403,7 @@
       }
     }
   },
-  "schema_version": "v3",
+  "schema_version": "v4",
   "schemas": {
     "CreateTodoRequest": {
       "type": "object",
@@ -426,8 +426,7 @@
       "properties": {
         "code": {
           "schema": {
-            "type": "integer",
-            "format": "int32"
+            "type": "string"
           }
         },
         "message": {
@@ -506,5 +505,53 @@
       "name": "Todos",
       "description": "Todo lifecycle endpoints for the APIGen example."
     }
-  ]
+  ],
+  "transport_errors": {
+    "schema": {
+      "ref": "Error"
+    },
+    "content_type": "application/json",
+    "failures": {
+      "handler": {
+        "status_code": 500,
+        "code": "internal_error",
+        "public_detail": "Internal server error."
+      },
+      "header_parameter": {
+        "status_code": 400,
+        "code": "invalid_request",
+        "public_detail": "Invalid request."
+      },
+      "malformed_body": {
+        "status_code": 400,
+        "code": "invalid_request",
+        "public_detail": "Invalid request body."
+      },
+      "multipart": {
+        "status_code": 400,
+        "code": "invalid_request",
+        "public_detail": "Invalid multipart body."
+      },
+      "path_parameter": {
+        "status_code": 400,
+        "code": "invalid_request",
+        "public_detail": "Invalid request."
+      },
+      "query_parameter": {
+        "status_code": 400,
+        "code": "invalid_request",
+        "public_detail": "Invalid request."
+      },
+      "response_serialization": {
+        "status_code": 500,
+        "code": "internal_error",
+        "public_detail": "Internal server error."
+      },
+      "unsupported_media_type": {
+        "status_code": 415,
+        "code": "unsupported_media_type",
+        "public_detail": "Unsupported media type."
+      }
+    }
+  }
 }

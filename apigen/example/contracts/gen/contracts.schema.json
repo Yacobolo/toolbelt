@@ -1,7 +1,6 @@
 {
   "$defs": {
     "DashboardEnvelope": {
-      "additionalProperties": false,
       "properties": {
         "filters": {
           "$ref": "#/$defs/DashboardFilters",
@@ -36,10 +35,10 @@
         "visuals"
       ],
       "type": "object",
+      "unevaluatedProperties": false,
       "x-libredash-surface": "dashboard"
     },
     "DashboardFilterControl": {
-      "additionalProperties": false,
       "properties": {
         "type": {
           "type": "string"
@@ -57,10 +56,10 @@
       "required": [
         "type"
       ],
-      "type": "object"
+      "type": "object",
+      "unevaluatedProperties": false
     },
     "DashboardFilters": {
-      "additionalProperties": false,
       "properties": {
         "controls": {
           "additionalProperties": {
@@ -72,10 +71,10 @@
       "required": [
         "controls"
       ],
-      "type": "object"
+      "type": "object",
+      "unevaluatedProperties": false
     },
     "DashboardPageSignal": {
-      "additionalProperties": false,
       "properties": {
         "dashboardId": {
           "type": "string"
@@ -92,10 +91,10 @@
         "pageId",
         "title"
       ],
-      "type": "object"
+      "type": "object",
+      "unevaluatedProperties": false
     },
     "DashboardTable": {
-      "additionalProperties": false,
       "properties": {
         "columns": {
           "items": {
@@ -119,10 +118,10 @@
         "id",
         "rows"
       ],
-      "type": "object"
+      "type": "object",
+      "unevaluatedProperties": false
     },
     "DashboardVisual": {
-      "additionalProperties": false,
       "properties": {
         "data": {
           "additionalProperties": {},
@@ -144,7 +143,8 @@
         "kind",
         "title"
       ],
-      "type": "object"
+      "type": "object",
+      "unevaluatedProperties": false
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",

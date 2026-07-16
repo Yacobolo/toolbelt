@@ -18,7 +18,7 @@ describe("APIGen TypeSpec emitter", () => {
     await compileFixture("todo", irPath);
 
     const doc = JSON.parse(await readFile(irPath, "utf8"));
-    expect(doc.schema_version).toBe("v3");
+    expect(doc.schema_version).toBe("v4");
     expect(doc.info.title).toBe("APIGen Todo Example");
     expect(doc.endpoints.map((x: any) => x.operation_id)).toEqual([
       "listTodos",
@@ -82,14 +82,123 @@ describe("APIGen TypeSpec emitter", () => {
       type: "string",
       enum: ["active", "archived"],
     });
-    expect(doc.schemas.Widget.property_order).toEqual(["status", "name", "id"]);
-    expect(doc.schemas.Widget.required).toEqual(["status", "id"]);
+		expect(doc.schemas.Widget.base).toEqual({ ref: "Resource" });
+		expect(doc.schemas.Widget.property_order).toEqual(["status", "name"]);
+		expect(doc.schemas.Widget.required).toEqual(["status"]);
+		expect(doc.schemas.Resource.required).toEqual(["id"]);
     expect(doc.schemas.Widget.properties.status.schema).toEqual({ ref: "WidgetStatus" });
     expect(doc.endpoints[0].parameters[0].schema).toEqual({ ref: "WidgetStatus" });
     expect(doc.endpoints[1].request_body.contents[0].schema).toEqual({ ref: "WidgetStatus" });
   });
 
-  it("emits v3 IR for optimized TypeSpec HTTP authoring", async () => {
+  it("emits closed discriminated inheritance with explicit composition", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Visual API" })
+      namespace VisualAPI;
+
+      @discriminator("shape")
+      model Visual {
+        shape: string;
+      }
+
+      model ChartVisual extends Visual {
+        shape: "chart";
+        points: int64[];
+      }
+
+      model TextVisual extends Visual {
+        shape: "text";
+        text: string;
+      }
+
+      @route("/visual")
+      @get
+      op getVisual(): Visual;
+    `);
+
+    expect(doc.schemas.Visual).toEqual({
+      type: "union",
+      one_of: [{ ref: "ChartVisual" }, { ref: "TextVisual" }],
+      discriminator: {
+        property_name: "shape",
+        mapping: { chart: "ChartVisual", text: "TextVisual" },
+      },
+    });
+    expect(doc.schemas.VisualBase.properties.shape.schema).toEqual({ type: "string" });
+    expect(doc.schemas.ChartVisual.base).toEqual({ ref: "VisualBase" });
+    expect(doc.schemas.ChartVisual.properties.shape.schema).toEqual({ type: "string", enum: ["chart"] });
+  });
+
+  it("emits named inline discriminated unions as reusable schemas", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Component API" })
+      namespace ComponentAPI;
+
+      model TextComponent { text: string; }
+      model ChartComponent { points: int64[]; }
+
+      @discriminated(#{ envelope: "none", discriminatorPropertyName: "kind" })
+      union Component {
+        text: TextComponent,
+        chart: ChartComponent,
+      }
+
+      model Page { components: Component[]; }
+
+      @route("/page")
+      @get
+      op getPage(): Page;
+    `);
+
+    expect(doc.schemas.Component.type).toBe("union");
+    expect(doc.schemas.Component.discriminator.property_name).toBe("kind");
+    expect(doc.schemas.Page.properties.components.schema).toEqual({
+      type: "array",
+      items: { ref: "Component" },
+    });
+    expect(doc.schemas.Component.one_of).toHaveLength(2);
+  });
+
+  it("emits an explicit generated transport error contract", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Problem API" })
+      @apigen.transportErrors(ProblemDetails, #{
+        contentType: "application/problem+json",
+        failures: #[
+          #{ kind: "malformed_body", statusCode: 400, code: "malformed_body", publicDetail: "The request body is malformed." },
+          #{ kind: "internal", statusCode: 500, code: "internal", publicDetail: "Internal server error." },
+        ],
+      })
+      namespace ProblemAPI;
+
+      model ProblemDetails {
+        type: string;
+        title: string;
+        status: int32;
+      }
+
+      @route("/ping")
+      @get
+      op ping(): string;
+    `);
+
+    expect(doc.transport_errors).toEqual({
+      schema: { ref: "ProblemDetails" },
+      content_type: "application/problem+json",
+      failures: {
+        malformed_body: { status_code: 400, code: "malformed_body", public_detail: "The request body is malformed." },
+        internal: { status_code: 500, code: "internal", public_detail: "Internal server error." },
+      },
+    });
+  });
+
+  it("emits v4 IR for optimized TypeSpec HTTP authoring", async () => {
     const doc = await compileSource(`
       using Http;
 
@@ -169,7 +278,7 @@ describe("APIGen TypeSpec emitter", () => {
       }
     `);
 
-    expect(doc.schema_version).toBe("v3");
+    expect(doc.schema_version).toBe("v4");
     expect(doc.endpoints.map((x: any) => x.path)).toEqual([
       "/artifacts/{id}",
       "/artifacts",
@@ -1119,7 +1228,7 @@ describe("APIGen TypeSpec emitter", () => {
       }
     `);
 
-    expect(doc.schema_version).toBe("v3");
+    expect(doc.schema_version).toBe("v4");
     expect(doc.info).toEqual({
       title: "LibreDash Signal Contracts",
       version: "1.0.0",

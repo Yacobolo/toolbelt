@@ -69,6 +69,12 @@ func collectSchema(schema ir.Schema, seen map[string]struct{}, queue *[]string) 
 	if schema.Items != nil {
 		collectRef(*schema.Items, seen, queue)
 	}
+	if schema.Base != nil {
+		collectRef(*schema.Base, seen, queue)
+	}
+	for _, variant := range schema.OneOf {
+		collectRef(variant, seen, queue)
+	}
 }
 
 func collectRef(ref ir.SchemaRef, seen map[string]struct{}, queue *[]string) {

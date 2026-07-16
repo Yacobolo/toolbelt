@@ -6,7 +6,7 @@ type CreateTodoRequest struct {
 }
 
 type Error struct {
-	Code    int32  `json:"code"`
+	Code    string `json:"code"`
 	Message string `json:"message"`
 }
 
@@ -21,6 +21,8 @@ type Todo struct {
 }
 
 type GenSchemaCreateTodoRequest = CreateTodoRequest
+
+type GenSchemaError = Error
 
 type GenSchemaListTodosResponse = ListTodosResponse
 

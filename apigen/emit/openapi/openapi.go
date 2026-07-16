@@ -129,7 +129,7 @@ func pathsNode(doc ir.Document, examples *exampleResolver) (*yaml.Node, error) {
 	for _, path := range pathKeys {
 		itemNode := mappingNode()
 		for _, endpoint := range grouped[path] {
-			op, err := operationNode(endpoint, examples)
+			op, err := operationNode(doc, endpoint, examples)
 			if err != nil {
 				return nil, err
 			}
@@ -150,7 +150,7 @@ func joinServerURLPath(raw string, basePath string) string {
 	return parsed.String()
 }
 
-func operationNode(endpoint ir.Endpoint, examples *exampleResolver) (*yaml.Node, error) {
+func operationNode(doc ir.Document, endpoint ir.Endpoint, examples *exampleResolver) (*yaml.Node, error) {
 	if len(endpoint.Responses) == 0 {
 		return nil, fmt.Errorf("at least one response is required for %s", endpoint.OperationID)
 	}
@@ -170,7 +170,7 @@ func operationNode(endpoint ir.Endpoint, examples *exampleResolver) (*yaml.Node,
 	}
 	appendKeyValue(node, "parameters", parameters)
 
-	responses, err := responsesNode(endpoint.Responses, examples)
+	responses, err := responsesNode(responsesWithTransportErrors(doc, endpoint), examples)
 	if err != nil {
 		return nil, err
 	}
@@ -233,6 +233,41 @@ func operationNode(endpoint ir.Endpoint, examples *exampleResolver) (*yaml.Node,
 	}
 
 	return node, nil
+}
+
+func responsesWithTransportErrors(doc ir.Document, endpoint ir.Endpoint) []ir.Response {
+	responses := append([]ir.Response(nil), endpoint.Responses...)
+	if doc.TransportErrors == nil {
+		return responses
+	}
+	present := make(map[int]struct{}, len(responses))
+	for _, response := range responses {
+		present[response.StatusCode] = struct{}{}
+	}
+	statuses := make(map[int]struct{})
+	for _, failure := range doc.TransportErrors.Failures {
+		statuses[failure.StatusCode] = struct{}{}
+	}
+	ordered := make([]int, 0, len(statuses))
+	for status := range statuses {
+		ordered = append(ordered, status)
+	}
+	sort.Ints(ordered)
+	for _, status := range ordered {
+		if _, ok := present[status]; ok {
+			continue
+		}
+		responses = append(responses, ir.Response{
+			StatusCode:  status,
+			Description: "Generated transport error",
+			Contents: []ir.BodyContent{{
+				ContentType: doc.TransportErrors.ContentType,
+				BodyKind:    "json",
+				Schema:      &doc.TransportErrors.Schema,
+			}},
+		})
+	}
+	return responses
 }
 
 func cloneExtensions(in map[string]any) map[string]any {
@@ -474,7 +509,36 @@ func componentsNode(doc ir.Document, examples *exampleResolver) (*yaml.Node, err
 
 func schemaNode(name string, schema ir.Schema, examples *exampleResolver) *yaml.Node {
 	node := mappingNode()
-	appendKeyValue(node, "type", stringNode(schema.Type))
+	if schema.Type != "union" {
+		appendKeyValue(node, "type", stringNode(schema.Type))
+	}
+	if schema.Base != nil {
+		allOf := sequenceNode()
+		allOf.Content = append(allOf.Content, schemaRefNode(*schema.Base))
+		appendKeyValue(node, "allOf", allOf)
+	}
+	if len(schema.OneOf) > 0 {
+		oneOf := sequenceNode()
+		for _, variant := range schema.OneOf {
+			oneOf.Content = append(oneOf.Content, schemaRefNode(variant))
+		}
+		appendKeyValue(node, "oneOf", oneOf)
+	}
+	if schema.Discriminator != nil {
+		discriminator := mappingNode()
+		appendKeyValue(discriminator, "propertyName", stringNode(schema.Discriminator.PropertyName))
+		mapping := mappingNode()
+		values := make([]string, 0, len(schema.Discriminator.Mapping))
+		for value := range schema.Discriminator.Mapping {
+			values = append(values, value)
+		}
+		sort.Strings(values)
+		for _, value := range values {
+			appendKeyValue(mapping, value, stringNode("#/components/schemas/"+schema.Discriminator.Mapping[value]))
+		}
+		appendKeyValue(discriminator, "mapping", mapping)
+		appendKeyValue(node, "discriminator", discriminator)
+	}
 	if len(schema.Enum) > 0 {
 		enum := sequenceNode()
 		for _, value := range schema.Enum {

@@ -11,13 +11,13 @@ export const $lib = createTypeSpecLibrary({
         "unsupported-response-status": {
             severity: "error",
             messages: {
-                default: paramMessage `Unsupported response status '${"status"}' for operation '${"operation"}'. APIGen IR v3 requires concrete numeric status codes.`,
+                default: paramMessage `Unsupported response status '${"status"}' for operation '${"operation"}'. APIGen IR v4 requires concrete numeric status codes.`,
             },
         },
         "unsupported-response-content": {
             severity: "error",
             messages: {
-                default: paramMessage `Unsupported response content for operation '${"operation"}': incompatible response content for status ${"status"} and content type ${"contentType"}. APIGen IR v3 requires one concrete content entry per status/content type.`,
+                default: paramMessage `Unsupported response content for operation '${"operation"}': incompatible response content for status ${"status"} and content type ${"contentType"}. APIGen IR v4 requires one concrete content entry per status/content type.`,
             },
         },
         "unsupported-cookie": {
@@ -65,7 +65,7 @@ export const $lib = createTypeSpecLibrary({
         "unnamed-schema": {
             severity: "error",
             messages: {
-                default: paramMessage `APIGen IR v3 requires ${"context"} to resolve to a named model schema.`,
+                default: paramMessage `APIGen IR v4 requires ${"context"} to resolve to a named model schema.`,
             },
         },
         "missing-output-file": {

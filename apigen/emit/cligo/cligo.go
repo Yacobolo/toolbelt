@@ -2,9 +2,11 @@
 package cligo
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
+	"github.com/Yacobolo/toolbelt/apigen/emit/schemajson"
 	"github.com/Yacobolo/toolbelt/apigen/ir"
 )
 
@@ -102,11 +104,16 @@ func renderRequestBody(doc ir.Document, endpoint ir.Endpoint) string {
 	if content.Schema != nil {
 		bodySchemaType = schemaType(doc, *content.Schema)
 	}
-	return fmt.Sprintf("&apigencobra.RequestBodySpec{Required: %t, ContentType: %q, BodyKind: %q, SchemaType: %q, InputMode: %q, Fields: %s, Parts: %s}",
+	schemaJSON := ""
+	if content.Schema != nil {
+		schemaJSON = renderSchemaJSON(doc, *content.Schema)
+	}
+	return fmt.Sprintf("&apigencobra.RequestBodySpec{Required: %t, ContentType: %q, BodyKind: %q, SchemaType: %q, SchemaJSON: %q, InputMode: %q, Fields: %s, Parts: %s}",
 		endpoint.RequestBody.Required,
 		content.ContentType,
 		content.BodyKind,
 		bodySchemaType,
+		schemaJSON,
 		bodyInput,
 		renderFields(fields),
 		renderMultipartParts(doc, content.Parts),
@@ -135,6 +142,7 @@ func collectBodyFields(doc ir.Document, endpoint ir.Endpoint) []apiField {
 			Description: property.Description,
 			Required:    isRequired,
 			Enum:        schemaEnum(doc, property.Schema),
+			SchemaJSON:  renderSchemaJSON(doc, property.Schema),
 		})
 	}
 	return fields
@@ -172,13 +180,14 @@ func renderParams(doc ir.Document, params []ir.Parameter) string {
 	}
 	rendered := make([]string, 0, len(params))
 	for _, parameter := range params {
-		rendered = append(rendered, fmt.Sprintf("{Name: %q, In: %q, Type: %q, Description: %q, Required: %t, Enum: %s}",
+		rendered = append(rendered, fmt.Sprintf("{Name: %q, In: %q, Type: %q, Description: %q, Required: %t, Enum: %s, SchemaJSON: %q}",
 			parameter.Name,
 			parameter.In,
 			schemaType(doc, parameter.Schema),
 			parameter.Description,
 			parameter.Required,
 			renderStringSlice(schemaEnum(doc, parameter.Schema)),
+			renderSchemaJSON(doc, parameter.Schema),
 		))
 	}
 	return "[]apigencobra.Param{" + strings.Join(rendered, ", ") + "}"
@@ -190,12 +199,13 @@ func renderFields(fields []apiField) string {
 	}
 	rendered := make([]string, 0, len(fields))
 	for _, field := range fields {
-		rendered = append(rendered, fmt.Sprintf("{Name: %q, Type: %q, Description: %q, Required: %t, Enum: %s}",
+		rendered = append(rendered, fmt.Sprintf("{Name: %q, Type: %q, Description: %q, Required: %t, Enum: %s, SchemaJSON: %q}",
 			field.Name,
 			field.Type,
 			field.Description,
 			field.Required,
 			renderStringSlice(field.Enum),
+			field.SchemaJSON,
 		))
 	}
 	return "[]apigencobra.Field{" + strings.Join(rendered, ", ") + "}"
@@ -208,10 +218,12 @@ func renderMultipartParts(doc ir.Document, parts []ir.MultipartPart) string {
 	rendered := make([]string, 0, len(parts))
 	for _, part := range parts {
 		schemaType := part.BodyKind
+		schemaJSON := ""
 		if part.Schema != nil {
 			schemaType = schemaTypeForPart(doc, *part.Schema)
+			schemaJSON = renderSchemaJSON(doc, *part.Schema)
 		}
-		rendered = append(rendered, fmt.Sprintf("{Name: %q, WireName: %q, PartKind: %q, Repeated: %t, Required: %t, ContentType: %q, BodyKind: %q, Filename: %t, SchemaType: %q}",
+		rendered = append(rendered, fmt.Sprintf("{Name: %q, WireName: %q, PartKind: %q, Repeated: %t, Required: %t, ContentType: %q, BodyKind: %q, Filename: %t, SchemaType: %q, SchemaJSON: %q}",
 			part.Name,
 			part.WireName,
 			part.PartKind,
@@ -221,6 +233,7 @@ func renderMultipartParts(doc ir.Document, parts []ir.MultipartPart) string {
 			part.BodyKind,
 			part.Filename,
 			schemaType,
+			schemaJSON,
 		))
 	}
 	return "[]apigencobra.MultipartPartSpec{" + strings.Join(rendered, ", ") + "}"
@@ -293,10 +306,19 @@ func defaultContentType(value string) string {
 	return value
 }
 
+func renderSchemaJSON(doc ir.Document, ref ir.SchemaRef) string {
+	encoded, err := json.Marshal(schemajson.Ref(doc, ref))
+	if err != nil {
+		return "{}"
+	}
+	return string(encoded)
+}
+
 type apiField struct {
 	Name        string
 	Type        string
 	Description string
 	Required    bool
 	Enum        []string
+	SchemaJSON  string
 }

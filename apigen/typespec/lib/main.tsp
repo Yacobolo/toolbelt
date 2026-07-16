@@ -49,6 +49,18 @@ model ContractOptions {
   tags?: string[];
 }
 
+model TransportFailureOptions {
+  kind: string;
+  statusCode: int32;
+  code: string;
+  publicDetail: string;
+}
+
+model TransportErrorsOptions {
+  contentType: string;
+  failures: TransportFailureOptions[];
+}
+
 union ToolInputMode {
   modelValue: "model";
   contextValue: "context";
@@ -107,3 +119,4 @@ extern dec `package`(target: Namespace, options: valueof PackageOptions);
 extern dec contract(target: Model | Enum, options?: valueof ContractOptions);
 extern dec `metadata`(target: Model | ModelProperty, value: valueof unknown);
 extern dec tool(target: Operation, options: valueof ToolOptions);
+extern dec transportErrors(target: Namespace, schema: Model, options: valueof TransportErrorsOptions);

@@ -7,6 +7,19 @@ using TypeSpec.OpenAPI;
 @server("http://127.0.0.1:8081", "Example development server")
 @useAuth(BearerAuth | ApiKeyAuth<ApiKeyLocation.header, "X-API-Key">)
 @tagMetadata(#[#{ name: "Todos", description: "Todo lifecycle endpoints for the APIGen example." }])
+@apigen.transportErrors(Error, #{
+  contentType: "application/json",
+  failures: #[
+    #{ kind: "path_parameter", statusCode: 400, code: "invalid_request", publicDetail: "Invalid request." },
+    #{ kind: "query_parameter", statusCode: 400, code: "invalid_request", publicDetail: "Invalid request." },
+    #{ kind: "header_parameter", statusCode: 400, code: "invalid_request", publicDetail: "Invalid request." },
+    #{ kind: "malformed_body", statusCode: 400, code: "invalid_request", publicDetail: "Invalid request body." },
+    #{ kind: "multipart", statusCode: 400, code: "invalid_request", publicDetail: "Invalid multipart body." },
+    #{ kind: "unsupported_media_type", statusCode: 415, code: "unsupported_media_type", publicDetail: "Unsupported media type." },
+    #{ kind: "handler", statusCode: 500, code: "internal_error", publicDetail: "Internal server error." },
+    #{ kind: "response_serialization", statusCode: 500, code: "internal_error", publicDetail: "Internal server error." },
+  ],
+})
 namespace TodoAPI;
 
 model Todo {
@@ -24,7 +37,7 @@ model ListTodosResponse {
 }
 
 model Error {
-  code: int32;
+  code: string;
   message: string;
 }
 

@@ -83,7 +83,7 @@ if ok {
 ## What this shows
 
 - TypeSpec -> JSON IR -> OpenAPI -> generated Go artifacts
-- strict handler integration via `RegisterAPIGenStrictRoutes`
+- strict handler integration via `RegisterAPIGenStrictRoutes`, including an injected transport-error responder
 - handwritten handlers in `internal/api` using generated request and response types from `internal/api/gen`
 - generated Cobra commands with path args, query params, JSON body input, detail output, collection output, and confirmation
 - typed endpoint-derived tool contracts with portable input/output schemas

@@ -151,6 +151,30 @@ func TestSchemaJSONOmitsEmptyType(t *testing.T) {
 	require.NotContains(t, schemaJSON(ir.Document{}, ir.Schema{}, map[string]bool{}), "type")
 }
 
+func TestBuildPreservesDiscriminatedOutputSchema(t *testing.T) {
+	doc := ir.Document{
+		SchemaVersion: ir.CurrentSchemaVersion,
+		API:           ir.API{BasePath: "/"},
+		Info:          ir.Info{Title: "Visual API", Version: "1"},
+		Schemas: map[string]ir.Schema{
+			"Visual":      {Type: "union", OneOf: []ir.SchemaRef{{Ref: "ChartVisual"}, {Ref: "TextVisual"}}, Discriminator: &ir.Discriminator{PropertyName: "shape", Mapping: map[string]string{"chart": "ChartVisual", "text": "TextVisual"}}},
+			"VisualBase":  {Type: "object", Properties: map[string]ir.SchemaProperty{"shape": {Schema: ir.SchemaRef{Type: "string"}}}, Required: []string{"shape"}},
+			"ChartVisual": {Type: "object", Base: &ir.SchemaRef{Ref: "VisualBase"}, Properties: map[string]ir.SchemaProperty{"shape": {Schema: ir.SchemaRef{Type: "string", Enum: []string{"chart"}}}}, Required: []string{"shape"}},
+			"TextVisual":  {Type: "object", Base: &ir.SchemaRef{Ref: "VisualBase"}, Properties: map[string]ir.SchemaProperty{"shape": {Schema: ir.SchemaRef{Type: "string", Enum: []string{"text"}}}}, Required: []string{"shape"}},
+			"Page":        {Type: "object", Properties: map[string]ir.SchemaProperty{"visuals": {Schema: ir.SchemaRef{Type: "array", Items: &ir.SchemaRef{Ref: "Visual"}}}}, Required: []string{"visuals"}},
+		},
+		Endpoints: []ir.Endpoint{{Method: "get", Path: "/visual", OperationID: "getVisual", Responses: []ir.Response{{StatusCode: 200, Description: "ok", Contents: []ir.BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Ref: "Page"}}}}}, Tool: &ir.Tool{Name: "get_visual", Effect: "read", Output: ir.ToolOutput{Mode: "raw"}}}},
+	}
+
+	contracts, err := Build(doc)
+	require.NoError(t, err)
+	require.Contains(t, string(contracts["get_visual"].OutputSchema), `"oneOf"`)
+	require.Contains(t, string(contracts["get_visual"].OutputSchema), `"items":{"oneOf"`)
+	require.Contains(t, string(contracts["get_visual"].OutputSchema), `"chart"`)
+	require.NotContains(t, string(contracts["get_visual"].OutputSchema), `"allOf"`)
+	require.Contains(t, string(contracts["get_visual"].OutputSchema), `"additionalProperties":false`)
+}
+
 func requireNoEmptySchemaTypes(t *testing.T, value any) {
 	t.Helper()
 	switch typed := value.(type) {

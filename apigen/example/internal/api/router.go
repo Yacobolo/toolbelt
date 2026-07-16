@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -21,6 +22,15 @@ func NewRouter() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(spec)
 	})
-	gen.RegisterAPIGenStrictRoutes(router, NewServer())
+	server := NewServer()
+	gen.RegisterAPIGenStrictRoutes(router, server, transportErrorResponder{})
 	return router
+}
+
+type transportErrorResponder struct{}
+
+func (transportErrorResponder) RespondTransportError(_ context.Context, w http.ResponseWriter, _ *http.Request, failure gen.GenTransportError) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(failure.StatusCode)
+	_ = json.NewEncoder(w).Encode(gen.Error{Code: failure.Code, Message: failure.PublicDetail})
 }

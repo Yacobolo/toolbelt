@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"mime"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,7 +13,7 @@ import (
 )
 
 // CurrentSchemaVersion is the supported JSON IR schema version.
-const CurrentSchemaVersion = "v3"
+const CurrentSchemaVersion = "v4"
 
 var toolNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
@@ -221,6 +222,9 @@ func Validate(doc Document) error {
 				}
 			}
 		}
+	}
+	if err := validateTransportErrors(doc); err != nil {
+		return err
 	}
 
 	return nil
@@ -916,7 +920,158 @@ func validateSchemaDefinition(doc Document, name string, schema Schema) error {
 			return err
 		}
 	}
+	if schema.Base != nil {
+		if err := validateSchemaRefExists(doc, *schema.Base, fmt.Sprintf("schema %q base", name)); err != nil {
+			return err
+		}
+	}
+	for idx, variant := range schema.OneOf {
+		if err := validateSchemaRefExists(doc, variant, fmt.Sprintf("schema %q one_of[%d]", name, idx)); err != nil {
+			return err
+		}
+	}
+	if schema.Type == "union" {
+		if len(schema.OneOf) == 0 {
+			return fmt.Errorf("schema %q union must declare one_of", name)
+		}
+		if schema.Discriminator == nil {
+			return fmt.Errorf("schema %q union must declare discriminator", name)
+		}
+		seenVariants := make(map[string]struct{}, len(schema.OneOf))
+		for idx, variant := range schema.OneOf {
+			variantName, ok := NormalizedSchemaRefName(variant)
+			if !ok {
+				return fmt.Errorf("schema %q union one_of[%d] must be a named schema ref", name, idx)
+			}
+			if _, exists := seenVariants[variantName]; exists {
+				return fmt.Errorf("schema %q union has duplicate one_of variant %q", name, variantName)
+			}
+			seenVariants[variantName] = struct{}{}
+		}
+	}
+	if schema.Discriminator != nil {
+		if strings.TrimSpace(schema.Discriminator.PropertyName) == "" {
+			return fmt.Errorf("schema %q discriminator property_name is required", name)
+		}
+		if len(schema.Discriminator.Mapping) == 0 {
+			return fmt.Errorf("schema %q discriminator mapping is required", name)
+		}
+		variants := make(map[string]struct{}, len(schema.OneOf))
+		for _, variant := range schema.OneOf {
+			if variantName, ok := NormalizedSchemaRefName(variant); ok {
+				variants[variantName] = struct{}{}
+			}
+		}
+		mappedTargets := make(map[string]struct{}, len(schema.Discriminator.Mapping))
+		for value, target := range schema.Discriminator.Mapping {
+			if strings.TrimSpace(value) == "" || strings.TrimSpace(target) == "" {
+				return fmt.Errorf("schema %q discriminator mapping keys and targets are required", name)
+			}
+			if _, ok := doc.Schemas[target]; !ok {
+				return fmt.Errorf("schema %q discriminator mapping %q references unknown schema %q", name, value, target)
+			}
+			if schema.Type == "union" {
+				if _, ok := variants[target]; !ok {
+					return fmt.Errorf("schema %q discriminator mapping %q target %q is not in one_of", name, value, target)
+				}
+				if _, exists := mappedTargets[target]; exists {
+					return fmt.Errorf("schema %q discriminator maps multiple values to variant %q", name, target)
+				}
+				mappedTargets[target] = struct{}{}
+				variantSchema := doc.Schemas[target]
+				property, ok := variantSchema.Properties[schema.Discriminator.PropertyName]
+				if !ok || len(property.Schema.Enum) != 1 || property.Schema.Enum[0] != value {
+					return fmt.Errorf("schema %q discriminator mapping %q target %q must declare matching literal property %q", name, value, target, schema.Discriminator.PropertyName)
+				}
+				if !containsString(variantSchema.Required, schema.Discriminator.PropertyName) {
+					return fmt.Errorf("schema %q discriminator mapping %q target %q must require property %q", name, value, target, schema.Discriminator.PropertyName)
+				}
+			}
+		}
+		if schema.Type == "union" && len(mappedTargets) != len(variants) {
+			return fmt.Errorf("schema %q discriminator mapping must cover every one_of variant", name)
+		}
+	}
 	return nil
+}
+
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func validateTransportErrors(doc Document) error {
+	policy := doc.TransportErrors
+	if policy == nil {
+		return nil
+	}
+	if err := validateSchemaRefExists(doc, policy.Schema, "transport_errors schema"); err != nil {
+		return err
+	}
+	policySchemaName, ok := NormalizedSchemaRefName(policy.Schema)
+	if !ok {
+		return fmt.Errorf("transport_errors schema must be a named schema ref")
+	}
+	if strings.TrimSpace(policy.ContentType) == "" {
+		return fmt.Errorf("transport_errors content_type is required")
+	}
+	policyMediaType, _, err := mime.ParseMediaType(policy.ContentType)
+	if err != nil {
+		return fmt.Errorf("transport_errors content_type is invalid: %w", err)
+	}
+	if len(policy.Failures) == 0 {
+		return fmt.Errorf("transport_errors failures are required")
+	}
+	for kind, failure := range policy.Failures {
+		if strings.TrimSpace(kind) == "" {
+			return fmt.Errorf("transport_errors failure kind is required")
+		}
+		if failure.StatusCode < 400 || failure.StatusCode > 599 {
+			return fmt.Errorf("transport_errors failure %q has invalid status_code %d", kind, failure.StatusCode)
+		}
+		if strings.TrimSpace(failure.Code) == "" {
+			return fmt.Errorf("transport_errors failure %q code is required", kind)
+		}
+		if strings.TrimSpace(failure.PublicDetail) == "" {
+			return fmt.Errorf("transport_errors failure %q public_detail is required", kind)
+		}
+	}
+	for _, endpoint := range doc.Endpoints {
+		for _, response := range endpoint.Responses {
+			if !transportStatusConfigured(policy.Failures, response.StatusCode) {
+				continue
+			}
+			matched := false
+			for _, content := range response.Contents {
+				mediaType, _, err := mime.ParseMediaType(content.ContentType)
+				if err != nil || !strings.EqualFold(mediaType, policyMediaType) || content.Schema == nil {
+					continue
+				}
+				responseSchemaName, ok := NormalizedSchemaRefName(*content.Schema)
+				if ok && responseSchemaName == policySchemaName {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return fmt.Errorf("endpoint %q response %d conflicts with transport_errors schema %q and content_type %q", endpoint.OperationID, response.StatusCode, policySchemaName, policy.ContentType)
+			}
+		}
+	}
+	return nil
+}
+
+func transportStatusConfigured(failures map[string]TransportFailure, statusCode int) bool {
+	for _, failure := range failures {
+		if failure.StatusCode == statusCode {
+			return true
+		}
+	}
+	return false
 }
 
 func validateSchemaRefExists(doc Document, schemaRef SchemaRef, context string) error {

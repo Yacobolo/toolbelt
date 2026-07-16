@@ -6,6 +6,7 @@ const packageKey = Symbol.for("@yacobolo/apigen.package");
 const contractKey = Symbol.for("@yacobolo/apigen.contract");
 const metadataKey = Symbol.for("@yacobolo/apigen.metadata");
 const toolKey = Symbol.for("@yacobolo/apigen.tool");
+const transportErrorsKey = Symbol.for("@yacobolo/apigen.transportErrors");
 export function $cli(context, target, options) {
     context.program.stateMap(cliKey).set(target, options);
 }
@@ -30,6 +31,9 @@ export function $metadata(context, target, value) {
 export function $tool(context, target, options) {
     context.program.stateMap(toolKey).set(target, options);
 }
+export function $transportErrors(context, target, schema, options) {
+    context.program.stateMap(transportErrorsKey).set(target, { schema, ...options });
+}
 export const $decorators = {
     apigen: {
         cli: $cli,
@@ -40,6 +44,7 @@ export const $decorators = {
         contract: $contract,
         metadata: $metadata,
         tool: $tool,
+        transportErrors: $transportErrors,
     },
 };
 export function getCLI(context, target) {
@@ -65,4 +70,7 @@ export function getMetadata(context, target) {
 }
 export function getTool(context, target) {
     return context.program.stateMap(toolKey).get(target);
+}
+export function getTransportErrors(context, target) {
+    return context.program.stateMap(transportErrorsKey).get(target);
 }

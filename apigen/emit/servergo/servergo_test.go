@@ -27,7 +27,7 @@ func TestEmit(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -54,7 +54,7 @@ func TestEmit(t *testing.T) {
 	require.Contains(t, content, "apigenchi.RegisterRoutes(router, []apigenchi.Route{")
 	require.Contains(t, content, "{Method: \"GET\", Path: \"/healthz\", OperationID: \"getHealth\"}")
 	require.Contains(t, content, "func RegisterAPIGenRoutes(router apigenchi.Router, server GenServerInterface)")
-	require.Contains(t, content, "func RegisterAPIGenStrictRoutes(router apigenchi.Router, handler GenStrictServerInterface)")
+	require.Contains(t, content, "func RegisterAPIGenStrictRoutes(router apigenchi.Router, handler GenStrictServerInterface, responder GenTransportErrorResponder)")
 	require.Contains(t, content, "func DispatchAPIGenOperation(operationID string, dispatcher GenOperationDispatcher")
 	require.NotContains(t, content, "\"github.com/oapi-codegen/runtime\"")
 	require.NotContains(t, content, "\"reflect\"")
@@ -74,7 +74,7 @@ func TestEmit_UsesIRPathAsIs(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -93,7 +93,7 @@ func TestEmit_UsesAPIBasePathForRoutes(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/v1"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -111,7 +111,7 @@ func TestValidateOperationIDs(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -128,7 +128,7 @@ func TestEmit_DispatchParityAndHealthHandling(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -165,7 +165,7 @@ func TestEmit_OperationContractsIncludeManualAndBodyMetadata(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -194,7 +194,7 @@ func TestEmit_OperationContractsIncludeManualAndBodyMetadata(t *testing.T) {
 	require.NoError(t, err)
 	content := string(b)
 	require.Contains(t, content, `"localLogin": {OperationID: "localLogin", Method: "POST", Path: "/auth/local-login"`)
-	require.Contains(t, content, `DocumentedStatusCodes: []int{200, 400, 401, 403, 404, 409, 429, 500, 502}`)
+	require.Contains(t, content, `DocumentedStatusCodes: []int{200, 401}`)
 	require.Contains(t, content, `RequestBodyRequired: true`)
 	require.Contains(t, content, `AuthzMode: "none"`)
 	require.Contains(t, content, `Protected: true`)
@@ -205,7 +205,7 @@ func TestEmit_OperationContractsIncludeExtensionDefensiveCopies(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -298,7 +298,7 @@ func TestEmit_RejectsInvalidExtensionValues(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -322,7 +322,7 @@ func TestEmit_DoesNotMutateInputDocument(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -341,7 +341,7 @@ func TestEmit_GeneratesPathQueryAndHeaderBinding(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -367,17 +367,16 @@ func TestEmit_GeneratesPathQueryAndHeaderBinding(t *testing.T) {
 	require.Contains(t, content, "apigenchi.BindPathParameter(\"groupId\", apigenchi.URLParam(r, \"groupId\"), true, &groupId)")
 	require.Contains(t, content, "apigenchi.BindQueryParameter(r.URL.Query(), \"max_results\", false, &params.MaxResults)")
 	require.Contains(t, content, "apigenchi.BindHeaderParameter(r.Header, \"accept\", true, &headers.Accept)")
-	require.Contains(t, content, "writeAPIGenError(w, http.StatusBadRequest, err.Error())")
+	require.Contains(t, content, `Kind: "path_parameter"`)
+	require.Contains(t, content, `Kind: "query_parameter"`)
+	require.Contains(t, content, `Kind: "header_parameter"`)
 	require.Contains(t, content, "dispatcher.ListGroupMembers(w, r, groupId, params, headers)")
 	require.Contains(t, content, "type GenListGroupMembersParams struct {")
 	require.Contains(t, content, "\tMaxResults *int32")
 	require.Contains(t, content, "type GenListGroupMembersHeaders struct {")
 	require.Contains(t, content, "\tAccept string")
-	require.Contains(t, content, "func apigenErrorMessage(statusCode int, message string) string {")
-	require.Contains(t, content, "if statusCode >= http.StatusInternalServerError {")
-	require.Contains(t, content, "if statusText := strings.ToLower(http.StatusText(statusCode)); statusText != \"\" {")
-	require.Contains(t, content, "func writeAPIGenError(w http.ResponseWriter, statusCode int, message string) {")
-	require.Contains(t, content, "_ = json.NewEncoder(w).Encode(Error{Code: apigenchi.SafeIntToInt32(statusCode), Message: apigenErrorMessage(statusCode, message)})")
+	require.Contains(t, content, "type GenTransportErrorResponder interface {")
+	require.Contains(t, content, "func writeAPIGenError(responder GenTransportErrorResponder")
 	require.Contains(t, content, "var request GenListGroupMembersRequest")
 	require.Contains(t, content, "\"fmt\"")
 	require.Contains(t, content, "response, err := b.handler.ListGroupMembers(r.Context(), request)")
@@ -403,7 +402,7 @@ func TestEmit_GeneratesStrictJSONBodyDecoding(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -431,16 +430,51 @@ func TestEmit_GeneratesStrictJSONBodyDecoding(t *testing.T) {
 	require.Contains(t, content, "return fmt.Errorf(\"request body must contain a single JSON value\")")
 	require.Contains(t, content, "decoder := json.NewDecoder(strings.NewReader(string(raw)))")
 	require.Contains(t, content, "if err := decodeAPIGenJSONBody(r.Body, &body, false); err != nil {")
-	require.Contains(t, content, "writeAPIGenError(w, http.StatusBadRequest, err.Error())")
-	require.Contains(t, content, "writeAPIGenError(w, http.StatusInternalServerError, err.Error())")
-	require.Contains(t, content, "Message: apigenErrorMessage(statusCode, message)")
+	require.Contains(t, content, `Kind: "malformed_body"`)
+	require.Contains(t, content, `Kind: "handler"`)
+	require.Contains(t, content, `Kind: "response_serialization"`)
+}
+
+func TestEmit_GeneratesInjectedTransportErrorResponder(t *testing.T) {
+	doc := ir.Document{
+		SchemaVersion: ir.CurrentSchemaVersion,
+		API:           ir.API{BasePath: "/"},
+		Info:          ir.Info{Title: "Problem API", Version: "1"},
+		Schemas: map[string]ir.Schema{
+			"Problem": {Type: "object"},
+			"Request": {Type: "object"},
+		},
+		TransportErrors: &ir.TransportErrors{
+			Schema:      ir.SchemaRef{Ref: "Problem"},
+			ContentType: "application/problem+json",
+			Failures: map[string]ir.TransportFailure{
+				"malformed_body":         {StatusCode: 400, Code: "malformed_body", PublicDetail: "Malformed body."},
+				"unsupported_media_type": {StatusCode: 415, Code: "unsupported_media_type", PublicDetail: "Unsupported media type."},
+				"handler":                {StatusCode: 500, Code: "internal", PublicDetail: "Internal error."},
+				"response_serialization": {StatusCode: 500, Code: "internal", PublicDetail: "Internal error."},
+			},
+		},
+		Endpoints: []ir.Endpoint{{Method: "post", Path: "/", OperationID: "create", RequestBody: &ir.RequestBody{Required: true, Contents: jsonContent(ir.SchemaRef{Ref: "Request"})}, Responses: []ir.Response{{StatusCode: 204, Description: "ok"}}}},
+	}
+
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, "type GenTransportError struct")
+	require.Contains(t, content, "Cause error")
+	require.Contains(t, content, "type GenTransportErrorResponder interface")
+	require.Contains(t, content, "RegisterAPIGenStrictRoutes(router apigenchi.Router, handler GenStrictServerInterface, responder GenTransportErrorResponder)")
+	require.Contains(t, content, `Kind: "unsupported_media_type"`)
+	require.Contains(t, content, `StatusCode: 415`)
+	require.Contains(t, content, `Code: "unsupported_media_type"`)
+	require.NotContains(t, content, "Encode(Error{")
 }
 
 func TestEmit_GeneratesTransportAwareBodies(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -492,7 +526,7 @@ func TestEmit_GeneratesMultiContentResponseVariants(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -548,7 +582,7 @@ func TestEmit_GeneratesMultipartBodyDecoding(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -630,7 +664,7 @@ func TestEmit_GeneratesMixedMultipartBodyDecodingByOrder(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -679,7 +713,7 @@ func TestEmit_GeneratesGenFileRequestAndResponse(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -729,7 +763,7 @@ func TestEmit_UsesNamedRequestBodySchemas(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -775,7 +809,7 @@ func TestEmit_FailsForUnnamedRequestBodySchema(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{
@@ -799,7 +833,7 @@ func TestEmit_ImportsTimeForDateTimeParameters(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -835,7 +869,7 @@ func TestEmit_EmitsCanonicalResponseTypesOnly(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Schemas: map[string]ir.Schema{
@@ -890,7 +924,7 @@ func TestEmit_EmitsCanonicalResponseTypesOnly(t *testing.T) {
 	require.Contains(t, content, "type GenSubmitQuery201JSONResponse")
 	require.Contains(t, content, "type GenCancelQuery201JSONResponse")
 	require.Contains(t, content, "type GenBindColumnMask201Response struct {")
-	require.Contains(t, content, "type GenListGroups403JSONResponse struct{ GenForbiddenJSONResponse }")
+	require.Contains(t, content, "type GenListGroups403JSONResponse struct {")
 	require.NotContains(t, content, "type ExecuteQuery200JSONResponse")
 	require.NotContains(t, content, "type SubmitQuery202JSONResponse")
 	require.NotContains(t, content, "type CancelQuery200JSONResponse")
@@ -903,7 +937,7 @@ func TestEmit_UsesIRResponseHeadersForVisitMethods(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/"},
 		Info:          ir.Info{Title: "t", Version: "1"},
 		Endpoints: []ir.Endpoint{{
@@ -929,7 +963,8 @@ func TestEmit_UsesIRResponseHeadersForVisitMethods(t *testing.T) {
 	require.Contains(t, content, "type GenGetWidget200ResponseHeaders struct {")
 	require.Contains(t, content, "\tXTraceId string")
 	require.Contains(t, content, "w.Header().Set(\"X-Trace-Id\", fmt.Sprint(response.Headers.XTraceId))")
-	require.Contains(t, content, "return json.NewEncoder(w).Encode(response.Body)")
+	require.Contains(t, content, "payload, err := json.Marshal(response.Body)")
+	require.Contains(t, content, "_, err = w.Write(payload)")
 }
 
 func TestPathParamTypeName(t *testing.T) {

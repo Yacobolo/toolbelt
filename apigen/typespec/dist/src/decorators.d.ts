@@ -35,6 +35,18 @@ export interface ContractOptions {
     kind?: string;
     tags?: string[];
 }
+export interface TransportErrorsOptions {
+    contentType: string;
+    failures: Array<{
+        kind: string;
+        statusCode: number;
+        code: string;
+        publicDetail: string;
+    }>;
+}
+export interface TransportErrorsDefinition extends TransportErrorsOptions {
+    schema: Model;
+}
 export interface ToolInputFieldOptions {
     source: "path" | "query" | "header" | "body";
     name: string;
@@ -79,6 +91,7 @@ export declare function $package(context: DecoratorContext, target: Namespace, o
 export declare function $contract(context: DecoratorContext, target: Model | Enum, options?: ContractOptions): void;
 export declare function $metadata(context: DecoratorContext, target: Model | ModelProperty | Enum, value: Record<string, unknown>): void;
 export declare function $tool(context: DecoratorContext, target: Operation, options: ToolOptions): void;
+export declare function $transportErrors(context: DecoratorContext, target: Namespace, schema: Model, options: TransportErrorsOptions): void;
 export declare const $decorators: {
     apigen: {
         cli: typeof $cli;
@@ -89,6 +102,7 @@ export declare const $decorators: {
         contract: typeof $contract;
         metadata: typeof $metadata;
         tool: typeof $tool;
+        transportErrors: typeof $transportErrors;
     };
 };
 export declare function getCLI(context: {
@@ -115,3 +129,6 @@ export declare function getMetadata(context: {
 export declare function getTool(context: {
     program: DecoratorContext["program"];
 }, target: Operation): ToolOptions | undefined;
+export declare function getTransportErrors(context: {
+    program: DecoratorContext["program"];
+}, target: Namespace): TransportErrorsDefinition | undefined;

@@ -23,7 +23,7 @@
     "version": "1.0.0",
     "description": "Small data-contract example shaped like a dashboard signal envelope."
   },
-  "schema_version": "v3",
+  "schema_version": "v4",
   "schemas": {
     "DashboardEnvelope": {
       "type": "object",

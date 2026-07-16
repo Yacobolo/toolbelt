@@ -136,10 +136,13 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	var b strings.Builder
 	packageName := packageName(opts)
 	usesTime := docUsesTimeTypes(doc)
-	hasStrictOperations := false
+	// The generated registration surface always exposes strict dispatch and its
+	// injected error responder, including health-only APIs.
+	hasStrictOperations := true
 	hasRequestBodies := false
 	hasMultipartBodies := false
 	hasFileBodies := docUsesFileBodies(doc)
+	usesFmt := hasFileBodies
 	hasTools := len(toolContracts) > 0
 	for _, endpoint := range doc.Endpoints {
 		if endpoint.OperationID != "getHealth" {
@@ -147,8 +150,14 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		}
 		if endpoint.RequestBody != nil {
 			hasRequestBodies = true
+			usesFmt = true
 			if content, ok := ir.PrimaryRequestBodyContent(endpoint); ok && content.BodyKind == "multipart" {
 				hasMultipartBodies = true
+			}
+		}
+		for _, response := range endpoint.Responses {
+			if len(responseHeaderFieldsWithDefaults(response)) > 0 {
+				usesFmt = true
 			}
 		}
 	}
@@ -158,17 +167,21 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("import (\n")
 	if hasStrictOperations {
 		b.WriteString("\t\"context\"\n")
-		b.WriteString("\t\"fmt\"\n")
+		if usesFmt {
+			b.WriteString("\t\"fmt\"\n")
+		}
 		if hasRequestBodies || hasFileBodies {
 			b.WriteString("\t\"io\"\n")
 		}
-		if hasFileBodies {
+		if hasRequestBodies || hasFileBodies {
 			b.WriteString("\t\"mime\"\n")
 		}
 		if hasMultipartBodies {
 			b.WriteString("\t\"os\"\n")
 		}
-		b.WriteString("\t\"strings\"\n")
+		if hasRequestBodies {
+			b.WriteString("\t\"strings\"\n")
+		}
 	}
 	b.WriteString("\t\"encoding/json\"\n")
 	b.WriteString("\t\"net/http\"\n\n")
@@ -238,7 +251,7 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 			strings.ToUpper(endpoint.Method),
 			ir.JoinAPIPath(doc.API.BasePath, endpoint.Path),
 			renderGoStringSlice(endpoint.Tags),
-			renderGoIntSlice(documentedStatusCodes(endpoint)),
+			renderGoIntSlice(documentedStatusCodes(doc, endpoint)),
 			endpoint.RequestBody != nil && endpoint.RequestBody.Required,
 			endpointAuthzMode(endpoint),
 			endpointProtected(endpoint),
@@ -322,8 +335,8 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("}\n")
 	b.WriteString("\n")
 	b.WriteString("// RegisterAPIGenStrictRoutes mounts generated routes backed by strict handlers.\n")
-	b.WriteString("func RegisterAPIGenStrictRoutes(router apigenchi.Router, handler GenStrictServerInterface) {\n")
-	b.WriteString("\tRegisterAPIGenRoutes(router, genStrictAdapter{handler: handler})\n")
+	b.WriteString("func RegisterAPIGenStrictRoutes(router apigenchi.Router, handler GenStrictServerInterface, responder GenTransportErrorResponder) {\n")
+	b.WriteString("\tRegisterAPIGenRoutes(router, genStrictAdapter{handler: handler, responder: responder})\n")
 	b.WriteString("}\n")
 	b.WriteString("\n")
 	b.WriteString("// GenOperationDispatcher is the dispatch target for generated operations.\n")
@@ -350,7 +363,7 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	}
 	b.WriteString("}\n\n")
 	b.WriteString("// DispatchAPIGenOperation dispatches operation IDs to generated wrapper methods.\n")
-	b.WriteString("func DispatchAPIGenOperation(operationID string, dispatcher GenOperationDispatcher, w http.ResponseWriter, r *http.Request) bool {\n")
+	b.WriteString("func DispatchAPIGenOperation(operationID string, dispatcher GenOperationDispatcher, responder GenTransportErrorResponder, w http.ResponseWriter, r *http.Request) bool {\n")
 	b.WriteString("\tswitch operationID {\n")
 	for _, endpoint := range doc.Endpoints {
 		name := exportedName(endpoint.OperationID)
@@ -380,7 +393,7 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 			b.WriteString("\t\tvar " + varName + " " + typeName + "\n")
 			b.WriteString("\t\terr = apigenchi.BindPathParameter(\"" + p.Name + "\", apigenchi.URLParam(r, \"" + p.Name + "\"), " + required + ", &" + varName + ")\n")
 			b.WriteString("\t\tif err != nil {\n")
-			b.WriteString("\t\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
+			writeTransportErrorCall(&b, doc, endpoint.OperationID, "path_parameter", "err", "\t\t\t")
 			b.WriteString("\t\t\treturn true\n")
 			b.WriteString("\t\t}\n")
 		}
@@ -395,7 +408,7 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 				}
 				b.WriteString("\t\terr = apigenchi.BindQueryParameter(r.URL.Query(), \"" + p.Name + "\", " + required + ", &params." + fieldName + ")\n")
 				b.WriteString("\t\tif err != nil {\n")
-				b.WriteString("\t\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
+				writeTransportErrorCall(&b, doc, endpoint.OperationID, "query_parameter", "err", "\t\t\t")
 				b.WriteString("\t\t\treturn true\n")
 				b.WriteString("\t\t}\n")
 			}
@@ -410,7 +423,7 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 				}
 				b.WriteString("\t\terr = apigenchi.BindHeaderParameter(r.Header, \"" + p.Name + "\", " + required + ", &headers." + fieldName + ")\n")
 				b.WriteString("\t\tif err != nil {\n")
-				b.WriteString("\t\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
+				writeTransportErrorCall(&b, doc, endpoint.OperationID, "header_parameter", "err", "\t\t\t")
 				b.WriteString("\t\t\treturn true\n")
 				b.WriteString("\t\t}\n")
 			}
@@ -436,19 +449,28 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("}\n")
 	b.WriteString("\n")
 	if hasStrictOperations {
-		b.WriteString("func apigenErrorMessage(statusCode int, message string) string {\n")
-		b.WriteString("\tif statusCode >= http.StatusInternalServerError {\n")
-		b.WriteString("\t\tif statusText := strings.ToLower(http.StatusText(statusCode)); statusText != \"\" {\n")
-		b.WriteString("\t\t\treturn statusText\n")
-		b.WriteString("\t\t}\n")
-		b.WriteString("\t}\n")
-		b.WriteString("\treturn message\n")
+		b.WriteString("// GenTransportError describes a transport-layer failure without prescribing its wire model.\n")
+		b.WriteString("type GenTransportError struct {\n")
+		b.WriteString("\tOperationID string\n\tKind string\n\tStatusCode int\n\tCode string\n\tPublicDetail string\n\tCause error\n")
 		b.WriteString("}\n\n")
-		b.WriteString("func writeAPIGenError(w http.ResponseWriter, statusCode int, message string) {\n")
-		b.WriteString("\tw.Header().Set(\"Content-Type\", \"application/json\")\n")
-		b.WriteString("\tw.WriteHeader(statusCode)\n")
-		b.WriteString("\t_ = json.NewEncoder(w).Encode(Error{Code: apigenchi.SafeIntToInt32(statusCode), Message: apigenErrorMessage(statusCode, message)})\n")
+		b.WriteString("// GenTransportErrorResponder owns serialization of generated transport failures.\n")
+		b.WriteString("type GenTransportErrorResponder interface {\n")
+		b.WriteString("\tRespondTransportError(ctx context.Context, w http.ResponseWriter, r *http.Request, failure GenTransportError)\n")
 		b.WriteString("}\n\n")
+		b.WriteString("func writeAPIGenError(responder GenTransportErrorResponder, w http.ResponseWriter, r *http.Request, failure GenTransportError) {\n")
+		b.WriteString("\tif responder == nil { panic(\"apigen: nil transport error responder\") }\n")
+		b.WriteString("\tresponder.RespondTransportError(r.Context(), w, r, failure)\n")
+		b.WriteString("}\n\n")
+		if hasRequestBodies {
+			b.WriteString("func validateAPIGenContentType(r *http.Request, expected string) error {\n")
+			b.WriteString("\tactual, _, err := mime.ParseMediaType(r.Header.Get(\"Content-Type\"))\n")
+			b.WriteString("\tif err != nil { return fmt.Errorf(\"parse Content-Type: %w\", err) }\n")
+			b.WriteString("\twant, _, err := mime.ParseMediaType(expected)\n")
+			b.WriteString("\tif err != nil { return fmt.Errorf(\"parse generated Content-Type %q: %w\", expected, err) }\n")
+			b.WriteString("\tif !strings.EqualFold(actual, want) { return fmt.Errorf(\"unsupported Content-Type %q; expected %q\", actual, want) }\n")
+			b.WriteString("\treturn nil\n")
+			b.WriteString("}\n\n")
+		}
 	}
 	if hasFileBodies {
 		b.WriteString("// GenFile represents a TypeSpec Http.File payload with transport metadata.\n")
@@ -711,7 +733,6 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 			}
 		}
 	}
-	emitSharedErrorResponseTypes(&b, doc)
 	for _, endpoint := range doc.Endpoints {
 		if endpoint.OperationID == "getHealth" {
 			continue
@@ -766,7 +787,6 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 		for _, response := range endpoint.Responses {
 			emitOperationResponse(&b, doc, name, response)
 		}
-		emitMissingSharedErrorResponses(&b, endpoint)
 		if endpoint.RequestBody != nil {
 			if content, ok := ir.PrimaryRequestBodyContent(endpoint); ok && content.BodyKind == "multipart" {
 				if err := emitMultipartRequestBody(&b, doc, name, content); err != nil {
@@ -795,16 +815,18 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 
 	b.WriteString("type genStrictAdapter struct {\n")
 	b.WriteString("\thandler GenStrictServerInterface\n")
+	b.WriteString("\tresponder GenTransportErrorResponder\n")
 	b.WriteString("}\n\n")
 
 	b.WriteString("func (a genStrictAdapter) HandleAPIGen(operationID string, w http.ResponseWriter, r *http.Request) {\n")
-	b.WriteString("\tif ok := DispatchAPIGenStrictOperation(operationID, a.handler, w, r); !ok {\n")
+	b.WriteString("\tif ok := DispatchAPIGenStrictOperation(operationID, a.handler, a.responder, w, r); !ok {\n")
 	b.WriteString("\t\thttp.NotFound(w, r)\n")
 	b.WriteString("\t}\n")
 	b.WriteString("}\n\n")
 
 	b.WriteString("type genStrictBridge struct {\n")
 	b.WriteString("\thandler GenStrictServerInterface\n")
+	b.WriteString("\tresponder GenTransportErrorResponder\n")
 	b.WriteString("}\n\n")
 
 	for _, endpoint := range doc.Endpoints {
@@ -854,42 +876,48 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 			if len(requiredFields) > 0 {
 				requiredFieldArgs = ", " + renderGoStringSlice(requiredFields) + "..."
 			}
+			b.WriteString("\tif r.Header.Get(\"Content-Type\") != \"\" {\n")
+			b.WriteString("\t\tif err := validateAPIGenContentType(r, " + strconv.Quote(content.ContentType) + "); err != nil {\n")
+			writeTransportErrorCallWithResponder(&b, doc, endpoint.OperationID, "unsupported_media_type", "err", "b.responder", "\t\t\t")
+			b.WriteString("\t\t\treturn\n")
+			b.WriteString("\t\t}\n")
+			b.WriteString("\t}\n")
 			switch content.BodyKind {
 			case "text":
 				b.WriteString("\tvalue, err := decodeAPIGenTextBody(r.Body, " + requiredBody + ")\n")
 				b.WriteString("\tif err != nil {\n")
-				b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
+				writeTransportErrorCallWithResponder(&b, doc, endpoint.OperationID, "malformed_body", "err", "b.responder", "\t\t")
 				b.WriteString("\t\treturn\n")
 				b.WriteString("\t}\n")
 				b.WriteString("\tbody = value\n")
 			case "binary":
 				b.WriteString("\tvalue, err := decodeAPIGenBytesBody(r.Body, " + requiredBody + ")\n")
 				b.WriteString("\tif err != nil {\n")
-				b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
+				writeTransportErrorCallWithResponder(&b, doc, endpoint.OperationID, "malformed_body", "err", "b.responder", "\t\t")
 				b.WriteString("\t\treturn\n")
 				b.WriteString("\t}\n")
 				b.WriteString("\tbody = value\n")
 			case "file":
 				b.WriteString("\tif " + requiredBody + " && r.ContentLength == 0 {\n")
-				b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, \"request body must not be empty\")\n")
+				writeTransportErrorCallWithResponder(&b, doc, endpoint.OperationID, "malformed_body", "fmt.Errorf(\"request body must not be empty\")", "b.responder", "\t\t")
 				b.WriteString("\t\treturn\n")
 				b.WriteString("\t}\n")
 				b.WriteString("\tbody = GenFile{Reader: r.Body, ContentType: r.Header.Get(\"Content-Type\"), Size: apigenContentLengthPointer(r.ContentLength)}\n")
 			case "form_urlencoded":
 				b.WriteString("\tif err := decodeAPIGenFormBody(r, &body, " + requiredBody + requiredFieldArgs + "); err != nil {\n")
-				b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
+				writeTransportErrorCallWithResponder(&b, doc, endpoint.OperationID, "malformed_body", "err", "b.responder", "\t\t")
 				b.WriteString("\t\treturn\n")
 				b.WriteString("\t}\n")
 			case "multipart":
 				b.WriteString("\tif " + requiredBody + " || r.ContentLength != 0 {\n")
 				b.WriteString("\t\tparts, err := readAPIGenMultipartParts(r, " + renderMultipartFileNameMap(content) + ", " + renderMultipartFileIndexMap(content) + ")\n")
 				b.WriteString("\t\tif err != nil {\n")
-				b.WriteString("\t\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
+				writeTransportErrorCallWithResponder(&b, doc, endpoint.OperationID, "multipart", "err", "b.responder", "\t\t\t")
 				b.WriteString("\t\t\treturn\n")
 				b.WriteString("\t\t}\n")
 				b.WriteString("\t\tdefer cleanupAPIGenMultipartParts(parts)\n")
 				b.WriteString("\t\tif err := validateAPIGenMultipartParts(parts, " + renderMultipartNamedRuleMap(content) + ", " + strconv.Itoa(renderMultipartPositionalLimit(content)) + "); err != nil {\n")
-				b.WriteString("\t\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
+				writeTransportErrorCallWithResponder(&b, doc, endpoint.OperationID, "multipart", "err", "b.responder", "\t\t\t")
 				b.WriteString("\t\t\treturn\n")
 				b.WriteString("\t\t}\n")
 				if err := emitMultipartDecode(&b, doc, name, content); err != nil {
@@ -898,7 +926,7 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 				b.WriteString("\t}\n")
 			default:
 				b.WriteString("\tif err := decodeAPIGenJSONBody(r.Body, &body, " + requiredBody + requiredFieldArgs + "); err != nil {\n")
-				b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, err.Error())\n")
+				writeTransportErrorCallWithResponder(&b, doc, endpoint.OperationID, "malformed_body", "err", "b.responder", "\t\t")
 				b.WriteString("\t\treturn\n")
 				b.WriteString("\t}\n")
 			}
@@ -907,18 +935,18 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 
 		b.WriteString("\tresponse, err := b.handler." + name + "(r.Context(), request)\n")
 		b.WriteString("\tif err != nil {\n")
-		b.WriteString("\t\twriteAPIGenError(w, http.StatusInternalServerError, err.Error())\n")
+		writeTransportErrorCallWithResponder(&b, doc, endpoint.OperationID, "handler", "err", "b.responder", "\t\t")
 		b.WriteString("\t\treturn\n")
 		b.WriteString("\t}\n")
 		b.WriteString("\tif err := response.Visit" + name + "Response(w); err != nil {\n")
-		b.WriteString("\t\twriteAPIGenError(w, http.StatusInternalServerError, err.Error())\n")
+		writeTransportErrorCallWithResponder(&b, doc, endpoint.OperationID, "response_serialization", "err", "b.responder", "\t\t")
 		b.WriteString("\t}\n")
 		b.WriteString("}\n\n")
 	}
 
 	b.WriteString("// DispatchAPIGenStrictOperation dispatches to strict handlers without oapi strict wrappers.\n")
-	b.WriteString("func DispatchAPIGenStrictOperation(operationID string, handler GenStrictServerInterface, w http.ResponseWriter, r *http.Request) bool {\n")
-	b.WriteString("\treturn DispatchAPIGenOperation(operationID, genStrictBridge{handler: handler}, w, r)\n")
+	b.WriteString("func DispatchAPIGenStrictOperation(operationID string, handler GenStrictServerInterface, responder GenTransportErrorResponder, w http.ResponseWriter, r *http.Request) bool {\n")
+	b.WriteString("\treturn DispatchAPIGenOperation(operationID, genStrictBridge{handler: handler, responder: responder}, responder, w, r)\n")
 	b.WriteString("}\n")
 
 	return []byte(b.String()), nil
@@ -973,7 +1001,7 @@ func emitMultipartDecode(b *strings.Builder, doc ir.Document, operationName stri
 		if part.Repeated {
 			if part.Required {
 				b.WriteString("\tif len(" + partsName + ") == 0 {\n")
-				b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, " + strconv.Quote(part.Name+" is required") + ")\n")
+				writeTransportErrorCallWithResponder(b, doc, operationName, "multipart", "fmt.Errorf("+strconv.Quote(part.Name+" is required")+")", "b.responder", "\t\t")
 				b.WriteString("\t\treturn\n")
 				b.WriteString("\t}\n")
 			}
@@ -989,7 +1017,7 @@ func emitMultipartDecode(b *strings.Builder, doc ir.Document, operationName stri
 		b.WriteString("\t" + okName + " := len(" + partsName + ") > 0\n")
 		if part.Required {
 			b.WriteString("\tif !" + okName + " {\n")
-			b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, " + strconv.Quote(part.Name+" is required") + ")\n")
+			writeTransportErrorCallWithResponder(b, doc, operationName, "multipart", "fmt.Errorf("+strconv.Quote(part.Name+" is required")+")", "b.responder", "\t\t")
 			b.WriteString("\t\treturn\n")
 			b.WriteString("\t}\n")
 		} else {
@@ -1026,7 +1054,7 @@ func emitMultipartPartValue(
 		}
 		b.WriteString("\tvar " + valueName + " " + partType + "\n")
 		b.WriteString("\tif err := json.Unmarshal(" + partExpr + ".Raw, &" + valueName + "); err != nil {\n")
-		b.WriteString("\t\twriteAPIGenError(w, http.StatusBadRequest, fmt.Sprintf(" + strconv.Quote("invalid multipart part "+part.Name+": %v") + ", err))\n")
+		writeTransportErrorCallWithResponder(b, doc, operationName, "multipart", "fmt.Errorf("+strconv.Quote("invalid multipart part "+part.Name+": %w")+", err)", "b.responder", "\t\t")
 		b.WriteString("\t\treturn\n")
 		b.WriteString("\t}\n")
 	case "text":
@@ -1127,21 +1155,6 @@ func renderMultipartPositionalLimit(content ir.BodyContent) int {
 
 func emitOperationResponse(b *strings.Builder, doc ir.Document, operationName string, response ir.Response) {
 	statusCode := fmt.Sprintf("%d", response.StatusCode)
-	if shared, ok := sharedErrorResponseType(response); ok && len(response.Contents) <= 1 {
-		b.WriteString("// Gen" + operationName + statusCode + "ResponseHeaders aliases the APIGen shared response headers for " + operationName + " " + statusCode + " errors.\n")
-		b.WriteString("type Gen" + operationName + statusCode + "ResponseHeaders = Gen" + shared + "ResponseHeaders\n\n")
-		b.WriteString("// Gen" + operationName + statusCode + "JSONResponse is the APIGen concrete JSON response for " + operationName + " " + statusCode + ".\n")
-		b.WriteString("type Gen" + operationName + statusCode + "JSONResponse struct{ Gen" + shared + "JSONResponse }\n\n")
-		b.WriteString("// Visit" + operationName + "Response writes " + operationName + " " + statusCode + " responses to the client.\n")
-		b.WriteString("func (response Gen" + operationName + statusCode + "JSONResponse) Visit" + operationName + "Response(w http.ResponseWriter) error {\n")
-		emitDirectHeaderWrites(b, responseHeaderFields(response))
-		b.WriteString("\tw.Header().Set(\"Content-Type\", \"application/json\")\n")
-		b.WriteString("\tw.WriteHeader(" + statusCode + ")\n")
-		b.WriteString("\treturn json.NewEncoder(w).Encode(response.Body)\n")
-		b.WriteString("}\n\n")
-		return
-	}
-
 	headersFields := responseHeaderFieldsWithDefaults(response)
 	headersTypeName := "Gen" + operationName + statusCode + "ResponseHeaders"
 	if len(headersFields) > 0 {
@@ -1194,6 +1207,10 @@ func emitOperationContentResponse(
 	b.WriteString("}\n\n")
 	b.WriteString("// Visit" + operationName + "Response writes " + operationName + " " + statusCode + " responses to the client.\n")
 	b.WriteString("func (response " + typeName + ") Visit" + operationName + "Response(w http.ResponseWriter) error {\n")
+	if content.BodyKind != "text" && content.BodyKind != "binary" && content.BodyKind != "file" {
+		b.WriteString("\tpayload, err := json.Marshal(response.Body)\n")
+		b.WriteString("\tif err != nil { return err }\n")
+	}
 	emitDirectHeaderWrites(b, headersFields)
 	if content.BodyKind == "file" {
 		b.WriteString("\treturn writeAPIGenFileResponse(w, response.Body, " + strconv.Quote(content.ContentType) + ", " + statusCode + ")\n")
@@ -1288,7 +1305,9 @@ func emitResponseBodyWrite(b *strings.Builder, content ir.BodyContent) {
 		b.WriteString("\t_, err := w.Write(response.Body)\n")
 		b.WriteString("\treturn err\n")
 	default:
-		b.WriteString("\treturn json.NewEncoder(w).Encode(response.Body)\n")
+		b.WriteString("\tpayload = append(payload, '\\n')\n")
+		b.WriteString("\t_, err = w.Write(payload)\n")
+		b.WriteString("\treturn err\n")
 	}
 }
 
@@ -1459,7 +1478,7 @@ func renderGoAnySlice(values []any) (string, error) {
 	return b.String(), nil
 }
 
-func documentedStatusCodes(endpoint ir.Endpoint) []int {
+func documentedStatusCodes(doc ir.Document, endpoint ir.Endpoint) []int {
 	seen := make(map[int]struct{}, len(endpoint.Responses)+8)
 	codes := make([]int, 0, len(endpoint.Responses)+8)
 	for _, response := range endpoint.Responses {
@@ -1469,16 +1488,70 @@ func documentedStatusCodes(endpoint ir.Endpoint) []int {
 		seen[response.StatusCode] = struct{}{}
 		codes = append(codes, response.StatusCode)
 	}
-	for _, statusCode := range []int{400, 401, 403, 404, 409, 429, 500, 502} {
-		if _, ok := seen[statusCode]; ok {
-			continue
+	if doc.TransportErrors != nil {
+		for _, failure := range doc.TransportErrors.Failures {
+			if _, ok := seen[failure.StatusCode]; ok {
+				continue
+			}
+			seen[failure.StatusCode] = struct{}{}
+			codes = append(codes, failure.StatusCode)
 		}
-		seen[statusCode] = struct{}{}
-		codes = append(codes, statusCode)
 	}
 	sort.Ints(codes)
 	return codes
 }
+
+func writeTransportErrorCall(
+	b *strings.Builder,
+	doc ir.Document,
+	operationID string,
+	kind string,
+	causeExpr string,
+	indent string,
+) {
+	writeTransportErrorCallWithResponder(b, doc, operationID, kind, causeExpr, "responder", indent)
+}
+
+func writeTransportErrorCallWithResponder(
+	b *strings.Builder,
+	doc ir.Document,
+	operationID string,
+	kind string,
+	causeExpr string,
+	responderExpr string,
+	indent string,
+) {
+	failure := transportFailure(doc, kind)
+	fmt.Fprintf(b, "%swriteAPIGenError(%s, w, r, GenTransportError{OperationID: %q, Kind: %q, StatusCode: %d, Code: %q, PublicDetail: %q, Cause: %s})\n",
+		indent, responderExpr, operationID, kind, failure.StatusCode, failure.Code, failure.PublicDetail, causeExpr)
+}
+
+func transportFailure(doc ir.Document, kind string) ir.TransportFailure {
+	if doc.TransportErrors != nil {
+		if failure, ok := doc.TransportErrors.Failures[kind]; ok {
+			return failure
+		}
+		if kind == "path_parameter" || kind == "query_parameter" || kind == "header_parameter" || kind == "multipart" {
+			if failure, ok := doc.TransportErrors.Failures["malformed_body"]; ok {
+				return failure
+			}
+		}
+	}
+	switch kind {
+	case "unsupported_media_type":
+		return ir.TransportFailure{StatusCode: httpStatusUnsupportedMediaType, Code: "unsupported_media_type", PublicDetail: "Unsupported media type."}
+	case "handler", "response_serialization":
+		return ir.TransportFailure{StatusCode: httpStatusInternalServerError, Code: "internal_error", PublicDetail: "Internal server error."}
+	default:
+		return ir.TransportFailure{StatusCode: httpStatusBadRequest, Code: "invalid_request", PublicDetail: "Invalid request."}
+	}
+}
+
+const (
+	httpStatusBadRequest           = 400
+	httpStatusUnsupportedMediaType = 415
+	httpStatusInternalServerError  = 500
+)
 
 func endpointProtected(endpoint ir.Endpoint) bool {
 	for _, response := range endpoint.Responses {

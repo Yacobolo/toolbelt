@@ -14,7 +14,7 @@ func TestEmitYAML(t *testing.T) {
 	t.Helper()
 
 	docIR := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		Info:          ir.Info{Title: "test", Version: "1.0.0"},
 		Schemas: map[string]ir.Schema{
 			"Item": {
@@ -125,7 +125,7 @@ func TestEmitYAML_EmitsMultipleContentKinds(t *testing.T) {
 	t.Helper()
 
 	docIR := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		Info:          ir.Info{Title: "test", Version: "1.0.0"},
 		Endpoints: []ir.Endpoint{{
 			Method:      "get",
@@ -158,7 +158,7 @@ func TestEmitYAML_EmitsMultipartMetadata(t *testing.T) {
 	t.Helper()
 
 	docIR := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		Info:          ir.Info{Title: "test", Version: "1.0.0"},
 		Schemas: map[string]ir.Schema{
 			"Metadata": {Type: "object", Properties: map[string]ir.SchemaProperty{"name": {Schema: ir.SchemaRef{Type: "string"}}}},
@@ -198,7 +198,7 @@ func TestEmitYAML_EmitsMultipartMixedVendorMetadata(t *testing.T) {
 	t.Helper()
 
 	docIR := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		Info:          ir.Info{Title: "test", Version: "1.0.0"},
 		Endpoints: []ir.Endpoint{{
 			Method:      "post",
@@ -240,7 +240,7 @@ func TestEmitYAML_UsesAPIBasePathForVisibleRoutes(t *testing.T) {
 	t.Helper()
 
 	docIR := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/v1"},
 		Info:          ir.Info{Title: "test", Version: "1.0.0"},
 		Endpoints: []ir.Endpoint{
@@ -301,4 +301,57 @@ func mappingNodeHasKey(node *yaml.Node, key string) bool {
 		}
 	}
 	return false
+}
+
+func TestEmitYAML_EmitsDiscriminatedComposition(t *testing.T) {
+	doc := ir.Document{
+		SchemaVersion: ir.CurrentSchemaVersion,
+		API:           ir.API{BasePath: "/"},
+		Info:          ir.Info{Title: "Visual API", Version: "1"},
+		Schemas: map[string]ir.Schema{
+			"Visual": {
+				Type:          "union",
+				OneOf:         []ir.SchemaRef{{Ref: "ChartVisual"}, {Ref: "TextVisual"}},
+				Discriminator: &ir.Discriminator{PropertyName: "shape", Mapping: map[string]string{"chart": "ChartVisual", "text": "TextVisual"}},
+			},
+			"VisualBase":  {Type: "object", Properties: map[string]ir.SchemaProperty{"shape": {Schema: ir.SchemaRef{Type: "string"}}}, Required: []string{"shape"}},
+			"ChartVisual": {Type: "object", Base: &ir.SchemaRef{Ref: "VisualBase"}, Properties: map[string]ir.SchemaProperty{"shape": {Schema: ir.SchemaRef{Type: "string", Enum: []string{"chart"}}}}, Required: []string{"shape"}},
+			"TextVisual":  {Type: "object", Base: &ir.SchemaRef{Ref: "VisualBase"}, Properties: map[string]ir.SchemaProperty{"shape": {Schema: ir.SchemaRef{Type: "string", Enum: []string{"text"}}}}, Required: []string{"shape"}},
+		},
+		Endpoints: []ir.Endpoint{{Method: "get", Path: "/visual", OperationID: "getVisual", Responses: []ir.Response{{StatusCode: 200, Description: "ok", Contents: []ir.BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Ref: "Visual"}}}}}}},
+	}
+
+	b, err := EmitYAML(doc, Options{})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, "oneOf:\n        - $ref: '#/components/schemas/ChartVisual'")
+	require.Contains(t, content, "propertyName: shape")
+	require.Contains(t, content, "chart: '#/components/schemas/ChartVisual'")
+	require.Contains(t, content, "ChartVisual:\n      type: object\n      allOf:\n        - $ref: '#/components/schemas/VisualBase'")
+}
+
+func TestEmitYAML_AddsGeneratedTransportErrorResponses(t *testing.T) {
+	doc := ir.Document{
+		SchemaVersion: ir.CurrentSchemaVersion,
+		API:           ir.API{BasePath: "/"},
+		Info:          ir.Info{Title: "Problem API", Version: "1"},
+		Schemas:       map[string]ir.Schema{"Problem": {Type: "object"}},
+		TransportErrors: &ir.TransportErrors{
+			Schema:      ir.SchemaRef{Ref: "Problem"},
+			ContentType: "application/problem+json",
+			Failures: map[string]ir.TransportFailure{
+				"malformed_body": {StatusCode: 400, Code: "malformed_body", PublicDetail: "Malformed body."},
+				"internal":       {StatusCode: 500, Code: "internal", PublicDetail: "Internal error."},
+			},
+		},
+		Endpoints: []ir.Endpoint{{Method: "get", Path: "/", OperationID: "get", Responses: []ir.Response{{StatusCode: 200, Description: "ok"}}}},
+	}
+
+	b, err := EmitYAML(doc, Options{})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, "'400':\n          description: Generated transport error")
+	require.Contains(t, content, "application/problem+json:")
+	require.Contains(t, content, "$ref: '#/components/schemas/Problem'")
+	require.Contains(t, content, "'500':\n          description: Generated transport error")
 }
