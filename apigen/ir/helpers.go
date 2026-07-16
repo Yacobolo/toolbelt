@@ -2,6 +2,7 @@ package ir
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -77,15 +78,80 @@ func SuccessResponse(endpoint Endpoint) (*Response, bool) {
 
 // ResolveResponseBodySchema returns the schema used for the CLI-visible success body.
 func ResolveResponseBodySchema(doc Document, response Response) (Schema, bool) {
-	if shape, ok, _ := ResponseShapeMetadata(response); ok && shape.Kind == "wrapped_json" && shape.BodyType != "" {
-		schema, ok := doc.Schemas[shape.BodyType]
-		return schema, ok
-	}
-	content, ok := PrimaryResponseContent(response)
-	if !ok || content.Schema == nil {
+	ref, ok := ResolveResponseBodySchemaRef(response)
+	if !ok {
 		return Schema{}, false
 	}
-	return ResolveSchema(doc, *content.Schema)
+	return resolveConcreteSchema(doc, ref)
+}
+
+// ResolveResponseBodySchemaRef returns the schema reference used for the
+// CLI-visible JSON success body.
+func ResolveResponseBodySchemaRef(response Response) (SchemaRef, bool) {
+	if shape, ok, _ := ResponseShapeMetadata(response); ok && shape.Kind == "wrapped_json" && shape.BodyType != "" {
+		return SchemaRef{Ref: shape.BodyType}, true
+	}
+	content, ok := PrimaryResponseContent(response)
+	if !ok || content.BodyKind != "json" || content.Schema == nil {
+		return SchemaRef{}, false
+	}
+	return *content.Schema, true
+}
+
+// ToolSuccessSchema selects the single compatible schema exposed by all 2xx
+// JSON representations. Other response media remain part of the endpoint
+// contract but do not participate in agent-tool output derivation.
+func ToolSuccessSchema(endpoint Endpoint) (SchemaRef, string, bool, error) {
+	var selected SchemaRef
+	selectedContentType := ""
+	found := false
+	bodyless := false
+	for _, response := range endpoint.Responses {
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			continue
+		}
+		if len(response.Contents) == 0 {
+			if found {
+				return SchemaRef{}, "", false, fmt.Errorf("success responses mix JSON and bodyless shapes")
+			}
+			bodyless = true
+			continue
+		}
+		responseHasJSON := false
+		for _, content := range response.Contents {
+			if content.BodyKind != "json" || content.Schema == nil {
+				continue
+			}
+			responseHasJSON = true
+			if bodyless {
+				return SchemaRef{}, "", false, fmt.Errorf("success responses mix JSON and bodyless shapes")
+			}
+			if found && !reflect.DeepEqual(selected, *content.Schema) {
+				return SchemaRef{}, "", false, fmt.Errorf("success responses have incompatible JSON body schemas")
+			}
+			if !found {
+				selected = *content.Schema
+				selectedContentType = content.ContentType
+				found = true
+			}
+			if preferredToolJSONContentType(content.ContentType, selectedContentType) {
+				selectedContentType = content.ContentType
+			}
+		}
+		if !responseHasJSON {
+			return SchemaRef{}, "", false, fmt.Errorf("success response %d has body content but no JSON representation", response.StatusCode)
+		}
+	}
+	return selected, selectedContentType, found, nil
+}
+
+func preferredToolJSONContentType(candidate, selected string) bool {
+	candidate = strings.TrimSpace(candidate)
+	selected = strings.TrimSpace(selected)
+	if strings.EqualFold(candidate, "application/json") {
+		return !strings.EqualFold(selected, "application/json")
+	}
+	return !strings.EqualFold(selected, "application/json") && candidate < selected
 }
 
 // PrimaryRequestBodyContent returns the preferred content entry for generated
@@ -215,23 +281,384 @@ func OrderedPropertyNames(schema Schema) []string {
 	if len(schema.Properties) == 0 {
 		return nil
 	}
+	names := make([]string, 0, len(schema.Properties))
+	seen := make(map[string]bool, len(schema.Properties))
 	if len(schema.PropertyOrder) > 0 {
-		names := make([]string, 0, len(schema.PropertyOrder))
 		for _, name := range schema.PropertyOrder {
-			if _, ok := schema.Properties[name]; ok {
+			if _, ok := schema.Properties[name]; ok && !seen[name] {
 				names = append(names, name)
+				seen[name] = true
 			}
 		}
-		if len(names) > 0 {
-			return names
+	}
+	remaining := make([]string, 0, len(schema.Properties)-len(names))
+	for name := range schema.Properties {
+		if !seen[name] {
+			remaining = append(remaining, name)
 		}
 	}
-	names := make([]string, 0, len(schema.Properties))
-	for name := range schema.Properties {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	sort.Strings(remaining)
+	names = append(names, remaining...)
 	return names
+}
+
+// FlattenObjectSchema returns an object schema with inherited properties and
+// requirements merged into one deterministic view. Child properties override
+// inherited properties while keeping the inherited field position.
+func FlattenObjectSchema(doc Document, schema Schema) Schema {
+	return flattenObjectSchema(doc, schema, map[string]bool{})
+}
+
+func flattenObjectSchema(doc Document, schema Schema, active map[string]bool) Schema {
+	if schema.Base == nil {
+		return schema
+	}
+	baseName, ok := NormalizedSchemaRefName(*schema.Base)
+	if !ok || active[baseName] {
+		return schema
+	}
+	base, ok := ResolveSchema(doc, *schema.Base)
+	if !ok || !strings.EqualFold(base.Type, "object") {
+		return schema
+	}
+	active[baseName] = true
+	base = flattenObjectSchema(doc, base, active)
+	delete(active, baseName)
+
+	properties := make(map[string]SchemaProperty, len(base.Properties)+len(schema.Properties))
+	for name, property := range base.Properties {
+		properties[name] = property
+	}
+	for name, property := range schema.Properties {
+		properties[name] = property
+	}
+	order := append([]string(nil), OrderedPropertyNames(base)...)
+	ordered := make(map[string]bool, len(order))
+	for _, name := range order {
+		ordered[name] = true
+	}
+	for _, name := range OrderedPropertyNames(schema) {
+		if !ordered[name] {
+			order = append(order, name)
+			ordered[name] = true
+		}
+	}
+	requiredSet := make(map[string]bool, len(base.Required)+len(schema.Required))
+	for _, name := range base.Required {
+		requiredSet[name] = true
+	}
+	for _, name := range schema.Required {
+		requiredSet[name] = true
+	}
+	required := make([]string, 0, len(requiredSet))
+	for name := range requiredSet {
+		required = append(required, name)
+	}
+	sort.Strings(required)
+
+	schema.Base = nil
+	schema.Properties = properties
+	schema.PropertyOrder = order
+	schema.Required = required
+	return schema
+}
+
+// ResolvedObjectProperty is one property from an inherited object or from the
+// compatible common surface of every variant in an object-shaped union.
+type ResolvedObjectProperty struct {
+	Property SchemaProperty
+	Required bool
+}
+
+// ResolveObjectProperty resolves a property through object inheritance and
+// discriminated unions. A union property is available only when every variant
+// declares it with compatible wire types.
+func ResolveObjectProperty(doc Document, ref SchemaRef, name string) (ResolvedObjectProperty, bool, error) {
+	return resolveObjectProperty(doc, ref, name, map[string]bool{})
+}
+
+func resolveObjectProperty(doc Document, ref SchemaRef, name string, active map[string]bool) (ResolvedObjectProperty, bool, error) {
+	schema, ok := resolveConcreteSchema(doc, ref)
+	if !ok {
+		return ResolvedObjectProperty{}, false, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(schema.Type)) {
+	case "object":
+		schema = FlattenObjectSchema(doc, schema)
+		property, found := schema.Properties[name]
+		if !found {
+			return ResolvedObjectProperty{}, false, nil
+		}
+		return ResolvedObjectProperty{Property: property, Required: stringSetContains(schema.Required, name)}, true, nil
+	case "union":
+		key := schemaRefKey(ref)
+		if key != "" {
+			if active[key] {
+				return ResolvedObjectProperty{}, false, fmt.Errorf("property %q traverses a recursive union", name)
+			}
+			active[key] = true
+			defer delete(active, key)
+		}
+		if len(schema.OneOf) == 0 {
+			return ResolvedObjectProperty{}, false, nil
+		}
+		var resolved ResolvedObjectProperty
+		for i, variant := range schema.OneOf {
+			candidate, found, err := resolveObjectProperty(doc, variant, name, active)
+			if err != nil {
+				return ResolvedObjectProperty{}, false, err
+			}
+			if !found {
+				return ResolvedObjectProperty{}, false, nil
+			}
+			if i == 0 {
+				resolved = candidate
+				continue
+			}
+			merged, compatible := mergeCompatibleSchemaRefs(doc, resolved.Property.Schema, candidate.Property.Schema)
+			if !compatible {
+				return ResolvedObjectProperty{}, false, fmt.Errorf("property %q has incompatible schemas across union variants", name)
+			}
+			resolved.Property.Schema = merged
+			resolved.Required = resolved.Required && candidate.Required
+		}
+		return resolved, true, nil
+	default:
+		return ResolvedObjectProperty{}, false, nil
+	}
+}
+
+// ResolveObjectSchema returns the deterministic object surface visible on an
+// inherited object or object-shaped union. Variant-only and incompatible union
+// properties are intentionally excluded.
+func ResolveObjectSchema(doc Document, ref SchemaRef) (Schema, bool) {
+	return resolveObjectSchema(doc, ref, map[string]bool{})
+}
+
+func resolveObjectSchema(doc Document, ref SchemaRef, active map[string]bool) (Schema, bool) {
+	schema, ok := resolveConcreteSchema(doc, ref)
+	if !ok {
+		return Schema{}, false
+	}
+	switch strings.ToLower(strings.TrimSpace(schema.Type)) {
+	case "object":
+		return FlattenObjectSchema(doc, schema), true
+	case "union":
+		if len(schema.OneOf) == 0 {
+			return Schema{}, false
+		}
+		key := schemaRefKey(ref)
+		if key != "" {
+			if active[key] {
+				return Schema{}, false
+			}
+			active[key] = true
+			defer delete(active, key)
+		}
+		variantSchemas := make([]Schema, len(schema.OneOf))
+		for i, variant := range schema.OneOf {
+			variantSchema, object := resolveObjectSchema(doc, variant, active)
+			if !object {
+				return Schema{}, false
+			}
+			variantSchemas[i] = variantSchema
+		}
+		first := variantSchemas[0]
+		if len(first.Properties) == 0 {
+			return Schema{Type: "object", Properties: map[string]SchemaProperty{}}, true
+		}
+		properties := make(map[string]SchemaProperty)
+		order := make([]string, 0, len(first.Properties))
+		required := make([]string, 0, len(first.Required))
+		for _, name := range OrderedPropertyNames(first) {
+			property, found, err := ResolveObjectProperty(doc, ref, name)
+			if err != nil || !found {
+				continue
+			}
+			properties[name] = property.Property
+			order = append(order, name)
+			if property.Required {
+				required = append(required, name)
+			}
+		}
+		return Schema{Type: "object", Properties: properties, PropertyOrder: order, Required: required}, true
+	default:
+		return Schema{}, false
+	}
+}
+
+// ResolveSchemaPointer resolves an RFC 6901 property pointer against an object
+// surface and reports whether any traversed property or map entry is optional.
+func ResolveSchemaPointer(doc Document, scope SchemaRef, pointer string) (SchemaRef, bool, error) {
+	segments, err := JSONPointerSegments(pointer)
+	if err != nil {
+		return SchemaRef{}, false, err
+	}
+	current := scope
+	optional := false
+	for _, segment := range segments {
+		if current.AdditionalProperties != nil {
+			optional = true
+			if current.AdditionalProperties.Schema != nil {
+				current = *current.AdditionalProperties.Schema
+			} else if current.AdditionalProperties.Any {
+				current = SchemaRef{Type: "object"}
+			} else {
+				return SchemaRef{}, false, fmt.Errorf("pointer %q cannot traverse %q", pointer, segment)
+			}
+			continue
+		}
+		property, found, err := ResolveObjectProperty(doc, current, segment)
+		if err != nil {
+			return SchemaRef{}, false, fmt.Errorf("pointer %q: %w", pointer, err)
+		}
+		if !found {
+			return SchemaRef{}, false, fmt.Errorf("pointer %q references unknown property %q", pointer, segment)
+		}
+		if !property.Required {
+			optional = true
+		}
+		current = property.Property.Schema
+	}
+	return current, optional, nil
+}
+
+// SchemaProjectionKind classifies a projection source and returns the scope
+// used for nested selections.
+func SchemaProjectionKind(doc Document, ref SchemaRef) (string, SchemaRef) {
+	if ref.AdditionalProperties != nil {
+		if ref.AdditionalProperties.Schema != nil {
+			return "map", *ref.AdditionalProperties.Schema
+		}
+		return "map", SchemaRef{Type: "object"}
+	}
+	schema, ok := resolveConcreteSchema(doc, ref)
+	if ok {
+		switch strings.ToLower(strings.TrimSpace(schema.Type)) {
+		case "array":
+			if schema.Items != nil {
+				return "array", *schema.Items
+			}
+		case "object", "union":
+			if _, object := ResolveObjectSchema(doc, ref); object {
+				return "object", ref
+			}
+		}
+	}
+	return "value", ref
+}
+
+// JSONPointerSegments parses and unescapes an RFC 6901 pointer.
+func JSONPointerSegments(pointer string) ([]string, error) {
+	if pointer == "" {
+		return nil, nil
+	}
+	if !strings.HasPrefix(pointer, "/") {
+		return nil, fmt.Errorf("pointer %q must be an RFC 6901 pointer", pointer)
+	}
+	raw := strings.Split(strings.TrimPrefix(pointer, "/"), "/")
+	segments := make([]string, len(raw))
+	for i, value := range raw {
+		if strings.Contains(value, "~") {
+			for j := 0; j < len(value); j++ {
+				if value[j] == '~' && (j+1 >= len(value) || (value[j+1] != '0' && value[j+1] != '1')) {
+					return nil, fmt.Errorf("pointer %q has invalid escape", pointer)
+				}
+			}
+		}
+		segments[i] = strings.ReplaceAll(strings.ReplaceAll(value, "~1", "/"), "~0", "~")
+	}
+	return segments, nil
+}
+
+func resolveConcreteSchema(doc Document, ref SchemaRef) (Schema, bool) {
+	if ref.Ref != "" {
+		return ResolveSchema(doc, ref)
+	}
+	if strings.TrimSpace(ref.Type) == "" {
+		return Schema{}, false
+	}
+	return Schema{Type: strings.ToLower(strings.TrimSpace(ref.Type)), Items: ref.Items, Enum: append([]string(nil), ref.Enum...)}, true
+}
+
+func mergeCompatibleSchemaRefs(doc Document, left, right SchemaRef) (SchemaRef, bool) {
+	if reflect.DeepEqual(left, right) {
+		return left, true
+	}
+	leftSchema, leftOK := resolveConcreteSchema(doc, left)
+	rightSchema, rightOK := resolveConcreteSchema(doc, right)
+	if !leftOK || !rightOK {
+		return SchemaRef{}, false
+	}
+	leftType := strings.ToLower(strings.TrimSpace(leftSchema.Type))
+	rightType := strings.ToLower(strings.TrimSpace(rightSchema.Type))
+	if leftType != rightType {
+		return SchemaRef{}, false
+	}
+	switch leftType {
+	case "string", "integer", "number", "boolean":
+		return SchemaRef{Type: leftType}, true
+	case "array":
+		if leftSchema.Items == nil || rightSchema.Items == nil {
+			return SchemaRef{}, false
+		}
+		items, ok := mergeCompatibleSchemaRefs(doc, *leftSchema.Items, *rightSchema.Items)
+		if !ok {
+			return SchemaRef{}, false
+		}
+		return SchemaRef{Type: "array", Items: &items}, true
+	case "object":
+		if left.AdditionalProperties != nil || right.AdditionalProperties != nil {
+			return mergeCompatibleMapRefs(doc, left, right)
+		}
+		leftObject, leftObjectOK := ResolveObjectSchema(doc, left)
+		rightObject, rightObjectOK := ResolveObjectSchema(doc, right)
+		if leftObjectOK && rightObjectOK && reflect.DeepEqual(leftObject.Properties, rightObject.Properties) && reflect.DeepEqual(schemaRequiredSet(leftObject.Required), schemaRequiredSet(rightObject.Required)) {
+			return left, true
+		}
+	}
+	return SchemaRef{}, false
+}
+
+func mergeCompatibleMapRefs(doc Document, left, right SchemaRef) (SchemaRef, bool) {
+	if left.AdditionalProperties == nil || right.AdditionalProperties == nil {
+		return SchemaRef{}, false
+	}
+	if left.AdditionalProperties.Any || right.AdditionalProperties.Any {
+		return SchemaRef{Type: "object", AdditionalProperties: &AdditionalProperties{Any: true}}, true
+	}
+	if left.AdditionalProperties.Schema == nil || right.AdditionalProperties.Schema == nil {
+		return SchemaRef{}, false
+	}
+	value, ok := mergeCompatibleSchemaRefs(doc, *left.AdditionalProperties.Schema, *right.AdditionalProperties.Schema)
+	if !ok {
+		return SchemaRef{}, false
+	}
+	return SchemaRef{Type: "object", AdditionalProperties: &AdditionalProperties{Schema: &value}}, true
+}
+
+func schemaRefKey(ref SchemaRef) string {
+	if name, ok := NormalizedSchemaRefName(ref); ok {
+		return name
+	}
+	return ""
+}
+
+func stringSetContains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func schemaRequiredSet(values []string) map[string]bool {
+	set := make(map[string]bool, len(values))
+	for _, value := range values {
+		set[value] = true
+	}
+	return set
 }
 
 func exportedName(value string) string {

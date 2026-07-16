@@ -59,9 +59,12 @@ type Contract struct {
 	Tags         []string        `json:"tags,omitempty"`
 	InputSchema  json.RawMessage `json:"input_schema"`
 	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
-	Bindings     []Binding       `json:"bindings,omitempty"`
-	Output       Output          `json:"output"`
-	Metadata     map[string]any  `json:"metadata,omitempty"`
+	// ResponseContentType is the JSON representation selected for tool output.
+	// BuildRequest uses it as the default Accept header.
+	ResponseContentType string         `json:"response_content_type,omitempty"`
+	Bindings            []Binding      `json:"bindings,omitempty"`
+	Output              Output         `json:"output"`
+	Metadata            map[string]any `json:"metadata,omitempty"`
 }
 
 // Binding maps one model argument, context value, or default to HTTP transport.

@@ -99,6 +99,9 @@ func BuildRequest(contract Contract, raw json.RawMessage, context Context) (*htt
 		body = bytes.NewReader(encoded)
 		headers.Set("Content-Type", "application/json")
 	}
+	if contract.ResponseContentType != "" {
+		headers.Set("Accept", contract.ResponseContentType)
+	}
 	request, err := http.NewRequest(contract.Method, path, body)
 	if err != nil {
 		return nil, runtimeError(ErrorCodeInvalidArguments, "build request: %v", err)

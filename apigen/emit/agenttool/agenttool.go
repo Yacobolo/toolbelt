@@ -28,11 +28,11 @@ func Build(doc ir.Document) (map[string]runtime.Contract, error) {
 }
 
 func buildContract(doc ir.Document, endpoint ir.Endpoint) (runtime.Contract, error) {
-	bindings, inputSchema, err := buildInput(doc, endpoint)
+	output, outputSchema, responseContentType, err := buildOutput(doc, endpoint)
 	if err != nil {
 		return runtime.Contract{}, err
 	}
-	output, outputSchema, err := buildOutput(doc, endpoint)
+	bindings, inputSchema, err := buildInput(doc, endpoint, responseContentType)
 	if err != nil {
 		return runtime.Contract{}, err
 	}
@@ -44,19 +44,20 @@ func buildContract(doc ir.Document, endpoint ir.Endpoint) (runtime.Contract, err
 		description = endpoint.Description
 	}
 	return runtime.Contract{
-		Name:         endpoint.Tool.Name,
-		OperationID:  endpoint.OperationID,
-		Method:       strings.ToUpper(endpoint.Method),
-		Path:         ir.JoinAPIPath(doc.API.BasePath, endpoint.Path),
-		Description:  description,
-		Effect:       runtime.Effect(endpoint.Tool.Effect),
-		Confirmation: runtime.Confirmation(defaultConfirmation(endpoint.Tool.Effect, endpoint.Tool.Confirmation)),
-		Tags:         append([]string(nil), endpoint.Tool.Tags...),
-		InputSchema:  inputSchema,
-		OutputSchema: outputSchema,
-		Bindings:     bindings,
-		Output:       output,
-		Metadata:     cloneMap(endpoint.Tool.Metadata),
+		Name:                endpoint.Tool.Name,
+		OperationID:         endpoint.OperationID,
+		Method:              strings.ToUpper(endpoint.Method),
+		Path:                ir.JoinAPIPath(doc.API.BasePath, endpoint.Path),
+		Description:         description,
+		Effect:              runtime.Effect(endpoint.Tool.Effect),
+		Confirmation:        runtime.Confirmation(defaultConfirmation(endpoint.Tool.Effect, endpoint.Tool.Confirmation)),
+		Tags:                append([]string(nil), endpoint.Tool.Tags...),
+		InputSchema:         inputSchema,
+		OutputSchema:        outputSchema,
+		ResponseContentType: responseContentType,
+		Bindings:            bindings,
+		Output:              output,
+		Metadata:            cloneMap(endpoint.Tool.Metadata),
 	}, nil
 }
 
@@ -69,7 +70,7 @@ type inputSource struct {
 	Schema      ir.SchemaRef
 }
 
-func buildInput(doc ir.Document, endpoint ir.Endpoint) ([]runtime.Binding, json.RawMessage, error) {
+func buildInput(doc ir.Document, endpoint ir.Endpoint, responseContentType string) ([]runtime.Binding, json.RawMessage, error) {
 	sources := make([]inputSource, 0, len(endpoint.Parameters)+4)
 	for _, parameter := range endpoint.Parameters {
 		sources = append(sources, inputSource{
@@ -82,7 +83,7 @@ func buildInput(doc ir.Document, endpoint ir.Endpoint) ([]runtime.Binding, json.
 		bodyRef := *content.Schema
 		if schema, ok := concreteSchema(doc, bodyRef); ok && schema.Type == "object" {
 			required := set(schema.Required)
-			for _, name := range orderedProperties(schema) {
+			for _, name := range ir.OrderedPropertyNames(schema) {
 				property := schema.Properties[name]
 				sources = append(sources, inputSource{Source: "body", Name: name, Required: required[name], Description: property.Description, Schema: property.Schema})
 			}
@@ -106,6 +107,13 @@ func buildInput(doc ir.Document, endpoint ir.Endpoint) ([]runtime.Binding, json.
 		if mode == "" {
 			mode = "model"
 		}
+		defaultValue := override.Default
+		contextKey := override.ContextKey
+		if source.Source == "header" && strings.EqualFold(source.Name, "Accept") && responseContentType != "" {
+			mode = "omit"
+			defaultValue = responseContentType
+			contextKey = ""
+		}
 		argument := override.Alias
 		if argument == "" {
 			argument = source.Name
@@ -119,8 +127,8 @@ func buildInput(doc ir.Document, endpoint ir.Endpoint) ([]runtime.Binding, json.
 		}
 		binding := runtime.Binding{
 			Argument: argument, Source: source.Source, WireName: source.Name, Mode: mode,
-			ContextKey: override.ContextKey, Description: description, Required: source.Required,
-			Default: override.Default, Explode: source.Explode, Schema: valueSchema(doc, source.Schema),
+			ContextKey: contextKey, Description: description, Required: source.Required,
+			Default: defaultValue, Explode: source.Explode, Schema: valueSchema(doc, source.Schema),
 		}
 		if mode != "model" {
 			binding.Argument = ""
@@ -132,7 +140,7 @@ func buildInput(doc ir.Document, endpoint ir.Endpoint) ([]runtime.Binding, json.
 				property["description"] = description
 			}
 			properties[argument] = property
-			if source.Required && override.Default == nil {
+			if source.Required && defaultValue == nil {
 				requiredArguments = append(requiredArguments, argument)
 			}
 		}
@@ -149,22 +157,25 @@ func buildInput(doc ir.Document, endpoint ir.Endpoint) ([]runtime.Binding, json.
 	return bindings, encoded, nil
 }
 
-func buildOutput(doc ir.Document, endpoint ir.Endpoint) (runtime.Output, json.RawMessage, error) {
+func buildOutput(doc ir.Document, endpoint ir.Endpoint) (runtime.Output, json.RawMessage, string, error) {
 	authored := endpoint.Tool.Output
 	output := runtime.Output{Mode: authored.Mode}
-	successRef, hasBody := successSchema(endpoint)
+	successRef, responseContentType, hasBody, err := ir.ToolSuccessSchema(endpoint)
+	if err != nil {
+		return runtime.Output{}, nil, "", err
+	}
 	if authored.Mode == "project" {
 		for _, projection := range authored.Select {
 			compiled, err := compileProjection(doc, successRef, projection)
 			if err != nil {
-				return runtime.Output{}, nil, err
+				return runtime.Output{}, nil, "", err
 			}
 			output.Select = append(output.Select, compiled)
 		}
 		if authored.Cursor != nil {
 			_, optional, err := resolvePointer(doc, successRef, authored.Cursor.Source)
 			if err != nil {
-				return runtime.Output{}, nil, err
+				return runtime.Output{}, nil, "", err
 			}
 			output.Cursor = &runtime.Cursor{
 				Source: authored.Cursor.Source, Target: defaultString(authored.Cursor.Target, "nextCursor"),
@@ -187,9 +198,9 @@ func buildOutput(doc ir.Document, endpoint ir.Endpoint) (runtime.Output, json.Ra
 	}
 	encoded, err := json.Marshal(schema)
 	if err != nil {
-		return runtime.Output{}, nil, fmt.Errorf("encode output schema: %w", err)
+		return runtime.Output{}, nil, "", fmt.Errorf("encode output schema: %w", err)
 	}
-	return output, encoded, nil
+	return output, encoded, responseContentType, nil
 }
 
 func compileProjection(doc ir.Document, scope ir.SchemaRef, authored ir.ToolProjection) (runtime.Projection, error) {
@@ -215,53 +226,11 @@ func compileProjection(doc ir.Document, scope ir.SchemaRef, authored ir.ToolProj
 }
 
 func resolvePointer(doc ir.Document, scope ir.SchemaRef, pointer string) (ir.SchemaRef, bool, error) {
-	current := scope
-	optional := false
-	for _, segment := range pointerSegments(pointer) {
-		if current.AdditionalProperties != nil {
-			optional = true
-			if current.AdditionalProperties.Schema != nil {
-				current = *current.AdditionalProperties.Schema
-			} else {
-				current = ir.SchemaRef{Type: "object"}
-			}
-			continue
-		}
-		if schema, ok := concreteSchema(doc, current); ok && schema.Type == "object" {
-			property, exists := schema.Properties[segment]
-			if !exists {
-				return ir.SchemaRef{}, false, fmt.Errorf("pointer %q references unknown property %q", pointer, segment)
-			}
-			if !set(schema.Required)[segment] {
-				optional = true
-			}
-			current = property.Schema
-			continue
-		}
-		return ir.SchemaRef{}, false, fmt.Errorf("pointer %q cannot traverse %q", pointer, segment)
-	}
-	return current, optional, nil
+	return ir.ResolveSchemaPointer(doc, scope, pointer)
 }
 
 func projectionKind(doc ir.Document, ref ir.SchemaRef) (string, ir.SchemaRef) {
-	if ref.AdditionalProperties != nil {
-		if ref.AdditionalProperties.Schema != nil {
-			return "map", *ref.AdditionalProperties.Schema
-		}
-		return "map", ir.SchemaRef{Type: "object"}
-	}
-	if schema, ok := concreteSchema(doc, ref); ok {
-		switch schema.Type {
-		case "array":
-			return "array", *schema.Items
-		case "object":
-			return "object", ref
-		}
-	}
-	if ref.Type == "array" && ref.Items != nil {
-		return "array", *ref.Items
-	}
-	return "value", ref
+	return ir.SchemaProjectionKind(doc, ref)
 }
 
 func valueSchema(doc ir.Document, ref ir.SchemaRef) runtime.ValueSchema {
@@ -351,9 +320,9 @@ func schemaJSON(doc ir.Document, schema ir.Schema, seen map[string]bool) map[str
 		out["enum"] = schema.Enum
 	}
 	if schema.Type == "object" {
-		schema = flattenObjectSchema(doc, schema, map[string]bool{})
+		schema = ir.FlattenObjectSchema(doc, schema)
 		properties := map[string]any{}
-		for _, name := range orderedProperties(schema) {
+		for _, name := range ir.OrderedPropertyNames(schema) {
 			property := schema.Properties[name]
 			value := schemaRefJSON(doc, property.Schema, seen)
 			if property.Description != "" {
@@ -371,47 +340,6 @@ func schemaJSON(doc ir.Document, schema ir.Schema, seen map[string]bool) map[str
 		out["items"] = schemaRefJSON(doc, *schema.Items, seen)
 	}
 	return out
-}
-
-func flattenObjectSchema(doc ir.Document, schema ir.Schema, active map[string]bool) ir.Schema {
-	if schema.Base == nil {
-		return schema
-	}
-	baseName, ok := ir.NormalizedSchemaRefName(*schema.Base)
-	if !ok || active[baseName] {
-		return schema
-	}
-	base, ok := ir.ResolveSchema(doc, *schema.Base)
-	if !ok || base.Type != "object" {
-		return schema
-	}
-	active[baseName] = true
-	base = flattenObjectSchema(doc, base, active)
-	delete(active, baseName)
-
-	properties := make(map[string]ir.SchemaProperty, len(base.Properties)+len(schema.Properties))
-	for name, property := range base.Properties {
-		properties[name] = property
-	}
-	for name, property := range schema.Properties {
-		properties[name] = property
-	}
-	requiredSet := make(map[string]struct{}, len(base.Required)+len(schema.Required))
-	for _, name := range base.Required {
-		requiredSet[name] = struct{}{}
-	}
-	for _, name := range schema.Required {
-		requiredSet[name] = struct{}{}
-	}
-	required := make([]string, 0, len(requiredSet))
-	for name := range requiredSet {
-		required = append(required, name)
-	}
-	sort.Strings(required)
-	schema.Base = nil
-	schema.Properties = properties
-	schema.Required = required
-	return schema
 }
 
 func projectedSchema(_ ir.Document, output runtime.Output) map[string]any {
@@ -484,15 +412,6 @@ func valueSchemaJSON(schema runtime.ValueSchema) map[string]any {
 	return out
 }
 
-func successSchema(endpoint ir.Endpoint) (ir.SchemaRef, bool) {
-	for _, response := range endpoint.Responses {
-		if response.StatusCode >= 200 && response.StatusCode < 300 && len(response.Contents) > 0 && response.Contents[0].Schema != nil {
-			return *response.Contents[0].Schema, true
-		}
-	}
-	return ir.SchemaRef{}, false
-}
-
 func concreteSchema(doc ir.Document, ref ir.SchemaRef) (ir.Schema, bool) {
 	if ref.Ref != "" {
 		return ir.ResolveSchema(doc, ref)
@@ -503,27 +422,9 @@ func concreteSchema(doc ir.Document, ref ir.SchemaRef) (ir.Schema, bool) {
 	return ir.Schema{Type: ref.Type, Items: ref.Items}, true
 }
 
-func orderedProperties(schema ir.Schema) []string {
-	if len(schema.PropertyOrder) > 0 {
-		return append([]string(nil), schema.PropertyOrder...)
-	}
-	names := make([]string, 0, len(schema.Properties))
-	for name := range schema.Properties {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
 func pointerSegments(pointer string) []string {
-	if pointer == "" {
-		return nil
-	}
-	raw := strings.Split(strings.TrimPrefix(pointer, "/"), "/")
-	for i := range raw {
-		raw[i] = strings.ReplaceAll(strings.ReplaceAll(raw[i], "~1", "/"), "~0", "~")
-	}
-	return raw
+	segments, _ := ir.JSONPointerSegments(pointer)
+	return segments
 }
 
 func set(values []string) map[string]bool {
