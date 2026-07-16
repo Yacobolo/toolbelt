@@ -1019,6 +1019,9 @@ func documentJSON(doc ir.Document) map[string]any {
 	if len(doc.Endpoints) > 0 {
 		out["endpoints"] = doc.Endpoints
 	}
+	if doc.TransportErrors != nil {
+		out["transport_errors"] = doc.TransportErrors
+	}
 	if len(doc.Extensions) > 0 {
 		out["extensions"] = doc.Extensions
 	}

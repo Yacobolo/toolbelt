@@ -44,3 +44,22 @@ func TestEmit_GeneratesContractInterfaces(t *testing.T) {
 	require.Contains(t, content, "note?: string")
 	require.Contains(t, content, "export type DataContractEnvelope = DashboardEnvelope")
 }
+
+func TestEmit_GeneratesDiscriminatedUnion(t *testing.T) {
+	doc := ir.Document{
+		Schemas: map[string]ir.Schema{
+			"Visual":      {Type: "union", OneOf: []ir.SchemaRef{{Ref: "ChartVisual"}, {Ref: "TextVisual"}}, Discriminator: &ir.Discriminator{PropertyName: "shape", Mapping: map[string]string{"chart": "ChartVisual", "text": "TextVisual"}}},
+			"VisualBase":  {Type: "object", Properties: map[string]ir.SchemaProperty{"shape": {Schema: ir.SchemaRef{Type: "string"}}}, Required: []string{"shape"}},
+			"ChartVisual": {Type: "object", Base: &ir.SchemaRef{Ref: "VisualBase"}, Properties: map[string]ir.SchemaProperty{"shape": {Schema: ir.SchemaRef{Type: "string", Enum: []string{"chart"}}}}, Required: []string{"shape"}},
+			"TextVisual":  {Type: "object", Base: &ir.SchemaRef{Ref: "VisualBase"}, Properties: map[string]ir.SchemaProperty{"shape": {Schema: ir.SchemaRef{Type: "string", Enum: []string{"text"}}}}, Required: []string{"shape"}},
+		},
+		Contracts: []ir.Contract{{Name: "visual", Schema: ir.SchemaRef{Ref: "Visual"}}},
+	}
+
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, "export type Visual = ChartVisual | TextVisual")
+	require.Contains(t, content, "export interface ChartVisual extends VisualBase")
+	require.Contains(t, content, "shape: 'chart'")
+}

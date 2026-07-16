@@ -28,6 +28,7 @@ type Param struct {
 	Description string   `json:"description,omitempty"`
 	Required    bool     `json:"required,omitempty"`
 	Enum        []string `json:"enum,omitempty"`
+	SchemaJSON  string   `json:"schema_json,omitempty"`
 }
 
 // Field describes one generated JSON request body field.
@@ -37,6 +38,7 @@ type Field struct {
 	Description string   `json:"description,omitempty"`
 	Required    bool     `json:"required,omitempty"`
 	Enum        []string `json:"enum,omitempty"`
+	SchemaJSON  string   `json:"schema_json,omitempty"`
 }
 
 // RequestBodySpec describes generated request body input behavior.
@@ -45,6 +47,7 @@ type RequestBodySpec struct {
 	ContentType string              `json:"content_type,omitempty"`
 	BodyKind    string              `json:"body_kind,omitempty"`
 	SchemaType  string              `json:"schema_type,omitempty"`
+	SchemaJSON  string              `json:"schema_json,omitempty"`
 	InputMode   string              `json:"input_mode,omitempty"`
 	Fields      []Field             `json:"fields,omitempty"`
 	Parts       []MultipartPartSpec `json:"parts,omitempty"`
@@ -61,6 +64,7 @@ type MultipartPartSpec struct {
 	BodyKind    string `json:"body_kind,omitempty"`
 	Filename    bool   `json:"filename,omitempty"`
 	SchemaType  string `json:"schema_type,omitempty"`
+	SchemaJSON  string `json:"schema_json,omitempty"`
 }
 
 // MultipartBody is the parsed request body passed from generated commands to Client.Do.

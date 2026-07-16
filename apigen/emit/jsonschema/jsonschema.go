@@ -20,12 +20,14 @@ type Options struct {
 // Emit renders a draft 2020-12 JSON Schema document for doc.Contracts.
 func Emit(doc ir.Document, opts Options) ([]byte, error) {
 	defs := map[string]any{}
+	baseSchemas := referencedBaseSchemas(doc)
 	for _, name := range contractutil.DependencyNames(doc) {
 		schema, ok := doc.Schemas[name]
 		if !ok {
 			return nil, fmt.Errorf("contract schema %q is missing", name)
 		}
-		defs[name] = schemaObject(schema)
+		_, isBase := baseSchemas[name]
+		defs[name] = schemaObject(schema, isBase)
 	}
 	roots := make([]any, 0, len(doc.Contracts))
 	contracts := make([]any, 0, len(doc.Contracts))
@@ -76,13 +78,25 @@ func Emit(doc ir.Document, opts Options) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-func schemaObject(schema ir.Schema) map[string]any {
+func schemaObject(schema ir.Schema, isBase bool) map[string]any {
 	out := map[string]any{}
 	schemaType := schema.Type
 	if schemaType == "" {
 		schemaType = "object"
 	}
-	out["type"] = schemaType
+	if schemaType != "union" {
+		out["type"] = schemaType
+	}
+	if schema.Base != nil {
+		out["allOf"] = []any{schemaRefObject(*schema.Base)}
+	}
+	if len(schema.OneOf) > 0 {
+		variants := make([]any, 0, len(schema.OneOf))
+		for _, variant := range schema.OneOf {
+			variants = append(variants, schemaRefObject(variant))
+		}
+		out["oneOf"] = variants
+	}
 	if schema.Description != "" {
 		out["description"] = schema.Description
 	}
@@ -108,10 +122,23 @@ func schemaObject(schema ir.Schema) map[string]any {
 		sort.Strings(required)
 		out["required"] = required
 	}
-	if schemaType == "object" && len(schema.Properties) > 0 {
-		out["additionalProperties"] = false
+	if schemaType == "object" && !isBase && (len(schema.Properties) > 0 || schema.Base != nil) {
+		out["unevaluatedProperties"] = false
 	}
 	return out
+}
+
+func referencedBaseSchemas(doc ir.Document) map[string]struct{} {
+	bases := make(map[string]struct{})
+	for _, schema := range doc.Schemas {
+		if schema.Base == nil {
+			continue
+		}
+		if name, ok := ir.NormalizedSchemaRefName(*schema.Base); ok {
+			bases[name] = struct{}{}
+		}
+	}
+	return bases
 }
 
 func schemaPropertyObject(property ir.SchemaProperty) map[string]any {

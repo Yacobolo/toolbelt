@@ -217,6 +217,79 @@ func TestEmit_ApigenOwnedSchemaNames(t *testing.T) {
 	require.Contains(t, content, "Columns []any `json:\"columns\"`")
 }
 
+func TestEmit_PreservesIntegerFormatsRecursively(t *testing.T) {
+	doc := ir.Document{
+		Schemas: map[string]ir.Schema{
+			"Metrics": {
+				Type: "object",
+				Properties: map[string]ir.SchemaProperty{
+					"small":   {Schema: ir.SchemaRef{Type: "integer", Format: "int32"}},
+					"large":   {Schema: ir.SchemaRef{Type: "integer", Format: "int64"}},
+					"history": {Schema: ir.SchemaRef{Type: "array", Items: &ir.SchemaRef{Type: "integer", Format: "int64"}}},
+				},
+				Required: []string{"small", "large", "history"},
+			},
+		},
+		Endpoints: []ir.Endpoint{{OperationID: "putMetrics", RequestBody: &ir.RequestBody{Contents: jsonContent(ir.SchemaRef{Ref: "Metrics"})}}},
+	}
+
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, "Small int32 `json:\"small\"`")
+	require.Contains(t, content, "Large int64 `json:\"large\"`")
+	require.Contains(t, content, "History []int64 `json:\"history\"`")
+}
+
+func TestEmit_PreservesRecordValueTypesRecursively(t *testing.T) {
+	doc := ir.Document{
+		Schemas: map[string]ir.Schema{
+			"Item": {Type: "object"},
+			"Records": {
+				Type: "object",
+				Properties: map[string]ir.SchemaProperty{
+					"strings": {Schema: ir.SchemaRef{Type: "object", AdditionalProperties: &ir.AdditionalProperties{Schema: &ir.SchemaRef{Type: "string"}}}},
+					"counts":  {Schema: ir.SchemaRef{Type: "object", AdditionalProperties: &ir.AdditionalProperties{Schema: &ir.SchemaRef{Type: "integer", Format: "int64"}}}},
+					"items":   {Schema: ir.SchemaRef{Type: "object", AdditionalProperties: &ir.AdditionalProperties{Schema: &ir.SchemaRef{Ref: "Item"}}}},
+					"nested":  {Schema: ir.SchemaRef{Type: "object", AdditionalProperties: &ir.AdditionalProperties{Schema: &ir.SchemaRef{Type: "array", Items: &ir.SchemaRef{Type: "object", AdditionalProperties: &ir.AdditionalProperties{Schema: &ir.SchemaRef{Type: "boolean"}}}}}}},
+					"unknown": {Schema: ir.SchemaRef{Type: "object", AdditionalProperties: &ir.AdditionalProperties{Any: true}}},
+				},
+				Required: []string{"strings", "counts", "items", "nested", "unknown"},
+			},
+		},
+		Endpoints: []ir.Endpoint{{OperationID: "putRecords", RequestBody: &ir.RequestBody{Contents: jsonContent(ir.SchemaRef{Ref: "Records"})}}},
+	}
+
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, "Strings map[string]string `json:\"strings\"`")
+	require.Contains(t, content, "Counts map[string]int64 `json:\"counts\"`")
+	require.Contains(t, content, "Items map[string]Item `json:\"items\"`")
+	require.Contains(t, content, "Nested map[string][]map[string]bool `json:\"nested\"`")
+	require.Contains(t, content, "Unknown map[string]any `json:\"unknown\"`")
+}
+
+func TestEmit_PreservesDiscriminatedUnionInRequestModels(t *testing.T) {
+	doc := ir.Document{
+		Schemas: map[string]ir.Schema{
+			"Visual":      {Type: "union", OneOf: []ir.SchemaRef{{Ref: "ChartVisual"}, {Ref: "TextVisual"}}, Discriminator: &ir.Discriminator{PropertyName: "shape", Mapping: map[string]string{"chart": "ChartVisual", "text": "TextVisual"}}},
+			"VisualBase":  {Type: "object", Properties: map[string]ir.SchemaProperty{"shape": {Schema: ir.SchemaRef{Type: "string"}}}, Required: []string{"shape"}},
+			"ChartVisual": {Type: "object", Base: &ir.SchemaRef{Ref: "VisualBase"}, Properties: map[string]ir.SchemaProperty{"shape": {Schema: ir.SchemaRef{Type: "string", Enum: []string{"chart"}}}}, Required: []string{"shape"}},
+			"TextVisual":  {Type: "object", Base: &ir.SchemaRef{Ref: "VisualBase"}, Properties: map[string]ir.SchemaProperty{"shape": {Schema: ir.SchemaRef{Type: "string", Enum: []string{"text"}}}}, Required: []string{"shape"}},
+			"Request":     {Type: "object", Properties: map[string]ir.SchemaProperty{"visuals": {Schema: ir.SchemaRef{Type: "array", Items: &ir.SchemaRef{Ref: "Visual"}}}}, Required: []string{"visuals"}},
+		},
+		Endpoints: []ir.Endpoint{{OperationID: "putVisuals", RequestBody: &ir.RequestBody{Contents: jsonContent(ir.SchemaRef{Ref: "Request"})}}},
+	}
+
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, "Visuals []Visual")
+	require.Contains(t, content, "type VisualVariant interface")
+	require.Contains(t, content, "func (value *Visual) UnmarshalJSON")
+}
+
 func TestEmit_FailsForUnresolvedRequestBodySchema(t *testing.T) {
 	t.Helper()
 

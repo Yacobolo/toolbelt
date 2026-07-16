@@ -81,7 +81,7 @@ func TestGenerateArtifacts(t *testing.T) {
 	irPath := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(irPath, []byte(`{
-  "schema_version": "v3",
+  "schema_version": "v4",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0", "description": "test"},
   "servers": [{"url": "https://localhost:8080", "description": "local"}],
@@ -128,6 +128,21 @@ func TestGenerateArtifacts(t *testing.T) {
 	require.NoError(t, err)
 	_, err = os.Stat(cliPath)
 	require.NoError(t, err)
+}
+
+func TestDocumentJSONPreservesTransportErrors(t *testing.T) {
+	doc := ir.Document{
+		SchemaVersion: ir.CurrentSchemaVersion,
+		TransportErrors: &ir.TransportErrors{
+			Schema:      ir.SchemaRef{Ref: "Problem"},
+			ContentType: "application/problem+json",
+			Failures: map[string]ir.TransportFailure{
+				"handler": {StatusCode: 500, Code: "internal", PublicDetail: "Internal server error."},
+			},
+		},
+	}
+
+	require.Same(t, doc.TransportErrors, documentJSON(doc)["transport_errors"])
 }
 
 func TestResolveCommandConfig_GroupedManifestTarget(t *testing.T) {
@@ -1072,7 +1087,7 @@ func TestGenerateServer_FailsForUnnamedRequestBodySchema(t *testing.T) {
 
 	dir := t.TempDir()
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/v1"},
 		Info:          ir.Info{Title: "Widget API", Version: "1.0.0"},
 		OpenAPI:       ir.OpenAPI{Version: "3.0.0"},
@@ -1111,7 +1126,7 @@ func TestGenerateServer_AllowsInlineBinaryRequestBody(t *testing.T) {
 
 	dir := t.TempDir()
 	doc := ir.Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           ir.API{BasePath: "/v1"},
 		Info:          ir.Info{Title: "Artifact API", Version: "1.0.0"},
 		OpenAPI:       ir.OpenAPI{Version: "3.0.0"},

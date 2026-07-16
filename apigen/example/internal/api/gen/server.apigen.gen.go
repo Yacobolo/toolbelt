@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strings"
 
@@ -12,7 +13,7 @@ import (
 	apigenchi "github.com/Yacobolo/toolbelt/apigen/runtime/chi"
 )
 
-const embeddedOpenAPISpecJSON = `{"components":{"schemas":{"CreateTodoRequest":{"example":{"title":"example"},"properties":{"title":{"example":"example","type":"string"}},"required":["title"],"type":"object"},"Error":{"example":{"code":1,"message":"example"},"properties":{"code":{"example":1,"format":"int32","type":"integer"},"message":{"example":"example","type":"string"}},"required":["code","message"],"type":"object"},"ListTodosResponse":{"example":{"data":[{"id":"example","status":"example","title":"example"}]},"properties":{"data":{"example":[{"id":"example","status":"example","title":"example"}],"items":{"$ref":"#/components/schemas/Todo"},"type":"array"}},"required":["data"],"type":"object"},"Todo":{"example":{"id":"example","status":"example","title":"example"},"properties":{"id":{"example":"example","type":"string"},"status":{"example":"example","type":"string"},"title":{"example":"example","type":"string"}},"required":["id","title","status"],"type":"object"}},"securitySchemes":{"ApiKeyAuth":{"in":"header","name":"X-API-Key","type":"apiKey"},"BearerAuth":{"scheme":"Bearer","type":"http"}}},"info":{"description":"Small in-memory todo API authored in TypeSpec to showcase APIGen generation and strict server wiring.","title":"APIGen Todo Example","version":"0.1.0"},"openapi":"3.0.0","paths":{"/todos":{"get":{"operationId":"listTodos","parameters":[{"description":"Optional status filter.","example":"example","explode":false,"in":"query","name":"status","required":false,"schema":{"type":"string"}}],"responses":{"200":{"content":{"application/json":{"example":{"data":[{"id":"example","status":"example","title":"example"}]},"schema":{"$ref":"#/components/schemas/ListTodosResponse"}}},"description":"The request has succeeded."},"400":{"content":{"application/json":{"example":{"code":1,"message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"The request is invalid."}},"summary":"List todos","tags":["Todos"],"x-apigen-tool":{"confirmation":"never","effect":"read","name":"list_todos","output":{"mode":"project","select":[{"count_as":"count","select":[{"source":"/id"},{"source":"/title"},{"source":"/status"}],"source":"/data"}]},"tags":["todos","read"]}},"post":{"operationId":"createTodo","parameters":[],"requestBody":{"content":{"application/json":{"example":{"title":"example"},"schema":{"$ref":"#/components/schemas/CreateTodoRequest"}}},"required":true},"responses":{"201":{"content":{"application/json":{"example":{"id":"example","status":"example","title":"example"},"schema":{"$ref":"#/components/schemas/Todo"}}},"description":"A todo has been created."},"400":{"content":{"application/json":{"example":{"code":1,"message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"The request is invalid."}},"summary":"Create todo","tags":["Todos"]}},"/todos/{todo_id}":{"delete":{"operationId":"deleteTodo","parameters":[{"example":"example","in":"path","name":"todo_id","required":true,"schema":{"type":"string"}}],"responses":{"204":{"description":"The todo has been deleted."},"404":{"content":{"application/json":{"example":{"code":1,"message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"The todo was not found."}},"summary":"Delete todo","tags":["Todos"],"x-apigen-tool":{"confirmation":"always","effect":"destructive","name":"delete_todo","output":{"mode":"empty"}}},"get":{"operationId":"getTodo","parameters":[{"example":"example","in":"path","name":"todo_id","required":true,"schema":{"type":"string"}}],"responses":{"200":{"content":{"application/json":{"example":{"id":"example","status":"example","title":"example"},"schema":{"$ref":"#/components/schemas/Todo"}}},"description":"The request has succeeded."},"404":{"content":{"application/json":{"example":{"code":1,"message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"The todo was not found."}},"summary":"Get todo","tags":["Todos"]}},"/todos/{todo_id}/complete":{"post":{"operationId":"completeTodo","parameters":[{"example":"example","in":"path","name":"todo_id","required":true,"schema":{"type":"string"}}],"responses":{"200":{"content":{"application/json":{"example":{"id":"example","status":"example","title":"example"},"schema":{"$ref":"#/components/schemas/Todo"}}},"description":"The todo has been completed."},"404":{"content":{"application/json":{"example":{"code":1,"message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"The todo was not found."}},"summary":"Complete todo","tags":["Todos"]}}},"security":[{"BearerAuth":[]},{"ApiKeyAuth":[]}],"servers":[{"description":"Example development server","url":"http://127.0.0.1:8081/","variables":{}}],"tags":[{"description":"Todo lifecycle endpoints for the APIGen example.","name":"Todos"}]}`
+const embeddedOpenAPISpecJSON = `{"components":{"schemas":{"CreateTodoRequest":{"example":{"title":"example"},"properties":{"title":{"example":"example","type":"string"}},"required":["title"],"type":"object"},"Error":{"example":{"code":"example","message":"example"},"properties":{"code":{"example":"example","type":"string"},"message":{"example":"example","type":"string"}},"required":["code","message"],"type":"object"},"ListTodosResponse":{"example":{"data":[{"id":"example","status":"example","title":"example"}]},"properties":{"data":{"example":[{"id":"example","status":"example","title":"example"}],"items":{"$ref":"#/components/schemas/Todo"},"type":"array"}},"required":["data"],"type":"object"},"Todo":{"example":{"id":"example","status":"example","title":"example"},"properties":{"id":{"example":"example","type":"string"},"status":{"example":"example","type":"string"},"title":{"example":"example","type":"string"}},"required":["id","title","status"],"type":"object"}},"securitySchemes":{"ApiKeyAuth":{"in":"header","name":"X-API-Key","type":"apiKey"},"BearerAuth":{"scheme":"Bearer","type":"http"}}},"info":{"description":"Small in-memory todo API authored in TypeSpec to showcase APIGen generation and strict server wiring.","title":"APIGen Todo Example","version":"0.1.0"},"openapi":"3.0.0","paths":{"/todos":{"get":{"operationId":"listTodos","parameters":[{"description":"Optional status filter.","example":"example","explode":false,"in":"query","name":"status","required":false,"schema":{"type":"string"}}],"responses":{"200":{"content":{"application/json":{"example":{"data":[{"id":"example","status":"example","title":"example"}]},"schema":{"$ref":"#/components/schemas/ListTodosResponse"}}},"description":"The request has succeeded."},"400":{"content":{"application/json":{"example":{"code":"example","message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"The request is invalid."},"415":{"content":{"application/json":{"example":{"code":"example","message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"Generated transport error"},"500":{"content":{"application/json":{"example":{"code":"example","message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"Generated transport error"}},"summary":"List todos","tags":["Todos"],"x-apigen-tool":{"confirmation":"never","effect":"read","name":"list_todos","output":{"mode":"project","select":[{"count_as":"count","select":[{"source":"/id"},{"source":"/title"},{"source":"/status"}],"source":"/data"}]},"tags":["todos","read"]}},"post":{"operationId":"createTodo","parameters":[],"requestBody":{"content":{"application/json":{"example":{"title":"example"},"schema":{"$ref":"#/components/schemas/CreateTodoRequest"}}},"required":true},"responses":{"201":{"content":{"application/json":{"example":{"id":"example","status":"example","title":"example"},"schema":{"$ref":"#/components/schemas/Todo"}}},"description":"A todo has been created."},"400":{"content":{"application/json":{"example":{"code":"example","message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"The request is invalid."},"415":{"content":{"application/json":{"example":{"code":"example","message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"Generated transport error"},"500":{"content":{"application/json":{"example":{"code":"example","message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"Generated transport error"}},"summary":"Create todo","tags":["Todos"]}},"/todos/{todo_id}":{"delete":{"operationId":"deleteTodo","parameters":[{"example":"example","in":"path","name":"todo_id","required":true,"schema":{"type":"string"}}],"responses":{"204":{"description":"The todo has been deleted."},"400":{"content":{"application/json":{"example":{"code":"example","message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"Generated transport error"},"404":{"content":{"application/json":{"example":{"code":"example","message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"The todo was not found."},"415":{"content":{"application/json":{"example":{"code":"example","message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"Generated transport error"},"500":{"content":{"application/json":{"example":{"code":"example","message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"Generated transport error"}},"summary":"Delete todo","tags":["Todos"],"x-apigen-tool":{"confirmation":"always","effect":"destructive","name":"delete_todo","output":{"mode":"empty"}}},"get":{"operationId":"getTodo","parameters":[{"example":"example","in":"path","name":"todo_id","required":true,"schema":{"type":"string"}}],"responses":{"200":{"content":{"application/json":{"example":{"id":"example","status":"example","title":"example"},"schema":{"$ref":"#/components/schemas/Todo"}}},"description":"The request has succeeded."},"400":{"content":{"application/json":{"example":{"code":"example","message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"Generated transport error"},"404":{"content":{"application/json":{"example":{"code":"example","message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"The todo was not found."},"415":{"content":{"application/json":{"example":{"code":"example","message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"Generated transport error"},"500":{"content":{"application/json":{"example":{"code":"example","message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"Generated transport error"}},"summary":"Get todo","tags":["Todos"]}},"/todos/{todo_id}/complete":{"post":{"operationId":"completeTodo","parameters":[{"example":"example","in":"path","name":"todo_id","required":true,"schema":{"type":"string"}}],"responses":{"200":{"content":{"application/json":{"example":{"id":"example","status":"example","title":"example"},"schema":{"$ref":"#/components/schemas/Todo"}}},"description":"The todo has been completed."},"400":{"content":{"application/json":{"example":{"code":"example","message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"Generated transport error"},"404":{"content":{"application/json":{"example":{"code":"example","message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"The todo was not found."},"415":{"content":{"application/json":{"example":{"code":"example","message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"Generated transport error"},"500":{"content":{"application/json":{"example":{"code":"example","message":"example"},"schema":{"$ref":"#/components/schemas/Error"}}},"description":"Generated transport error"}},"summary":"Complete todo","tags":["Todos"]}}},"security":[{"BearerAuth":[]},{"ApiKeyAuth":[]}],"servers":[{"description":"Example development server","url":"http://127.0.0.1:8081/","variables":{}}],"tags":[{"description":"Todo lifecycle endpoints for the APIGen example.","name":"Todos"}]}`
 
 // GetEmbeddedOpenAPISpec returns the canonical OpenAPI document as generic JSON map.
 func GetEmbeddedOpenAPISpec() (map[string]any, error) {
@@ -66,11 +67,11 @@ type GenOperationContract struct {
 }
 
 var genOperationContracts = map[string]GenOperationContract{
-	"listTodos":    {OperationID: "listTodos", Method: "GET", Path: "/todos", Tags: []string{"Todos"}, DocumentedStatusCodes: []int{200, 400, 401, 403, 404, 409, 429, 500, 502}, RequestBodyRequired: false, AuthzMode: "", Protected: false, Manual: false, Extensions: nil},
-	"createTodo":   {OperationID: "createTodo", Method: "POST", Path: "/todos", Tags: []string{"Todos"}, DocumentedStatusCodes: []int{201, 400, 401, 403, 404, 409, 429, 500, 502}, RequestBodyRequired: true, AuthzMode: "", Protected: false, Manual: false, Extensions: nil},
-	"deleteTodo":   {OperationID: "deleteTodo", Method: "DELETE", Path: "/todos/{todo_id}", Tags: []string{"Todos"}, DocumentedStatusCodes: []int{204, 400, 401, 403, 404, 409, 429, 500, 502}, RequestBodyRequired: false, AuthzMode: "", Protected: false, Manual: false, Extensions: nil},
-	"getTodo":      {OperationID: "getTodo", Method: "GET", Path: "/todos/{todo_id}", Tags: []string{"Todos"}, DocumentedStatusCodes: []int{200, 400, 401, 403, 404, 409, 429, 500, 502}, RequestBodyRequired: false, AuthzMode: "", Protected: false, Manual: false, Extensions: nil},
-	"completeTodo": {OperationID: "completeTodo", Method: "POST", Path: "/todos/{todo_id}/complete", Tags: []string{"Todos"}, DocumentedStatusCodes: []int{200, 400, 401, 403, 404, 409, 429, 500, 502}, RequestBodyRequired: false, AuthzMode: "", Protected: false, Manual: false, Extensions: nil},
+	"listTodos":    {OperationID: "listTodos", Method: "GET", Path: "/todos", Tags: []string{"Todos"}, DocumentedStatusCodes: []int{200, 400, 415, 500}, RequestBodyRequired: false, AuthzMode: "", Protected: false, Manual: false, Extensions: nil},
+	"createTodo":   {OperationID: "createTodo", Method: "POST", Path: "/todos", Tags: []string{"Todos"}, DocumentedStatusCodes: []int{201, 400, 415, 500}, RequestBodyRequired: true, AuthzMode: "", Protected: false, Manual: false, Extensions: nil},
+	"deleteTodo":   {OperationID: "deleteTodo", Method: "DELETE", Path: "/todos/{todo_id}", Tags: []string{"Todos"}, DocumentedStatusCodes: []int{204, 400, 404, 415, 500}, RequestBodyRequired: false, AuthzMode: "", Protected: false, Manual: false, Extensions: nil},
+	"getTodo":      {OperationID: "getTodo", Method: "GET", Path: "/todos/{todo_id}", Tags: []string{"Todos"}, DocumentedStatusCodes: []int{200, 400, 404, 415, 500}, RequestBodyRequired: false, AuthzMode: "", Protected: false, Manual: false, Extensions: nil},
+	"completeTodo": {OperationID: "completeTodo", Method: "POST", Path: "/todos/{todo_id}/complete", Tags: []string{"Todos"}, DocumentedStatusCodes: []int{200, 400, 404, 415, 500}, RequestBodyRequired: false, AuthzMode: "", Protected: false, Manual: false, Extensions: nil},
 }
 
 // GetAPIGenOperationContracts returns a defensive copy of the generated contract registry.
@@ -157,8 +158,8 @@ func RegisterAPIGenRoutes(router apigenchi.Router, server GenServerInterface) {
 }
 
 // RegisterAPIGenStrictRoutes mounts generated routes backed by strict handlers.
-func RegisterAPIGenStrictRoutes(router apigenchi.Router, handler GenStrictServerInterface) {
-	RegisterAPIGenRoutes(router, genStrictAdapter{handler: handler})
+func RegisterAPIGenStrictRoutes(router apigenchi.Router, handler GenStrictServerInterface, responder GenTransportErrorResponder) {
+	RegisterAPIGenRoutes(router, genStrictAdapter{handler: handler, responder: responder})
 }
 
 // GenOperationDispatcher is the dispatch target for generated operations.
@@ -171,14 +172,14 @@ type GenOperationDispatcher interface {
 }
 
 // DispatchAPIGenOperation dispatches operation IDs to generated wrapper methods.
-func DispatchAPIGenOperation(operationID string, dispatcher GenOperationDispatcher, w http.ResponseWriter, r *http.Request) bool {
+func DispatchAPIGenOperation(operationID string, dispatcher GenOperationDispatcher, responder GenTransportErrorResponder, w http.ResponseWriter, r *http.Request) bool {
 	switch operationID {
 	case "listTodos":
 		var err error
 		var params GenListTodosParams
 		err = apigenchi.BindQueryParameter(r.URL.Query(), "status", false, &params.Status)
 		if err != nil {
-			writeAPIGenError(w, http.StatusBadRequest, err.Error())
+			writeAPIGenError(responder, w, r, GenTransportError{OperationID: "listTodos", Kind: "query_parameter", StatusCode: 400, Code: "invalid_request", PublicDetail: "Invalid request.", Cause: err})
 			return true
 		}
 		dispatcher.ListTodos(w, r, params)
@@ -191,7 +192,7 @@ func DispatchAPIGenOperation(operationID string, dispatcher GenOperationDispatch
 		var todoId string
 		err = apigenchi.BindPathParameter("todo_id", apigenchi.URLParam(r, "todo_id"), true, &todoId)
 		if err != nil {
-			writeAPIGenError(w, http.StatusBadRequest, err.Error())
+			writeAPIGenError(responder, w, r, GenTransportError{OperationID: "deleteTodo", Kind: "path_parameter", StatusCode: 400, Code: "invalid_request", PublicDetail: "Invalid request.", Cause: err})
 			return true
 		}
 		dispatcher.DeleteTodo(w, r, todoId)
@@ -201,7 +202,7 @@ func DispatchAPIGenOperation(operationID string, dispatcher GenOperationDispatch
 		var todoId string
 		err = apigenchi.BindPathParameter("todo_id", apigenchi.URLParam(r, "todo_id"), true, &todoId)
 		if err != nil {
-			writeAPIGenError(w, http.StatusBadRequest, err.Error())
+			writeAPIGenError(responder, w, r, GenTransportError{OperationID: "getTodo", Kind: "path_parameter", StatusCode: 400, Code: "invalid_request", PublicDetail: "Invalid request.", Cause: err})
 			return true
 		}
 		dispatcher.GetTodo(w, r, todoId)
@@ -211,7 +212,7 @@ func DispatchAPIGenOperation(operationID string, dispatcher GenOperationDispatch
 		var todoId string
 		err = apigenchi.BindPathParameter("todo_id", apigenchi.URLParam(r, "todo_id"), true, &todoId)
 		if err != nil {
-			writeAPIGenError(w, http.StatusBadRequest, err.Error())
+			writeAPIGenError(responder, w, r, GenTransportError{OperationID: "completeTodo", Kind: "path_parameter", StatusCode: 400, Code: "invalid_request", PublicDetail: "Invalid request.", Cause: err})
 			return true
 		}
 		dispatcher.CompleteTodo(w, r, todoId)
@@ -221,19 +222,41 @@ func DispatchAPIGenOperation(operationID string, dispatcher GenOperationDispatch
 	}
 }
 
-func apigenErrorMessage(statusCode int, message string) string {
-	if statusCode >= http.StatusInternalServerError {
-		if statusText := strings.ToLower(http.StatusText(statusCode)); statusText != "" {
-			return statusText
-		}
-	}
-	return message
+// GenTransportError describes a transport-layer failure without prescribing its wire model.
+type GenTransportError struct {
+	OperationID  string
+	Kind         string
+	StatusCode   int
+	Code         string
+	PublicDetail string
+	Cause        error
 }
 
-func writeAPIGenError(w http.ResponseWriter, statusCode int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(Error{Code: apigenchi.SafeIntToInt32(statusCode), Message: apigenErrorMessage(statusCode, message)})
+// GenTransportErrorResponder owns serialization of generated transport failures.
+type GenTransportErrorResponder interface {
+	RespondTransportError(ctx context.Context, w http.ResponseWriter, r *http.Request, failure GenTransportError)
+}
+
+func writeAPIGenError(responder GenTransportErrorResponder, w http.ResponseWriter, r *http.Request, failure GenTransportError) {
+	if responder == nil {
+		panic("apigen: nil transport error responder")
+	}
+	responder.RespondTransportError(r.Context(), w, r, failure)
+}
+
+func validateAPIGenContentType(r *http.Request, expected string) error {
+	actual, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil {
+		return fmt.Errorf("parse Content-Type: %w", err)
+	}
+	want, _, err := mime.ParseMediaType(expected)
+	if err != nil {
+		return fmt.Errorf("parse generated Content-Type %q: %w", expected, err)
+	}
+	if !strings.EqualFold(actual, want) {
+		return fmt.Errorf("unsupported Content-Type %q; expected %q", actual, want)
+	}
+	return nil
 }
 
 func decodeAPIGenJSONBody(body io.Reader, dest any, requiredBody bool, requiredFields ...string) error {
@@ -329,105 +352,6 @@ func decodeAPIGenFormBody(r *http.Request, dest any, requiredBody bool, required
 	return nil
 }
 
-// GenBadRequestResponseHeaders represents the APIGen shared response headers for BadRequest JSON errors.
-type GenBadRequestResponseHeaders struct {
-	XRateLimitLimit     int32
-	XRateLimitRemaining int32
-	XRateLimitReset     int64
-}
-
-// GenBadRequestJSONResponse represents the APIGen shared JSON error body for BadRequest responses.
-type GenBadRequestJSONResponse struct {
-	Body Error
-
-	Headers GenBadRequestResponseHeaders
-}
-
-// GenConflictResponseHeaders represents the APIGen shared response headers for Conflict JSON errors.
-type GenConflictResponseHeaders struct {
-	XRateLimitLimit     int32
-	XRateLimitRemaining int32
-	XRateLimitReset     int64
-}
-
-// GenConflictJSONResponse represents the APIGen shared JSON error body for Conflict responses.
-type GenConflictJSONResponse struct {
-	Body Error
-
-	Headers GenConflictResponseHeaders
-}
-
-// GenForbiddenResponseHeaders represents the APIGen shared response headers for Forbidden JSON errors.
-type GenForbiddenResponseHeaders struct {
-	XRateLimitLimit     int32
-	XRateLimitRemaining int32
-	XRateLimitReset     int64
-}
-
-// GenForbiddenJSONResponse represents the APIGen shared JSON error body for Forbidden responses.
-type GenForbiddenJSONResponse struct {
-	Body Error
-
-	Headers GenForbiddenResponseHeaders
-}
-
-// GenInternalErrorResponseHeaders represents the APIGen shared response headers for InternalError JSON errors.
-type GenInternalErrorResponseHeaders struct {
-	XRateLimitLimit     int32
-	XRateLimitRemaining int32
-	XRateLimitReset     int64
-}
-
-// GenInternalErrorJSONResponse represents the APIGen shared JSON error body for InternalError responses.
-type GenInternalErrorJSONResponse struct {
-	Body Error
-
-	Headers GenInternalErrorResponseHeaders
-}
-
-// GenNotFoundResponseHeaders represents the APIGen shared response headers for NotFound JSON errors.
-type GenNotFoundResponseHeaders struct {
-	XRateLimitLimit     int32
-	XRateLimitRemaining int32
-	XRateLimitReset     int64
-}
-
-// GenNotFoundJSONResponse represents the APIGen shared JSON error body for NotFound responses.
-type GenNotFoundJSONResponse struct {
-	Body Error
-
-	Headers GenNotFoundResponseHeaders
-}
-
-// GenRateLimitExceededResponseHeaders represents the APIGen shared response headers for RateLimitExceeded JSON errors.
-type GenRateLimitExceededResponseHeaders struct {
-	RetryAfter          int32
-	XRateLimitLimit     int32
-	XRateLimitRemaining int32
-	XRateLimitReset     int64
-}
-
-// GenRateLimitExceededJSONResponse represents the APIGen shared JSON error body for RateLimitExceeded responses.
-type GenRateLimitExceededJSONResponse struct {
-	Body Error
-
-	Headers GenRateLimitExceededResponseHeaders
-}
-
-// GenUnauthorizedResponseHeaders represents the APIGen shared response headers for Unauthorized JSON errors.
-type GenUnauthorizedResponseHeaders struct {
-	XRateLimitLimit     int32
-	XRateLimitRemaining int32
-	XRateLimitReset     int64
-}
-
-// GenUnauthorizedJSONResponse represents the APIGen shared JSON error body for Unauthorized responses.
-type GenUnauthorizedJSONResponse struct {
-	Body Error
-
-	Headers GenUnauthorizedResponseHeaders
-}
-
 // GenListTodosParams represents the APIGen strict query parameter contract for ListTodos.
 type GenListTodosParams struct {
 	Status *string
@@ -458,140 +382,36 @@ type GenListTodos200JSONResponse struct {
 
 // VisitListTodosResponse writes ListTodos 200 responses to the client.
 func (response GenListTodos200JSONResponse) VisitListTodosResponse(w http.ResponseWriter) error {
+	payload, err := json.Marshal(response.Body)
+	if err != nil {
+		return err
+	}
 	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
 	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
 	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
-	return json.NewEncoder(w).Encode(response.Body)
+	payload = append(payload, '\n')
+	_, err = w.Write(payload)
+	return err
 }
 
-// GenListTodos400ResponseHeaders aliases the APIGen shared response headers for ListTodos 400 errors.
-type GenListTodos400ResponseHeaders = GenBadRequestResponseHeaders
-
-// GenListTodos400JSONResponse is the APIGen concrete JSON response for ListTodos 400.
-type GenListTodos400JSONResponse struct{ GenBadRequestJSONResponse }
+// GenListTodos400JSONResponse is the APIGen concrete response for ListTodos 400.
+type GenListTodos400JSONResponse struct {
+	Body GenSchemaError
+}
 
 // VisitListTodosResponse writes ListTodos 400 responses to the client.
 func (response GenListTodos400JSONResponse) VisitListTodosResponse(w http.ResponseWriter) error {
+	payload, err := json.Marshal(response.Body)
+	if err != nil {
+		return err
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(400)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenListTodos401ResponseHeaders aliases the APIGen shared response headers for ListTodos 401 errors.
-type GenListTodos401ResponseHeaders = GenUnauthorizedResponseHeaders
-
-// GenListTodos401JSONResponse is the APIGen shared JSON response for ListTodos 401.
-type GenListTodos401JSONResponse struct{ GenUnauthorizedJSONResponse }
-
-// VisitListTodosResponse writes ListTodos 401 responses to the client.
-func (response GenListTodos401JSONResponse) VisitListTodosResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(401)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenListTodos403ResponseHeaders aliases the APIGen shared response headers for ListTodos 403 errors.
-type GenListTodos403ResponseHeaders = GenForbiddenResponseHeaders
-
-// GenListTodos403JSONResponse is the APIGen shared JSON response for ListTodos 403.
-type GenListTodos403JSONResponse struct{ GenForbiddenJSONResponse }
-
-// VisitListTodosResponse writes ListTodos 403 responses to the client.
-func (response GenListTodos403JSONResponse) VisitListTodosResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(403)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenListTodos404ResponseHeaders aliases the APIGen shared response headers for ListTodos 404 errors.
-type GenListTodos404ResponseHeaders = GenNotFoundResponseHeaders
-
-// GenListTodos404JSONResponse is the APIGen shared JSON response for ListTodos 404.
-type GenListTodos404JSONResponse struct{ GenNotFoundJSONResponse }
-
-// VisitListTodosResponse writes ListTodos 404 responses to the client.
-func (response GenListTodos404JSONResponse) VisitListTodosResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(404)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenListTodos409ResponseHeaders aliases the APIGen shared response headers for ListTodos 409 errors.
-type GenListTodos409ResponseHeaders = GenConflictResponseHeaders
-
-// GenListTodos409JSONResponse is the APIGen shared JSON response for ListTodos 409.
-type GenListTodos409JSONResponse struct{ GenConflictJSONResponse }
-
-// VisitListTodosResponse writes ListTodos 409 responses to the client.
-func (response GenListTodos409JSONResponse) VisitListTodosResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(409)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenListTodos429ResponseHeaders aliases the APIGen shared response headers for ListTodos 429 errors.
-type GenListTodos429ResponseHeaders = GenRateLimitExceededResponseHeaders
-
-// GenListTodos429JSONResponse is the APIGen shared JSON response for ListTodos 429.
-type GenListTodos429JSONResponse struct {
-	GenRateLimitExceededJSONResponse
-}
-
-// VisitListTodosResponse writes ListTodos 429 responses to the client.
-func (response GenListTodos429JSONResponse) VisitListTodosResponse(w http.ResponseWriter) error {
-	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenListTodos500ResponseHeaders aliases the APIGen shared response headers for ListTodos 500 errors.
-type GenListTodos500ResponseHeaders = GenInternalErrorResponseHeaders
-
-// GenListTodos500JSONResponse is the APIGen shared JSON response for ListTodos 500.
-type GenListTodos500JSONResponse struct{ GenInternalErrorJSONResponse }
-
-// VisitListTodosResponse writes ListTodos 500 responses to the client.
-func (response GenListTodos500JSONResponse) VisitListTodosResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(500)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenListTodos502ResponseHeaders aliases the APIGen shared response headers for ListTodos 502 errors.
-type GenListTodos502ResponseHeaders = GenInternalErrorResponseHeaders
-
-// GenListTodos502JSONResponse is the APIGen shared JSON response for ListTodos 502.
-type GenListTodos502JSONResponse struct{ GenInternalErrorJSONResponse }
-
-// VisitListTodosResponse writes ListTodos 502 responses to the client.
-func (response GenListTodos502JSONResponse) VisitListTodosResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(502)
-	return json.NewEncoder(w).Encode(response.Body)
+	payload = append(payload, '\n')
+	_, err = w.Write(payload)
+	return err
 }
 
 // GenCreateTodoRequest represents the APIGen strict request contract for CreateTodo.
@@ -619,140 +439,36 @@ type GenCreateTodo201JSONResponse struct {
 
 // VisitCreateTodoResponse writes CreateTodo 201 responses to the client.
 func (response GenCreateTodo201JSONResponse) VisitCreateTodoResponse(w http.ResponseWriter) error {
+	payload, err := json.Marshal(response.Body)
+	if err != nil {
+		return err
+	}
 	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
 	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
 	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(201)
-	return json.NewEncoder(w).Encode(response.Body)
+	payload = append(payload, '\n')
+	_, err = w.Write(payload)
+	return err
 }
 
-// GenCreateTodo400ResponseHeaders aliases the APIGen shared response headers for CreateTodo 400 errors.
-type GenCreateTodo400ResponseHeaders = GenBadRequestResponseHeaders
-
-// GenCreateTodo400JSONResponse is the APIGen concrete JSON response for CreateTodo 400.
-type GenCreateTodo400JSONResponse struct{ GenBadRequestJSONResponse }
+// GenCreateTodo400JSONResponse is the APIGen concrete response for CreateTodo 400.
+type GenCreateTodo400JSONResponse struct {
+	Body GenSchemaError
+}
 
 // VisitCreateTodoResponse writes CreateTodo 400 responses to the client.
 func (response GenCreateTodo400JSONResponse) VisitCreateTodoResponse(w http.ResponseWriter) error {
+	payload, err := json.Marshal(response.Body)
+	if err != nil {
+		return err
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(400)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenCreateTodo401ResponseHeaders aliases the APIGen shared response headers for CreateTodo 401 errors.
-type GenCreateTodo401ResponseHeaders = GenUnauthorizedResponseHeaders
-
-// GenCreateTodo401JSONResponse is the APIGen shared JSON response for CreateTodo 401.
-type GenCreateTodo401JSONResponse struct{ GenUnauthorizedJSONResponse }
-
-// VisitCreateTodoResponse writes CreateTodo 401 responses to the client.
-func (response GenCreateTodo401JSONResponse) VisitCreateTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(401)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenCreateTodo403ResponseHeaders aliases the APIGen shared response headers for CreateTodo 403 errors.
-type GenCreateTodo403ResponseHeaders = GenForbiddenResponseHeaders
-
-// GenCreateTodo403JSONResponse is the APIGen shared JSON response for CreateTodo 403.
-type GenCreateTodo403JSONResponse struct{ GenForbiddenJSONResponse }
-
-// VisitCreateTodoResponse writes CreateTodo 403 responses to the client.
-func (response GenCreateTodo403JSONResponse) VisitCreateTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(403)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenCreateTodo404ResponseHeaders aliases the APIGen shared response headers for CreateTodo 404 errors.
-type GenCreateTodo404ResponseHeaders = GenNotFoundResponseHeaders
-
-// GenCreateTodo404JSONResponse is the APIGen shared JSON response for CreateTodo 404.
-type GenCreateTodo404JSONResponse struct{ GenNotFoundJSONResponse }
-
-// VisitCreateTodoResponse writes CreateTodo 404 responses to the client.
-func (response GenCreateTodo404JSONResponse) VisitCreateTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(404)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenCreateTodo409ResponseHeaders aliases the APIGen shared response headers for CreateTodo 409 errors.
-type GenCreateTodo409ResponseHeaders = GenConflictResponseHeaders
-
-// GenCreateTodo409JSONResponse is the APIGen shared JSON response for CreateTodo 409.
-type GenCreateTodo409JSONResponse struct{ GenConflictJSONResponse }
-
-// VisitCreateTodoResponse writes CreateTodo 409 responses to the client.
-func (response GenCreateTodo409JSONResponse) VisitCreateTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(409)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenCreateTodo429ResponseHeaders aliases the APIGen shared response headers for CreateTodo 429 errors.
-type GenCreateTodo429ResponseHeaders = GenRateLimitExceededResponseHeaders
-
-// GenCreateTodo429JSONResponse is the APIGen shared JSON response for CreateTodo 429.
-type GenCreateTodo429JSONResponse struct {
-	GenRateLimitExceededJSONResponse
-}
-
-// VisitCreateTodoResponse writes CreateTodo 429 responses to the client.
-func (response GenCreateTodo429JSONResponse) VisitCreateTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenCreateTodo500ResponseHeaders aliases the APIGen shared response headers for CreateTodo 500 errors.
-type GenCreateTodo500ResponseHeaders = GenInternalErrorResponseHeaders
-
-// GenCreateTodo500JSONResponse is the APIGen shared JSON response for CreateTodo 500.
-type GenCreateTodo500JSONResponse struct{ GenInternalErrorJSONResponse }
-
-// VisitCreateTodoResponse writes CreateTodo 500 responses to the client.
-func (response GenCreateTodo500JSONResponse) VisitCreateTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(500)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenCreateTodo502ResponseHeaders aliases the APIGen shared response headers for CreateTodo 502 errors.
-type GenCreateTodo502ResponseHeaders = GenInternalErrorResponseHeaders
-
-// GenCreateTodo502JSONResponse is the APIGen shared JSON response for CreateTodo 502.
-type GenCreateTodo502JSONResponse struct{ GenInternalErrorJSONResponse }
-
-// VisitCreateTodoResponse writes CreateTodo 502 responses to the client.
-func (response GenCreateTodo502JSONResponse) VisitCreateTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(502)
-	return json.NewEncoder(w).Encode(response.Body)
+	payload = append(payload, '\n')
+	_, err = w.Write(payload)
+	return err
 }
 
 // GenCreateTodoBody aliases the APIGen strict request body schema for CreateTodo.
@@ -789,132 +505,22 @@ func (response GenDeleteTodo204Response) VisitDeleteTodoResponse(w http.Response
 	return nil
 }
 
-// GenDeleteTodo404ResponseHeaders aliases the APIGen shared response headers for DeleteTodo 404 errors.
-type GenDeleteTodo404ResponseHeaders = GenNotFoundResponseHeaders
-
-// GenDeleteTodo404JSONResponse is the APIGen concrete JSON response for DeleteTodo 404.
-type GenDeleteTodo404JSONResponse struct{ GenNotFoundJSONResponse }
+// GenDeleteTodo404JSONResponse is the APIGen concrete response for DeleteTodo 404.
+type GenDeleteTodo404JSONResponse struct {
+	Body GenSchemaError
+}
 
 // VisitDeleteTodoResponse writes DeleteTodo 404 responses to the client.
 func (response GenDeleteTodo404JSONResponse) VisitDeleteTodoResponse(w http.ResponseWriter) error {
+	payload, err := json.Marshal(response.Body)
+	if err != nil {
+		return err
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenDeleteTodo400ResponseHeaders aliases the APIGen shared response headers for DeleteTodo 400 errors.
-type GenDeleteTodo400ResponseHeaders = GenBadRequestResponseHeaders
-
-// GenDeleteTodo400JSONResponse is the APIGen shared JSON response for DeleteTodo 400.
-type GenDeleteTodo400JSONResponse struct{ GenBadRequestJSONResponse }
-
-// VisitDeleteTodoResponse writes DeleteTodo 400 responses to the client.
-func (response GenDeleteTodo400JSONResponse) VisitDeleteTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(400)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenDeleteTodo401ResponseHeaders aliases the APIGen shared response headers for DeleteTodo 401 errors.
-type GenDeleteTodo401ResponseHeaders = GenUnauthorizedResponseHeaders
-
-// GenDeleteTodo401JSONResponse is the APIGen shared JSON response for DeleteTodo 401.
-type GenDeleteTodo401JSONResponse struct{ GenUnauthorizedJSONResponse }
-
-// VisitDeleteTodoResponse writes DeleteTodo 401 responses to the client.
-func (response GenDeleteTodo401JSONResponse) VisitDeleteTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(401)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenDeleteTodo403ResponseHeaders aliases the APIGen shared response headers for DeleteTodo 403 errors.
-type GenDeleteTodo403ResponseHeaders = GenForbiddenResponseHeaders
-
-// GenDeleteTodo403JSONResponse is the APIGen shared JSON response for DeleteTodo 403.
-type GenDeleteTodo403JSONResponse struct{ GenForbiddenJSONResponse }
-
-// VisitDeleteTodoResponse writes DeleteTodo 403 responses to the client.
-func (response GenDeleteTodo403JSONResponse) VisitDeleteTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(403)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenDeleteTodo409ResponseHeaders aliases the APIGen shared response headers for DeleteTodo 409 errors.
-type GenDeleteTodo409ResponseHeaders = GenConflictResponseHeaders
-
-// GenDeleteTodo409JSONResponse is the APIGen shared JSON response for DeleteTodo 409.
-type GenDeleteTodo409JSONResponse struct{ GenConflictJSONResponse }
-
-// VisitDeleteTodoResponse writes DeleteTodo 409 responses to the client.
-func (response GenDeleteTodo409JSONResponse) VisitDeleteTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(409)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenDeleteTodo429ResponseHeaders aliases the APIGen shared response headers for DeleteTodo 429 errors.
-type GenDeleteTodo429ResponseHeaders = GenRateLimitExceededResponseHeaders
-
-// GenDeleteTodo429JSONResponse is the APIGen shared JSON response for DeleteTodo 429.
-type GenDeleteTodo429JSONResponse struct {
-	GenRateLimitExceededJSONResponse
-}
-
-// VisitDeleteTodoResponse writes DeleteTodo 429 responses to the client.
-func (response GenDeleteTodo429JSONResponse) VisitDeleteTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenDeleteTodo500ResponseHeaders aliases the APIGen shared response headers for DeleteTodo 500 errors.
-type GenDeleteTodo500ResponseHeaders = GenInternalErrorResponseHeaders
-
-// GenDeleteTodo500JSONResponse is the APIGen shared JSON response for DeleteTodo 500.
-type GenDeleteTodo500JSONResponse struct{ GenInternalErrorJSONResponse }
-
-// VisitDeleteTodoResponse writes DeleteTodo 500 responses to the client.
-func (response GenDeleteTodo500JSONResponse) VisitDeleteTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(500)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenDeleteTodo502ResponseHeaders aliases the APIGen shared response headers for DeleteTodo 502 errors.
-type GenDeleteTodo502ResponseHeaders = GenInternalErrorResponseHeaders
-
-// GenDeleteTodo502JSONResponse is the APIGen shared JSON response for DeleteTodo 502.
-type GenDeleteTodo502JSONResponse struct{ GenInternalErrorJSONResponse }
-
-// VisitDeleteTodoResponse writes DeleteTodo 502 responses to the client.
-func (response GenDeleteTodo502JSONResponse) VisitDeleteTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(502)
-	return json.NewEncoder(w).Encode(response.Body)
+	payload = append(payload, '\n')
+	_, err = w.Write(payload)
+	return err
 }
 
 // GenGetTodoRequest represents the APIGen strict request contract for GetTodo.
@@ -942,140 +548,36 @@ type GenGetTodo200JSONResponse struct {
 
 // VisitGetTodoResponse writes GetTodo 200 responses to the client.
 func (response GenGetTodo200JSONResponse) VisitGetTodoResponse(w http.ResponseWriter) error {
+	payload, err := json.Marshal(response.Body)
+	if err != nil {
+		return err
+	}
 	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
 	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
 	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
-	return json.NewEncoder(w).Encode(response.Body)
+	payload = append(payload, '\n')
+	_, err = w.Write(payload)
+	return err
 }
 
-// GenGetTodo404ResponseHeaders aliases the APIGen shared response headers for GetTodo 404 errors.
-type GenGetTodo404ResponseHeaders = GenNotFoundResponseHeaders
-
-// GenGetTodo404JSONResponse is the APIGen concrete JSON response for GetTodo 404.
-type GenGetTodo404JSONResponse struct{ GenNotFoundJSONResponse }
+// GenGetTodo404JSONResponse is the APIGen concrete response for GetTodo 404.
+type GenGetTodo404JSONResponse struct {
+	Body GenSchemaError
+}
 
 // VisitGetTodoResponse writes GetTodo 404 responses to the client.
 func (response GenGetTodo404JSONResponse) VisitGetTodoResponse(w http.ResponseWriter) error {
+	payload, err := json.Marshal(response.Body)
+	if err != nil {
+		return err
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenGetTodo400ResponseHeaders aliases the APIGen shared response headers for GetTodo 400 errors.
-type GenGetTodo400ResponseHeaders = GenBadRequestResponseHeaders
-
-// GenGetTodo400JSONResponse is the APIGen shared JSON response for GetTodo 400.
-type GenGetTodo400JSONResponse struct{ GenBadRequestJSONResponse }
-
-// VisitGetTodoResponse writes GetTodo 400 responses to the client.
-func (response GenGetTodo400JSONResponse) VisitGetTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(400)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenGetTodo401ResponseHeaders aliases the APIGen shared response headers for GetTodo 401 errors.
-type GenGetTodo401ResponseHeaders = GenUnauthorizedResponseHeaders
-
-// GenGetTodo401JSONResponse is the APIGen shared JSON response for GetTodo 401.
-type GenGetTodo401JSONResponse struct{ GenUnauthorizedJSONResponse }
-
-// VisitGetTodoResponse writes GetTodo 401 responses to the client.
-func (response GenGetTodo401JSONResponse) VisitGetTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(401)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenGetTodo403ResponseHeaders aliases the APIGen shared response headers for GetTodo 403 errors.
-type GenGetTodo403ResponseHeaders = GenForbiddenResponseHeaders
-
-// GenGetTodo403JSONResponse is the APIGen shared JSON response for GetTodo 403.
-type GenGetTodo403JSONResponse struct{ GenForbiddenJSONResponse }
-
-// VisitGetTodoResponse writes GetTodo 403 responses to the client.
-func (response GenGetTodo403JSONResponse) VisitGetTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(403)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenGetTodo409ResponseHeaders aliases the APIGen shared response headers for GetTodo 409 errors.
-type GenGetTodo409ResponseHeaders = GenConflictResponseHeaders
-
-// GenGetTodo409JSONResponse is the APIGen shared JSON response for GetTodo 409.
-type GenGetTodo409JSONResponse struct{ GenConflictJSONResponse }
-
-// VisitGetTodoResponse writes GetTodo 409 responses to the client.
-func (response GenGetTodo409JSONResponse) VisitGetTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(409)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenGetTodo429ResponseHeaders aliases the APIGen shared response headers for GetTodo 429 errors.
-type GenGetTodo429ResponseHeaders = GenRateLimitExceededResponseHeaders
-
-// GenGetTodo429JSONResponse is the APIGen shared JSON response for GetTodo 429.
-type GenGetTodo429JSONResponse struct {
-	GenRateLimitExceededJSONResponse
-}
-
-// VisitGetTodoResponse writes GetTodo 429 responses to the client.
-func (response GenGetTodo429JSONResponse) VisitGetTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenGetTodo500ResponseHeaders aliases the APIGen shared response headers for GetTodo 500 errors.
-type GenGetTodo500ResponseHeaders = GenInternalErrorResponseHeaders
-
-// GenGetTodo500JSONResponse is the APIGen shared JSON response for GetTodo 500.
-type GenGetTodo500JSONResponse struct{ GenInternalErrorJSONResponse }
-
-// VisitGetTodoResponse writes GetTodo 500 responses to the client.
-func (response GenGetTodo500JSONResponse) VisitGetTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(500)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenGetTodo502ResponseHeaders aliases the APIGen shared response headers for GetTodo 502 errors.
-type GenGetTodo502ResponseHeaders = GenInternalErrorResponseHeaders
-
-// GenGetTodo502JSONResponse is the APIGen shared JSON response for GetTodo 502.
-type GenGetTodo502JSONResponse struct{ GenInternalErrorJSONResponse }
-
-// VisitGetTodoResponse writes GetTodo 502 responses to the client.
-func (response GenGetTodo502JSONResponse) VisitGetTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(502)
-	return json.NewEncoder(w).Encode(response.Body)
+	payload = append(payload, '\n')
+	_, err = w.Write(payload)
+	return err
 }
 
 // GenCompleteTodoRequest represents the APIGen strict request contract for CompleteTodo.
@@ -1103,140 +605,36 @@ type GenCompleteTodo200JSONResponse struct {
 
 // VisitCompleteTodoResponse writes CompleteTodo 200 responses to the client.
 func (response GenCompleteTodo200JSONResponse) VisitCompleteTodoResponse(w http.ResponseWriter) error {
+	payload, err := json.Marshal(response.Body)
+	if err != nil {
+		return err
+	}
 	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
 	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
 	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
-	return json.NewEncoder(w).Encode(response.Body)
+	payload = append(payload, '\n')
+	_, err = w.Write(payload)
+	return err
 }
 
-// GenCompleteTodo404ResponseHeaders aliases the APIGen shared response headers for CompleteTodo 404 errors.
-type GenCompleteTodo404ResponseHeaders = GenNotFoundResponseHeaders
-
-// GenCompleteTodo404JSONResponse is the APIGen concrete JSON response for CompleteTodo 404.
-type GenCompleteTodo404JSONResponse struct{ GenNotFoundJSONResponse }
+// GenCompleteTodo404JSONResponse is the APIGen concrete response for CompleteTodo 404.
+type GenCompleteTodo404JSONResponse struct {
+	Body GenSchemaError
+}
 
 // VisitCompleteTodoResponse writes CompleteTodo 404 responses to the client.
 func (response GenCompleteTodo404JSONResponse) VisitCompleteTodoResponse(w http.ResponseWriter) error {
+	payload, err := json.Marshal(response.Body)
+	if err != nil {
+		return err
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenCompleteTodo400ResponseHeaders aliases the APIGen shared response headers for CompleteTodo 400 errors.
-type GenCompleteTodo400ResponseHeaders = GenBadRequestResponseHeaders
-
-// GenCompleteTodo400JSONResponse is the APIGen shared JSON response for CompleteTodo 400.
-type GenCompleteTodo400JSONResponse struct{ GenBadRequestJSONResponse }
-
-// VisitCompleteTodoResponse writes CompleteTodo 400 responses to the client.
-func (response GenCompleteTodo400JSONResponse) VisitCompleteTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(400)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenCompleteTodo401ResponseHeaders aliases the APIGen shared response headers for CompleteTodo 401 errors.
-type GenCompleteTodo401ResponseHeaders = GenUnauthorizedResponseHeaders
-
-// GenCompleteTodo401JSONResponse is the APIGen shared JSON response for CompleteTodo 401.
-type GenCompleteTodo401JSONResponse struct{ GenUnauthorizedJSONResponse }
-
-// VisitCompleteTodoResponse writes CompleteTodo 401 responses to the client.
-func (response GenCompleteTodo401JSONResponse) VisitCompleteTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(401)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenCompleteTodo403ResponseHeaders aliases the APIGen shared response headers for CompleteTodo 403 errors.
-type GenCompleteTodo403ResponseHeaders = GenForbiddenResponseHeaders
-
-// GenCompleteTodo403JSONResponse is the APIGen shared JSON response for CompleteTodo 403.
-type GenCompleteTodo403JSONResponse struct{ GenForbiddenJSONResponse }
-
-// VisitCompleteTodoResponse writes CompleteTodo 403 responses to the client.
-func (response GenCompleteTodo403JSONResponse) VisitCompleteTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(403)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenCompleteTodo409ResponseHeaders aliases the APIGen shared response headers for CompleteTodo 409 errors.
-type GenCompleteTodo409ResponseHeaders = GenConflictResponseHeaders
-
-// GenCompleteTodo409JSONResponse is the APIGen shared JSON response for CompleteTodo 409.
-type GenCompleteTodo409JSONResponse struct{ GenConflictJSONResponse }
-
-// VisitCompleteTodoResponse writes CompleteTodo 409 responses to the client.
-func (response GenCompleteTodo409JSONResponse) VisitCompleteTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(409)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenCompleteTodo429ResponseHeaders aliases the APIGen shared response headers for CompleteTodo 429 errors.
-type GenCompleteTodo429ResponseHeaders = GenRateLimitExceededResponseHeaders
-
-// GenCompleteTodo429JSONResponse is the APIGen shared JSON response for CompleteTodo 429.
-type GenCompleteTodo429JSONResponse struct {
-	GenRateLimitExceededJSONResponse
-}
-
-// VisitCompleteTodoResponse writes CompleteTodo 429 responses to the client.
-func (response GenCompleteTodo429JSONResponse) VisitCompleteTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenCompleteTodo500ResponseHeaders aliases the APIGen shared response headers for CompleteTodo 500 errors.
-type GenCompleteTodo500ResponseHeaders = GenInternalErrorResponseHeaders
-
-// GenCompleteTodo500JSONResponse is the APIGen shared JSON response for CompleteTodo 500.
-type GenCompleteTodo500JSONResponse struct{ GenInternalErrorJSONResponse }
-
-// VisitCompleteTodoResponse writes CompleteTodo 500 responses to the client.
-func (response GenCompleteTodo500JSONResponse) VisitCompleteTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(500)
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-// GenCompleteTodo502ResponseHeaders aliases the APIGen shared response headers for CompleteTodo 502 errors.
-type GenCompleteTodo502ResponseHeaders = GenInternalErrorResponseHeaders
-
-// GenCompleteTodo502JSONResponse is the APIGen shared JSON response for CompleteTodo 502.
-type GenCompleteTodo502JSONResponse struct{ GenInternalErrorJSONResponse }
-
-// VisitCompleteTodoResponse writes CompleteTodo 502 responses to the client.
-func (response GenCompleteTodo502JSONResponse) VisitCompleteTodoResponse(w http.ResponseWriter) error {
-	w.Header().Set("X-RateLimit-Limit", fmt.Sprint(response.Headers.XRateLimitLimit))
-	w.Header().Set("X-RateLimit-Remaining", fmt.Sprint(response.Headers.XRateLimitRemaining))
-	w.Header().Set("X-RateLimit-Reset", fmt.Sprint(response.Headers.XRateLimitReset))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(502)
-	return json.NewEncoder(w).Encode(response.Body)
+	payload = append(payload, '\n')
+	_, err = w.Write(payload)
+	return err
 }
 
 // GenStrictServerInterface represents strict handlers for APIGen transport dispatch.
@@ -1249,17 +647,19 @@ type GenStrictServerInterface interface {
 }
 
 type genStrictAdapter struct {
-	handler GenStrictServerInterface
+	handler   GenStrictServerInterface
+	responder GenTransportErrorResponder
 }
 
 func (a genStrictAdapter) HandleAPIGen(operationID string, w http.ResponseWriter, r *http.Request) {
-	if ok := DispatchAPIGenStrictOperation(operationID, a.handler, w, r); !ok {
+	if ok := DispatchAPIGenStrictOperation(operationID, a.handler, a.responder, w, r); !ok {
 		http.NotFound(w, r)
 	}
 }
 
 type genStrictBridge struct {
-	handler GenStrictServerInterface
+	handler   GenStrictServerInterface
+	responder GenTransportErrorResponder
 }
 
 func (b genStrictBridge) ListTodos(w http.ResponseWriter, r *http.Request, params GenListTodosParams) {
@@ -1267,29 +667,35 @@ func (b genStrictBridge) ListTodos(w http.ResponseWriter, r *http.Request, param
 	request.Params = params
 	response, err := b.handler.ListTodos(r.Context(), request)
 	if err != nil {
-		writeAPIGenError(w, http.StatusInternalServerError, err.Error())
+		writeAPIGenError(b.responder, w, r, GenTransportError{OperationID: "listTodos", Kind: "handler", StatusCode: 500, Code: "internal_error", PublicDetail: "Internal server error.", Cause: err})
 		return
 	}
 	if err := response.VisitListTodosResponse(w); err != nil {
-		writeAPIGenError(w, http.StatusInternalServerError, err.Error())
+		writeAPIGenError(b.responder, w, r, GenTransportError{OperationID: "listTodos", Kind: "response_serialization", StatusCode: 500, Code: "internal_error", PublicDetail: "Internal server error.", Cause: err})
 	}
 }
 
 func (b genStrictBridge) CreateTodo(w http.ResponseWriter, r *http.Request) {
 	var request GenCreateTodoRequest
 	var body GenCreateTodoBody
+	if r.Header.Get("Content-Type") != "" {
+		if err := validateAPIGenContentType(r, "application/json"); err != nil {
+			writeAPIGenError(b.responder, w, r, GenTransportError{OperationID: "createTodo", Kind: "unsupported_media_type", StatusCode: 415, Code: "unsupported_media_type", PublicDetail: "Unsupported media type.", Cause: err})
+			return
+		}
+	}
 	if err := decodeAPIGenJSONBody(r.Body, &body, true, []string{"title"}...); err != nil {
-		writeAPIGenError(w, http.StatusBadRequest, err.Error())
+		writeAPIGenError(b.responder, w, r, GenTransportError{OperationID: "createTodo", Kind: "malformed_body", StatusCode: 400, Code: "invalid_request", PublicDetail: "Invalid request body.", Cause: err})
 		return
 	}
 	request.Body = &body
 	response, err := b.handler.CreateTodo(r.Context(), request)
 	if err != nil {
-		writeAPIGenError(w, http.StatusInternalServerError, err.Error())
+		writeAPIGenError(b.responder, w, r, GenTransportError{OperationID: "createTodo", Kind: "handler", StatusCode: 500, Code: "internal_error", PublicDetail: "Internal server error.", Cause: err})
 		return
 	}
 	if err := response.VisitCreateTodoResponse(w); err != nil {
-		writeAPIGenError(w, http.StatusInternalServerError, err.Error())
+		writeAPIGenError(b.responder, w, r, GenTransportError{OperationID: "createTodo", Kind: "response_serialization", StatusCode: 500, Code: "internal_error", PublicDetail: "Internal server error.", Cause: err})
 	}
 }
 
@@ -1298,11 +704,11 @@ func (b genStrictBridge) DeleteTodo(w http.ResponseWriter, r *http.Request, todo
 	request.TodoId = todoId
 	response, err := b.handler.DeleteTodo(r.Context(), request)
 	if err != nil {
-		writeAPIGenError(w, http.StatusInternalServerError, err.Error())
+		writeAPIGenError(b.responder, w, r, GenTransportError{OperationID: "deleteTodo", Kind: "handler", StatusCode: 500, Code: "internal_error", PublicDetail: "Internal server error.", Cause: err})
 		return
 	}
 	if err := response.VisitDeleteTodoResponse(w); err != nil {
-		writeAPIGenError(w, http.StatusInternalServerError, err.Error())
+		writeAPIGenError(b.responder, w, r, GenTransportError{OperationID: "deleteTodo", Kind: "response_serialization", StatusCode: 500, Code: "internal_error", PublicDetail: "Internal server error.", Cause: err})
 	}
 }
 
@@ -1311,11 +717,11 @@ func (b genStrictBridge) GetTodo(w http.ResponseWriter, r *http.Request, todoId 
 	request.TodoId = todoId
 	response, err := b.handler.GetTodo(r.Context(), request)
 	if err != nil {
-		writeAPIGenError(w, http.StatusInternalServerError, err.Error())
+		writeAPIGenError(b.responder, w, r, GenTransportError{OperationID: "getTodo", Kind: "handler", StatusCode: 500, Code: "internal_error", PublicDetail: "Internal server error.", Cause: err})
 		return
 	}
 	if err := response.VisitGetTodoResponse(w); err != nil {
-		writeAPIGenError(w, http.StatusInternalServerError, err.Error())
+		writeAPIGenError(b.responder, w, r, GenTransportError{OperationID: "getTodo", Kind: "response_serialization", StatusCode: 500, Code: "internal_error", PublicDetail: "Internal server error.", Cause: err})
 	}
 }
 
@@ -1324,15 +730,15 @@ func (b genStrictBridge) CompleteTodo(w http.ResponseWriter, r *http.Request, to
 	request.TodoId = todoId
 	response, err := b.handler.CompleteTodo(r.Context(), request)
 	if err != nil {
-		writeAPIGenError(w, http.StatusInternalServerError, err.Error())
+		writeAPIGenError(b.responder, w, r, GenTransportError{OperationID: "completeTodo", Kind: "handler", StatusCode: 500, Code: "internal_error", PublicDetail: "Internal server error.", Cause: err})
 		return
 	}
 	if err := response.VisitCompleteTodoResponse(w); err != nil {
-		writeAPIGenError(w, http.StatusInternalServerError, err.Error())
+		writeAPIGenError(b.responder, w, r, GenTransportError{OperationID: "completeTodo", Kind: "response_serialization", StatusCode: 500, Code: "internal_error", PublicDetail: "Internal server error.", Cause: err})
 	}
 }
 
 // DispatchAPIGenStrictOperation dispatches to strict handlers without oapi strict wrappers.
-func DispatchAPIGenStrictOperation(operationID string, handler GenStrictServerInterface, w http.ResponseWriter, r *http.Request) bool {
-	return DispatchAPIGenOperation(operationID, genStrictBridge{handler: handler}, w, r)
+func DispatchAPIGenStrictOperation(operationID string, handler GenStrictServerInterface, responder GenTransportErrorResponder, w http.ResponseWriter, r *http.Request) bool {
+	return DispatchAPIGenOperation(operationID, genStrictBridge{handler: handler, responder: responder}, responder, w, r)
 }

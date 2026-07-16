@@ -40,9 +40,7 @@ func (s *Server) ListTodos(_ context.Context, request gen.GenListTodosRequest) (
 		statusFilter = strings.TrimSpace(*request.Params.Status)
 		if statusFilter != "" && statusFilter != "open" && statusFilter != "completed" {
 			return gen.GenListTodos400JSONResponse{
-				GenBadRequestJSONResponse: gen.GenBadRequestJSONResponse{
-					Body: gen.Error{Code: 400, Message: "status must be open or completed"},
-				},
+				Body: gen.Error{Code: "invalid_status", Message: "status must be open or completed"},
 			}, nil
 		}
 	}
@@ -62,18 +60,14 @@ func (s *Server) ListTodos(_ context.Context, request gen.GenListTodosRequest) (
 func (s *Server) CreateTodo(_ context.Context, request gen.GenCreateTodoRequest) (gen.GenCreateTodoResponse, error) {
 	if request.Body == nil {
 		return gen.GenCreateTodo400JSONResponse{
-			GenBadRequestJSONResponse: gen.GenBadRequestJSONResponse{
-				Body: gen.Error{Code: 400, Message: "request body is required"},
-			},
+			Body: gen.Error{Code: "invalid_request", Message: "request body is required"},
 		}, nil
 	}
 
 	title := strings.TrimSpace(request.Body.Title)
 	if title == "" {
 		return gen.GenCreateTodo400JSONResponse{
-			GenBadRequestJSONResponse: gen.GenBadRequestJSONResponse{
-				Body: gen.Error{Code: 400, Message: "title is required"},
-			},
+			Body: gen.Error{Code: "invalid_title", Message: "title is required"},
 		}, nil
 	}
 
@@ -107,9 +101,7 @@ func (s *Server) CompleteTodo(_ context.Context, request gen.GenCompleteTodoRequ
 	todo, ok := s.todos[request.TodoId]
 	if !ok {
 		return gen.GenCompleteTodo404JSONResponse{
-			GenNotFoundJSONResponse: gen.GenNotFoundJSONResponse{
-				Body: gen.Error{Code: 404, Message: "todo not found"},
-			},
+			Body: gen.Error{Code: "not_found", Message: "todo not found"},
 		}, nil
 	}
 	todo.Status = "completed"
@@ -123,9 +115,7 @@ func (s *Server) DeleteTodo(_ context.Context, request gen.GenDeleteTodoRequest)
 
 	if _, ok := s.todos[request.TodoId]; !ok {
 		return gen.GenDeleteTodo404JSONResponse{
-			GenNotFoundJSONResponse: gen.GenNotFoundJSONResponse{
-				Body: gen.Error{Code: 404, Message: "todo not found"},
-			},
+			Body: gen.Error{Code: "not_found", Message: "todo not found"},
 		}, nil
 	}
 
@@ -147,8 +137,6 @@ func getTodoNotFoundResponse(todoID string) gen.GenGetTodo404JSONResponse {
 		message = "todo id is required"
 	}
 	return gen.GenGetTodo404JSONResponse{
-		GenNotFoundJSONResponse: gen.GenNotFoundJSONResponse{
-			Body: gen.Error{Code: 404, Message: message},
-		},
+		Body: gen.Error{Code: "not_found", Message: message},
 	}
 }

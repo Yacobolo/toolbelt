@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Yacobolo/toolbelt/apigen/emit/gotype"
+	"github.com/Yacobolo/toolbelt/apigen/emit/gounion"
 	"github.com/Yacobolo/toolbelt/apigen/ir"
 )
 
@@ -38,6 +40,9 @@ func emitAliasModels(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("package ")
 	b.WriteString(packageName(opts))
 	b.WriteString("\n\n")
+	if documentHasUnion(doc) {
+		b.WriteString("import (\n\t\"bytes\"\n\t\"encoding/json\"\n\t\"fmt\"\n)\n\n")
+	}
 
 	for _, rootName := range concreteNames {
 		if err := emitCanonicalSchemaType(&b, doc, rootName); err != nil {
@@ -143,10 +148,18 @@ func emitCanonicalSchemaType(b *strings.Builder, doc ir.Document, rootName strin
 
 	typeName := exportedName(rootName)
 	switch schema.Type {
+	case "union":
+		gounion.Emit(b, doc, rootName, schema, exportedName)
+		return nil
 	case "object", "":
 		b.WriteString("type ")
 		b.WriteString(typeName)
 		b.WriteString(" struct {\n")
+		if schema.Base != nil {
+			b.WriteString("\t")
+			b.WriteString(standaloneSchemaRefGoType(*schema.Base))
+			b.WriteString("\n")
+		}
 
 		propertyNames := make([]string, 0, len(schema.Properties))
 		for name := range schema.Properties {
@@ -226,84 +239,15 @@ var apigenOwnedSchemaNames = map[string]bool{
 }
 
 func schemaRefGoType(ref ir.SchemaRef) string {
-	if ref.Ref != "" {
-		name, ok := normalizedSchemaRefName(ref)
-		if !ok {
-			return ""
-		}
-		return genSchemaTypeName(name)
-	}
-
-	switch ref.Type {
-	case "boolean":
-		return "bool"
-	case "integer", "int32":
-		return "int32"
-	case "int64":
-		return "int64"
-	case "number":
-		return "float64"
-	case "array":
-		if ref.Items != nil {
-			return "[]" + schemaRefGoType(*ref.Items)
-		}
-		return "[]any"
-	case "object":
-		return "map[string]any"
-	case "string":
-		return "string"
-	default:
-		return ""
-	}
+	return gotype.Ref(ref, genSchemaTypeName)
 }
 
 func standaloneSchemaRefGoType(ref ir.SchemaRef) string {
-	if ref.Ref != "" {
-		name, ok := normalizedSchemaRefName(ref)
-		if !ok {
-			return "any"
-		}
-		return exportedName(name)
-	}
-
-	switch ref.Type {
-	case "boolean":
-		return "bool"
-	case "integer", "int32":
-		return "int32"
-	case "int64":
-		return "int64"
-	case "number":
-		return "float64"
-	case "array":
-		if ref.Items != nil {
-			return "[]" + standaloneSchemaRefGoType(*ref.Items)
-		}
-		return "[]any"
-	case "object":
-		return "map[string]any"
-	case "string":
-		return "string"
-	default:
-		return "any"
-	}
+	return gotype.Ref(ref, exportedName)
 }
 
 func standaloneSchemaGoType(schema ir.Schema) string {
-	switch schema.Type {
-	case "boolean":
-		return "bool"
-	case "integer", "int32":
-		return "int32"
-	case "int64":
-		return "int64"
-	case "number":
-		return "float64"
-	case "string":
-		return "string"
-	default:
-		return "any"
-	}
+	return gotype.Schema(schema, exportedName)
 }
 
 func quotedGoString(value string) string {
@@ -348,6 +292,12 @@ func schemaDependencies(schema ir.Schema) []string {
 	if schema.Items != nil {
 		collectSchemaRefDependency(*schema.Items, seen)
 	}
+	if schema.Base != nil {
+		collectSchemaRefDependency(*schema.Base, seen)
+	}
+	for _, variant := range schema.OneOf {
+		collectSchemaRefDependency(variant, seen)
+	}
 	names := make([]string, 0, len(seen))
 	for name := range seen {
 		names = append(names, name)
@@ -356,17 +306,25 @@ func schemaDependencies(schema ir.Schema) []string {
 	return names
 }
 
+func documentHasUnion(doc ir.Document) bool {
+	for _, schema := range doc.Schemas {
+		if schema.Type == "union" {
+			return true
+		}
+	}
+	return false
+}
+
 func collectSchemaRefDependency(ref ir.SchemaRef, seen map[string]struct{}) {
 	name, ok := normalizedSchemaRefName(ref)
-	if !ok || name == "Error" {
-		if ref.Items != nil {
-			collectSchemaRefDependency(*ref.Items, seen)
-		}
-		return
+	if ok {
+		seen[name] = struct{}{}
 	}
-	seen[name] = struct{}{}
 	if ref.Items != nil {
 		collectSchemaRefDependency(*ref.Items, seen)
+	}
+	if ref.AdditionalProperties != nil && ref.AdditionalProperties.Schema != nil {
+		collectSchemaRefDependency(*ref.AdditionalProperties.Schema, seen)
 	}
 }
 
@@ -456,7 +414,7 @@ func safeResponseSchemaRoots(doc ir.Document) []string {
 				}
 			}
 			content, ok := ir.PrimaryResponseContent(response)
-			if !ok || content.Schema == nil || isErrorSchemaRef(*content.Schema) {
+			if !ok || content.Schema == nil {
 				continue
 			}
 			bodyTypeName, ok := normalizedSchemaRefName(*content.Schema)
@@ -477,14 +435,6 @@ func safeResponseSchemaRoots(doc ir.Document) []string {
 
 func normalizedSchemaRefName(schema ir.SchemaRef) (string, bool) {
 	return ir.NormalizedSchemaRefName(schema)
-}
-
-func isErrorSchemaRef(schema ir.SchemaRef) bool {
-	ref, ok := normalizedSchemaRefName(schema)
-	if !ok {
-		return false
-	}
-	return exportedName(ref) == "Error"
 }
 
 func resolveRequestSchemaName(doc ir.Document, endpoint ir.Endpoint) (string, bool) {

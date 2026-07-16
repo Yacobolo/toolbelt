@@ -39,7 +39,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
               example:
-                code: 1
+                code: example
+                message: example
+        '415':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '500':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
                 message: example
       tags:
         - Todos
@@ -81,7 +99,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
               example:
-                code: 1
+                code: example
+                message: example
+        '415':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '500':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
                 message: example
       tags:
         - Todos
@@ -114,7 +150,34 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
               example:
-                code: 1
+                code: example
+                message: example
+        '400':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '415':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '500':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
                 message: example
       tags:
         - Todos
@@ -152,7 +215,34 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
               example:
-                code: 1
+                code: example
+                message: example
+        '400':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '415':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '500':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
                 message: example
       tags:
         - Todos
@@ -185,7 +275,34 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
               example:
-                code: 1
+                code: example
+                message: example
+        '400':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '415':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
+                message: example
+        '500':
+          description: Generated transport error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: example
                 message: example
       tags:
         - Todos
@@ -211,14 +328,13 @@ components:
         - message
       properties:
         code:
-          type: integer
-          format: int32
-          example: 1
+          type: string
+          example: example
         message:
           type: string
           example: example
       example:
-        code: 1
+        code: example
         message: example
     ListTodosResponse:
       type: object

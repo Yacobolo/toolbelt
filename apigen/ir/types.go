@@ -3,16 +3,31 @@ package ir
 
 // Document is the root JSON IR payload.
 type Document struct {
-	SchemaVersion string            `json:"schema_version"`
-	API           API               `json:"api"`
-	Info          Info              `json:"info"`
-	OpenAPI       OpenAPI           `json:"openapi,omitempty"`
-	Servers       []Server          `json:"servers,omitempty"`
-	Tags          []Tag             `json:"tags,omitempty"`
-	Schemas       map[string]Schema `json:"schemas,omitempty"`
-	Contracts     []Contract        `json:"contracts,omitempty"`
-	Endpoints     []Endpoint        `json:"endpoints,omitempty"`
-	Extensions    map[string]any    `json:"extensions,omitempty"`
+	SchemaVersion   string            `json:"schema_version"`
+	API             API               `json:"api"`
+	Info            Info              `json:"info"`
+	OpenAPI         OpenAPI           `json:"openapi,omitempty"`
+	Servers         []Server          `json:"servers,omitempty"`
+	Tags            []Tag             `json:"tags,omitempty"`
+	Schemas         map[string]Schema `json:"schemas,omitempty"`
+	Contracts       []Contract        `json:"contracts,omitempty"`
+	Endpoints       []Endpoint        `json:"endpoints,omitempty"`
+	TransportErrors *TransportErrors  `json:"transport_errors,omitempty"`
+	Extensions      map[string]any    `json:"extensions,omitempty"`
+}
+
+// TransportErrors defines generated HTTP transport failure contracts.
+type TransportErrors struct {
+	Schema      SchemaRef                   `json:"schema"`
+	ContentType string                      `json:"content_type"`
+	Failures    map[string]TransportFailure `json:"failures"`
+}
+
+// TransportFailure maps a stable failure kind to public wire behavior.
+type TransportFailure struct {
+	StatusCode   int    `json:"status_code"`
+	Code         string `json:"code"`
+	PublicDetail string `json:"public_detail"`
 }
 
 // API contains APIGen-owned API metadata.
@@ -272,8 +287,17 @@ type Schema struct {
 	PropertyOrder []string                  `json:"property_order,omitempty"`
 	Required      []string                  `json:"required,omitempty"`
 	Items         *SchemaRef                `json:"items,omitempty"`
+	Base          *SchemaRef                `json:"base,omitempty"`
+	OneOf         []SchemaRef               `json:"one_of,omitempty"`
+	Discriminator *Discriminator            `json:"discriminator,omitempty"`
 	Enum          []string                  `json:"enum,omitempty"`
 	Extensions    map[string]any            `json:"extensions,omitempty"`
+}
+
+// Discriminator selects one schema alternative using an object property.
+type Discriminator struct {
+	PropertyName string            `json:"property_name"`
+	Mapping      map[string]string `json:"mapping"`
 }
 
 // SchemaProperty describes one schema property.

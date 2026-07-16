@@ -15,7 +15,7 @@ func TestLoad_Valid(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v3",
+  "schema_version": "v4",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [
@@ -51,7 +51,7 @@ func TestLoad_AcceptsTypedEndpointTool(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "ir.json")
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v3",
+  "schema_version": "v4",
   "api": {"base_path": "/api/v1"},
   "info": {"title": "Tools", "version": "1.0.0"},
   "schemas": {
@@ -135,7 +135,7 @@ func TestLoad_RejectsLegacyAgentExtension(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "ir.json")
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v3",
+  "schema_version": "v4",
   "api": {"base_path": "/"},
   "info": {"title": "Tools", "version": "1.0.0"},
   "endpoints": [{
@@ -155,7 +155,7 @@ func TestLoad_AcceptsContractOnlyIR(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v3",
+  "schema_version": "v4",
   "api": {"base_path": "/"},
   "info": {"title": "Contracts", "version": "1.0.0"},
   "contracts": [{
@@ -191,7 +191,7 @@ func TestLoad_RejectsInvalidContractMetadata(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v3",
+  "schema_version": "v4",
   "api": {"base_path": "/"},
   "info": {"title": "Contracts", "version": "1.0.0"},
   "contracts": [{
@@ -231,7 +231,7 @@ func TestLoad_DuplicateOperation(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v3",
+  "schema_version": "v4",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [
@@ -250,7 +250,7 @@ func TestLoad_NormalizesResponseHeaders(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v3",
+  "schema_version": "v4",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{
@@ -289,7 +289,7 @@ func TestLoad_RejectsDuplicateResponseHeaders(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v3",
+  "schema_version": "v4",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{
@@ -318,7 +318,7 @@ func TestLoad_RejectsDuplicateResponseStatuses(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v3",
+  "schema_version": "v4",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{
@@ -346,7 +346,7 @@ func TestLoad_AcceptsHeaderParameters(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v3",
+  "schema_version": "v4",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{
@@ -368,7 +368,7 @@ func TestLoad_RejectsUnsupportedParameterLocations(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v3",
+  "schema_version": "v4",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{
@@ -391,7 +391,7 @@ func TestLoad_RejectsDuplicateContentTypes(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v3",
+  "schema_version": "v4",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{
@@ -420,7 +420,7 @@ func TestLoad_ValidatesResponseShapeMetadata(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v3",
+  "schema_version": "v4",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{
@@ -450,7 +450,7 @@ func TestLoad_AcceptsEndpointVendorExtensions(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v3",
+  "schema_version": "v4",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{
@@ -482,7 +482,7 @@ func TestLoad_RejectsNonVendorEndpointExtensions(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v3",
+  "schema_version": "v4",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{
@@ -505,7 +505,7 @@ func TestLoad_RejectsUnknownAPIGenEndpointExtensions(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v3",
+  "schema_version": "v4",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{
@@ -552,7 +552,7 @@ func TestLoad_RejectsMalformedAPIGenEndpointExtensions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Helper()
 			err := Validate(Document{
-				SchemaVersion: "v3",
+				SchemaVersion: "v4",
 				API:           API{BasePath: "/v1"},
 				Info:          Info{Title: "Duck", Version: "0.1.0"},
 				Endpoints: []Endpoint{{
@@ -573,7 +573,7 @@ func TestLoad_RejectsUnknownAPIGenResponseExtensions(t *testing.T) {
 	t.Helper()
 
 	err := Validate(Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           API{BasePath: "/v1"},
 		Info:          Info{Title: "Duck", Version: "0.1.0"},
 		Endpoints: []Endpoint{{
@@ -596,7 +596,7 @@ func TestValidate_RejectsNonJSONCompatibleEndpointExtensionValues(t *testing.T) 
 	t.Helper()
 
 	err := Validate(Document{
-		SchemaVersion: "v3",
+		SchemaVersion: "v4",
 		API:           API{BasePath: "/v1"},
 		Info:          Info{Title: "Duck", Version: "0.1.0"},
 		Endpoints: []Endpoint{{
@@ -619,7 +619,7 @@ func TestLoad_RejectsMissingBasePath(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v3",
+  "schema_version": "v4",
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{"method": "get", "path": "/healthz", "operation_id": "getHealth", "responses": [{"status_code": 200, "description": "ok"}]}]
 }`), 0o644))
@@ -636,7 +636,7 @@ func TestLoad_RejectsUnknownSchemaRef(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v3",
+  "schema_version": "v4",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{
@@ -653,6 +653,105 @@ func TestLoad_RejectsUnknownSchemaRef(t *testing.T) {
 	require.ErrorContains(t, err, `references unknown schema "MissingRequest"`)
 }
 
+func TestValidate_AcceptsDiscriminatedComposition(t *testing.T) {
+	doc := Document{
+		SchemaVersion: CurrentSchemaVersion,
+		API:           API{BasePath: "/"},
+		Info:          Info{Title: "Visual API", Version: "1.0.0"},
+		Schemas: map[string]Schema{
+			"Visual": {
+				Type:  "union",
+				OneOf: []SchemaRef{{Ref: "ChartVisual"}, {Ref: "TextVisual"}},
+				Discriminator: &Discriminator{
+					PropertyName: "shape",
+					Mapping:      map[string]string{"chart": "ChartVisual", "text": "TextVisual"},
+				},
+			},
+			"VisualBase":  {Type: "object", Properties: map[string]SchemaProperty{"shape": {Schema: SchemaRef{Type: "string"}}}, Required: []string{"shape"}},
+			"ChartVisual": {Type: "object", Base: &SchemaRef{Ref: "VisualBase"}, Properties: map[string]SchemaProperty{"shape": {Schema: SchemaRef{Type: "string", Enum: []string{"chart"}}}}, Required: []string{"shape"}},
+			"TextVisual":  {Type: "object", Base: &SchemaRef{Ref: "VisualBase"}, Properties: map[string]SchemaProperty{"shape": {Schema: SchemaRef{Type: "string", Enum: []string{"text"}}}}, Required: []string{"shape"}},
+		},
+		Contracts: []Contract{{Name: "visual", Schema: SchemaRef{Ref: "Visual"}}},
+	}
+
+	require.NoError(t, Validate(doc))
+}
+
+func TestValidate_RejectsInvalidDiscriminatorMapping(t *testing.T) {
+	doc := Document{
+		SchemaVersion: CurrentSchemaVersion,
+		API:           API{BasePath: "/"},
+		Info:          Info{Title: "Visual API", Version: "1.0.0"},
+		Schemas: map[string]Schema{
+			"Visual": {
+				Type:          "union",
+				OneOf:         []SchemaRef{{Ref: "ChartVisual"}},
+				Discriminator: &Discriminator{PropertyName: "shape", Mapping: map[string]string{"text": "Missing"}},
+			},
+			"ChartVisual": {Type: "object"},
+		},
+		Contracts: []Contract{{Name: "visual", Schema: SchemaRef{Ref: "Visual"}}},
+	}
+
+	err := Validate(doc)
+	require.ErrorContains(t, err, "discriminator mapping")
+	require.ErrorContains(t, err, "Missing")
+}
+
+func TestValidate_RejectsDiscriminatorWithoutMatchingVariantLiteral(t *testing.T) {
+	doc := Document{
+		SchemaVersion: CurrentSchemaVersion,
+		API:           API{BasePath: "/"},
+		Info:          Info{Title: "Visual API", Version: "1.0.0"},
+		Schemas: map[string]Schema{
+			"Visual":      {Type: "union", OneOf: []SchemaRef{{Ref: "ChartVisual"}}, Discriminator: &Discriminator{PropertyName: "shape", Mapping: map[string]string{"chart": "ChartVisual"}}},
+			"ChartVisual": {Type: "object", Properties: map[string]SchemaProperty{"shape": {Schema: SchemaRef{Type: "string", Enum: []string{"text"}}}}, Required: []string{"shape"}},
+		},
+		Contracts: []Contract{{Name: "visual", Schema: SchemaRef{Ref: "Visual"}}},
+	}
+
+	err := Validate(doc)
+	require.ErrorContains(t, err, "matching literal property")
+}
+
+func TestValidate_AcceptsTransportErrorPolicy(t *testing.T) {
+	doc := Document{
+		SchemaVersion: CurrentSchemaVersion,
+		API:           API{BasePath: "/"},
+		Info:          Info{Title: "API", Version: "1.0.0"},
+		Schemas:       map[string]Schema{"Problem": {Type: "object"}},
+		TransportErrors: &TransportErrors{
+			Schema:      SchemaRef{Ref: "Problem"},
+			ContentType: "application/problem+json",
+			Failures: map[string]TransportFailure{
+				"malformed_body": {StatusCode: 400, Code: "malformed_body", PublicDetail: "The request body is malformed."},
+				"internal":       {StatusCode: 500, Code: "internal", PublicDetail: "Internal server error."},
+			},
+		},
+		Endpoints: []Endpoint{{Method: "get", Path: "/", OperationID: "get", Responses: []Response{{StatusCode: 200, Description: "ok"}}}},
+	}
+
+	require.NoError(t, Validate(doc))
+}
+
+func TestValidate_RejectsEndpointResponseThatConflictsWithTransportPolicy(t *testing.T) {
+	doc := Document{
+		SchemaVersion: CurrentSchemaVersion,
+		API:           API{BasePath: "/"},
+		Info:          Info{Title: "API", Version: "1.0.0"},
+		Schemas:       map[string]Schema{"Problem": {Type: "object"}, "Other": {Type: "object"}},
+		TransportErrors: &TransportErrors{
+			Schema:      SchemaRef{Ref: "Problem"},
+			ContentType: "application/problem+json",
+			Failures:    map[string]TransportFailure{"handler": {StatusCode: 500, Code: "internal", PublicDetail: "Internal server error."}},
+		},
+		Endpoints: []Endpoint{{Method: "get", Path: "/", OperationID: "get", Responses: []Response{{StatusCode: 500, Description: "error", Contents: []BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &SchemaRef{Ref: "Other"}}}}}}},
+	}
+
+	err := Validate(doc)
+	require.ErrorContains(t, err, "conflicts with transport_errors")
+}
+
 func TestLoad_RejectsUnsupportedPathArrayParameter(t *testing.T) {
 	t.Helper()
 
@@ -660,7 +759,7 @@ func TestLoad_RejectsUnsupportedPathArrayParameter(t *testing.T) {
 	path := filepath.Join(dir, "ir.json")
 
 	require.NoError(t, os.WriteFile(path, []byte(`{
-  "schema_version": "v3",
+  "schema_version": "v4",
   "api": {"base_path": "/v1"},
   "info": {"title": "Duck", "version": "0.1.0"},
   "endpoints": [{

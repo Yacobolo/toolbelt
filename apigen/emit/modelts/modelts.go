@@ -40,9 +40,23 @@ func Emit(doc ir.Document, _ Options) ([]byte, error) {
 
 func emitSchema(b *strings.Builder, name string, schema ir.Schema) {
 	switch schema.Type {
+	case "union":
+		variants := make([]string, 0, len(schema.OneOf))
+		for _, variant := range schema.OneOf {
+			variants = append(variants, tsType(variant))
+		}
+		b.WriteString("export type ")
+		b.WriteString(exportedName(name))
+		b.WriteString(" = ")
+		b.WriteString(strings.Join(variants, " | "))
+		b.WriteString("\n\n")
 	case "object", "":
 		b.WriteString("export interface ")
 		b.WriteString(exportedName(name))
+		if schema.Base != nil {
+			b.WriteString(" extends ")
+			b.WriteString(tsType(*schema.Base))
+		}
 		b.WriteString(" {\n")
 		required := contractutil.RequiredSet(schema)
 		for _, propertyName := range contractutil.OrderedProperties(schema) {

@@ -9,7 +9,7 @@ Module path: `github.com/Yacobolo/toolbelt/apigen`
 APIGen has two contract layers:
 
 - TypeSpec authoring input for humans
-- JSON IR `v3` for generators
+- JSON IR `v4` for generators
 
 Canonical OpenAPI is the published API artifact for HTTP targets. JSON IR is the compatibility boundary between TypeSpec and emitters. Repo-owned OpenAPI extensions such as `x-authz` are preserved there. Generic data-contract roots live in the same IR under `contracts[]` and reuse the shared `schemas` registry.
 
@@ -18,7 +18,7 @@ Canonical OpenAPI is the published API artifact for HTTP targets. JSON IR is the
 Install the CLI:
 
 ```bash
-go install github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.4.1
+go install github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.5.0
 ```
 
 Or run from this module during local development:
@@ -177,12 +177,14 @@ Generic operation `x-*` extensions remain available for downstream metadata. `x-
 Install as a dependency with:
 
 ```bash
-go get github.com/Yacobolo/toolbelt/apigen@v0.4.1
+go get github.com/Yacobolo/toolbelt/apigen@v0.5.0
 ```
 
 ## Contract Notes
 
-JSON IR emits and accepts schema version `v3` only. Required root fields are `schema_version`, `info.title`, `info.version`, and at least one endpoint or contract root. Request and response bodies use ordered `contents` entries with explicit `content_type` and `body_kind`. Endpoint extensions preserve operation-level `x-*` vendor metadata; APIGen-owned endpoint extensions include `x-authz` and `x-apigen-manual`. Typed tools live on `Endpoint.tool` and never create `contracts[]` entries.
+JSON IR emits and accepts schema version `v4` only. Required root fields are `schema_version`, `info.title`, `info.version`, and at least one endpoint or contract root. Request and response bodies use ordered `contents` entries with explicit `content_type` and `body_kind`. Schema composition uses `base`, `one_of`, and `discriminator`; map value schemas remain in `additional_properties`. Endpoint extensions preserve operation-level `x-*` vendor metadata; APIGen-owned endpoint extensions include `x-authz` and `x-apigen-manual`. Typed tools live on `Endpoint.tool` and never create `contracts[]` entries.
+
+HTTP targets can declare generator-owned failures explicitly with `@apigen.transportErrors`. Generated strict registration requires a `GenTransportErrorResponder`; the responder owns the authored wire model, media type, request IDs, logging, and other application policy. Generated code supplies a stable failure kind, configured status/code/public detail, and the original cause without exposing that cause to clients.
 
 Contract targets use the shared `schemas` registry plus `contracts[]` roots:
 
@@ -311,14 +313,14 @@ namespace Deployments {
 }
 ```
 
-## v0.4.0 Migration Notes
+## v0.5.0 Migration Notes
 
-- JSON IR `v3` is the only accepted IR version; v2 loading and normalization are removed.
-- Generic `contracts[]` roots generate Go models, TypeScript types, and draft 2020-12 JSON Schema.
-- Endpoint-derived tools use `@apigen.tool`, generated descriptors, and `runtime/agenttool`.
-- Legacy `x-agent` authoring and extension parsing are rejected rather than deprecated.
-- Generated tool registries expose `GetAPIGenToolContracts` and `GetAPIGenToolContract` with defensive copies.
-- Canonical OpenAPI emits normalized typed metadata as `x-apigen-tool`.
-- Existing HTTP generation remains contract-first and keeps strict transport validation.
+- JSON IR `v4` is the only accepted IR version; v3 is intentionally not loaded.
+- TypeSpec inheritance and discriminated unions now remain explicit through IR, OpenAPI, Go, TypeScript, JSON Schema, and agent-tool schemas.
+- Generated Go union wrappers strictly reject missing/unknown discriminators, unknown fields, and missing required variant properties.
+- `Record<T>` retains `T` recursively in generated Go models, including nested arrays and maps.
+- `int64` remains `int64` in every generated Go model path.
+- Generated strict server registration now requires an injected `GenTransportErrorResponder`; legacy shared `Error` response helpers and the hard-coded writer were removed.
+- Regenerate all checked-in IR and generated artifacts when upgrading.
 
 See [`ir/CONTRACT.md`](./ir/CONTRACT.md) for the full IR contract and run `go test ./...` for the module smoke coverage.

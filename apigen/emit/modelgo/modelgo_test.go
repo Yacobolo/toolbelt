@@ -23,6 +23,30 @@ func TestEmit_GeneratesContractRootsAndDependencies(t *testing.T) {
 	require.Contains(t, content, "Note *string `json:\"note,omitempty\"`")
 }
 
+func TestEmit_GeneratesStrictDiscriminatedUnion(t *testing.T) {
+	doc := ir.Document{
+		Schemas: map[string]ir.Schema{
+			"Visual":      {Type: "union", OneOf: []ir.SchemaRef{{Ref: "ChartVisual"}, {Ref: "TextVisual"}}, Discriminator: &ir.Discriminator{PropertyName: "shape", Mapping: map[string]string{"chart": "ChartVisual", "text": "TextVisual"}}},
+			"VisualBase":  {Type: "object", Properties: map[string]ir.SchemaProperty{"shape": {Schema: ir.SchemaRef{Type: "string"}}}, Required: []string{"shape"}},
+			"ChartVisual": {Type: "object", Base: &ir.SchemaRef{Ref: "VisualBase"}, Properties: map[string]ir.SchemaProperty{"shape": {Schema: ir.SchemaRef{Type: "string", Enum: []string{"chart"}}}, "points": {Schema: ir.SchemaRef{Type: "array", Items: &ir.SchemaRef{Type: "integer"}}}}, Required: []string{"shape", "points"}},
+			"TextVisual":  {Type: "object", Base: &ir.SchemaRef{Ref: "VisualBase"}, Properties: map[string]ir.SchemaProperty{"shape": {Schema: ir.SchemaRef{Type: "string", Enum: []string{"text"}}}}, Required: []string{"shape"}},
+		},
+		Contracts: []ir.Contract{{Name: "visual", Schema: ir.SchemaRef{Ref: "Visual"}}},
+	}
+
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, "type VisualVariant interface")
+	require.Contains(t, content, "Value VisualVariant")
+	require.Contains(t, content, "VisualBase")
+	require.Contains(t, content, "func (value *Visual) UnmarshalJSON")
+	require.Contains(t, content, "decoder.DisallowUnknownFields()")
+	require.Contains(t, content, `case "chart":`)
+	require.Contains(t, content, `if _, ok := fields["points"]; !ok`)
+	require.Contains(t, content, `required property points is missing`)
+}
+
 func contractDoc() ir.Document {
 	return ir.Document{
 		Contracts: []ir.Contract{{Name: "DashboardEnvelope", Schema: ir.SchemaRef{Ref: "DashboardEnvelope"}}},

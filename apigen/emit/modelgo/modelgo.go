@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/Yacobolo/toolbelt/apigen/emit/contractutil"
+	"github.com/Yacobolo/toolbelt/apigen/emit/gotype"
+	"github.com/Yacobolo/toolbelt/apigen/emit/gounion"
 	"github.com/Yacobolo/toolbelt/apigen/ir"
 )
 
@@ -22,12 +24,16 @@ func Emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString(packageName(opts))
 	b.WriteString("\n\n")
 
-	for _, name := range contractutil.DependencyNames(doc) {
+	names := contractutil.DependencyNames(doc)
+	if hasUnion(doc, names) {
+		b.WriteString("import (\n\t\"bytes\"\n\t\"encoding/json\"\n\t\"fmt\"\n)\n\n")
+	}
+	for _, name := range names {
 		schema, ok := doc.Schemas[name]
 		if !ok {
 			return nil, fmt.Errorf("contract schema %q is missing", name)
 		}
-		emitSchema(&b, name, schema)
+		emitSchema(&b, doc, name, schema)
 	}
 	return []byte(b.String()), nil
 }
@@ -39,13 +45,20 @@ func packageName(opts Options) string {
 	return opts.PackageName
 }
 
-func emitSchema(b *strings.Builder, name string, schema ir.Schema) {
+func emitSchema(b *strings.Builder, doc ir.Document, name string, schema ir.Schema) {
 	typeName := exportedName(name)
 	switch schema.Type {
+	case "union":
+		gounion.Emit(b, doc, name, schema, exportedName)
 	case "object", "":
 		b.WriteString("type ")
 		b.WriteString(typeName)
 		b.WriteString(" struct {\n")
+		if schema.Base != nil {
+			b.WriteString("\t")
+			b.WriteString(schemaRefGoType(*schema.Base))
+			b.WriteString("\n")
+		}
 		required := contractutil.RequiredSet(schema)
 		for _, propertyName := range contractutil.OrderedProperties(schema) {
 			property := schema.Properties[propertyName]
@@ -85,46 +98,21 @@ func emitSchema(b *strings.Builder, name string, schema ir.Schema) {
 	}
 }
 
+func hasUnion(doc ir.Document, names []string) bool {
+	for _, name := range names {
+		if doc.Schemas[name].Type == "union" {
+			return true
+		}
+	}
+	return false
+}
+
 func schemaRefGoType(ref ir.SchemaRef) string {
-	if ref.Ref != "" {
-		name, ok := ir.NormalizedSchemaRefName(ref)
-		if ok {
-			return exportedName(name)
-		}
-		return "any"
-	}
-	if ref.AdditionalProperties != nil {
-		if ref.AdditionalProperties.Schema != nil {
-			return "map[string]" + schemaRefGoType(*ref.AdditionalProperties.Schema)
-		}
-		return "map[string]any"
-	}
-	return schemaGoType(ref.Type, ref.Items, ref.Format)
+	return gotype.Ref(ref, exportedName)
 }
 
 func schemaGoType(schemaType string, items *ir.SchemaRef, format string) string {
-	switch schemaType {
-	case "boolean":
-		return "bool"
-	case "integer":
-		if format == "int64" {
-			return "int64"
-		}
-		return "int32"
-	case "number":
-		return "float64"
-	case "array":
-		if items != nil {
-			return "[]" + schemaRefGoType(*items)
-		}
-		return "[]any"
-	case "object":
-		return "map[string]any"
-	case "string":
-		return "string"
-	default:
-		return "any"
-	}
+	return gotype.Ref(ir.SchemaRef{Type: schemaType, Items: items, Format: format}, exportedName)
 }
 
 func emitEnumConstants(b *strings.Builder, typeName string, values []string) {

@@ -1,14 +1,14 @@
-# JSON IR Contract (`v3`)
+# JSON IR Contract (`v4`)
 
 `github.com/Yacobolo/toolbelt/apigen/ir` defines the versioned JSON intermediate representation consumed by APIGen.
 
 ## Versioning
 
-- Current emitted version: `v3`
-- The root document must contain `schema_version: "v3"`
+- Current emitted version: `v4`
+- The root document must contain `schema_version: "v4"`
 - `ir.Load` rejects every other schema version
 - Breaking IR changes require a new schema version
-- `v3` defines HTTP endpoints, generic data contract roots, schema metadata, and typed endpoint tools
+- `v4` defines HTTP endpoints, generic data contract roots, schema composition, explicit transport-error policy, schema metadata, and typed endpoint tools
 
 ## Root Document
 
@@ -28,6 +28,7 @@ Optional fields:
 - `schemas`
 - `contracts`
 - `endpoints`
+- `transport_errors`
 - `extensions`
 
 `schemas` is the shared named schema registry for HTTP bodies, parameters, generated model types, and generic contract roots.
@@ -182,6 +183,14 @@ Current supported response shape:
 
 Response headers are unique case-insensitively per response.
 
+## Generated Transport Errors
+
+`transport_errors` explicitly defines failures owned by generated HTTP transport code. It contains a resolvable authored `schema`, a `content_type`, and a map of stable failure kinds to `status_code`, application `code`, and safe `public_detail`.
+
+The TypeSpec `@apigen.transportErrors` namespace decorator authors this policy. Generated strict server registration requires a `GenTransportErrorResponder`. The responder receives the operation ID, failure kind, configured public fields, and original `Cause`; it owns serialization, request-ID/instance attachment, field violations, logging, and observability. Generated code never sends `Cause.Error()` to clients.
+
+Known generated kinds include `path_parameter`, `query_parameter`, `header_parameter`, `malformed_body`, `unsupported_media_type`, `multipart`, `handler`, and `response_serialization`. The selected status codes are added to canonical and embedded OpenAPI responses with the selected schema and media type.
+
 ## Schemas
 
 `schemas` is a named registry used by emitted OpenAPI, generated Go code, generated TypeScript types, generated JSON Schema, and generic contract roots.
@@ -191,6 +200,12 @@ Response headers are unique case-insensitively per response.
 JSON and urlencoded form object bodies intended for generated Go output should resolve to named schema entries in this registry. Text bodies generate `string`; raw binary `bytes` bodies generate `[]byte`; TypeSpec `Http.File` bodies generate streaming-capable `GenFile` with byte contents or a reader, content type, optional filename, and optional size metadata. Generators reject anonymous object bodies when they cannot be mapped to a stable generated Go type.
 
 Schema-level and schema-property-level `extensions` preserve downstream-owned metadata. Generic extensions must use `x-*` keys and JSON-compatible values. APIGen validates and preserves this metadata; interpretation belongs to downstream application logic and emitters.
+
+Object inheritance uses `base`. Closed tagged unions use `type: "union"`, ordered `one_of` references, and a `discriminator` with `property_name` plus literal-to-schema `mapping`. Derived variants retain literal discriminator constraints instead of flattened copies of inherited properties. Named unions and union references nested in arrays or `additional_properties` remain reusable.
+
+`SchemaRef.additional_properties` represents typed maps. A nested schema preserves `Record<T>` recursively across Go, TypeScript, OpenAPI, JSON Schema, and agent-tool output. Integer `format` is authoritative: `int32` maps to Go `int32`, while `int64` maps to Go `int64` without narrowing.
+
+Generated Cobra metadata includes expanded portable `schema_json` values for parameters, object fields, multipart parts, and complete request bodies. Nested arrays/maps of unions therefore retain their closed `oneOf` variants for CLI consumers instead of degrading to coarse `array` or `object` labels.
 
 ## Contract Roles
 

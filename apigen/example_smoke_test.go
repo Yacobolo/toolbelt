@@ -134,7 +134,7 @@ func TestExample_TypeSpecToGeneratedBuildAndRun(t *testing.T) {
 	assertGeneratedImportsUsePublicSurfaces(t, filepath.Join(exampleRoot, "cmd", "cli", "gen", "apigen_registry.gen.go"))
 
 	contractIR := mustReadFile(t, filepath.Join(exampleRoot, "contracts", "gen", "json-ir.json"))
-	require.Contains(t, contractIR, `"schema_version": "v3"`)
+	require.Contains(t, contractIR, `"schema_version": "v4"`)
 	require.Contains(t, contractIR, `"contracts":`)
 	require.Contains(t, contractIR, `"DashboardEnvelope"`)
 	require.NotContains(t, contractIR, `"openapi"`)

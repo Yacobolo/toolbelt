@@ -43,6 +43,15 @@ export interface ContractOptions {
   tags?: string[];
 }
 
+export interface TransportErrorsOptions {
+  contentType: string;
+  failures: Array<{ kind: string; statusCode: number; code: string; publicDetail: string }>;
+}
+
+export interface TransportErrorsDefinition extends TransportErrorsOptions {
+  schema: Model;
+}
+
 export interface ToolInputFieldOptions {
   source: "path" | "query" | "header" | "body";
   name: string;
@@ -85,6 +94,7 @@ const packageKey = Symbol.for("@yacobolo/apigen.package");
 const contractKey = Symbol.for("@yacobolo/apigen.contract");
 const metadataKey = Symbol.for("@yacobolo/apigen.metadata");
 const toolKey = Symbol.for("@yacobolo/apigen.tool");
+const transportErrorsKey = Symbol.for("@yacobolo/apigen.transportErrors");
 
 export function $cli(context: DecoratorContext, target: Operation, options: CLIOptions) {
   context.program.stateMap(cliKey).set(target, options);
@@ -130,6 +140,15 @@ export function $tool(context: DecoratorContext, target: Operation, options: Too
   context.program.stateMap(toolKey).set(target, options);
 }
 
+export function $transportErrors(
+  context: DecoratorContext,
+  target: Namespace,
+  schema: Model,
+  options: TransportErrorsOptions,
+) {
+  context.program.stateMap(transportErrorsKey).set(target, { schema, ...options });
+}
+
 export const $decorators = {
   apigen: {
     cli: $cli,
@@ -140,6 +159,7 @@ export const $decorators = {
     contract: $contract,
     metadata: $metadata,
     tool: $tool,
+    transportErrors: $transportErrors,
   },
 };
 
@@ -179,4 +199,13 @@ export function getMetadata(
 
 export function getTool(context: { program: DecoratorContext["program"] }, target: Operation) {
   return context.program.stateMap(toolKey).get(target) as ToolOptions | undefined;
+}
+
+export function getTransportErrors(
+  context: { program: DecoratorContext["program"] },
+  target: Namespace,
+) {
+  return context.program.stateMap(transportErrorsKey).get(target) as
+    | TransportErrorsDefinition
+    | undefined;
 }
