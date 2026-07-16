@@ -1,11 +1,7 @@
 // Package schemajson expands APIGen schema references into portable JSON Schema values.
 package schemajson
 
-import (
-	"sort"
-
-	"github.com/Yacobolo/toolbelt/apigen/ir"
-)
+import "github.com/Yacobolo/toolbelt/apigen/ir"
 
 // Ref expands ref and its transitive named dependencies. Recursive references
 // become unconstrained values because generated portable schemas have no defs registry.
@@ -65,7 +61,7 @@ func schemaRef(doc ir.Document, ref ir.SchemaRef, active map[string]bool) map[st
 
 func schemaValue(doc ir.Document, schema ir.Schema, active map[string]bool) map[string]any {
 	if schema.Type == "object" {
-		schema = flattenObject(doc, schema, map[string]bool{})
+		schema = ir.FlattenObjectSchema(doc, schema)
 	}
 	out := map[string]any{}
 	if schema.Type != "" && schema.Type != "union" {
@@ -101,41 +97,4 @@ func schemaValue(doc ir.Document, schema ir.Schema, active map[string]bool) map[
 		out["items"] = schemaRef(doc, *schema.Items, active)
 	}
 	return out
-}
-
-func flattenObject(doc ir.Document, schema ir.Schema, active map[string]bool) ir.Schema {
-	if schema.Base == nil {
-		return schema
-	}
-	baseName, ok := ir.NormalizedSchemaRefName(*schema.Base)
-	if !ok || active[baseName] {
-		return schema
-	}
-	base, ok := doc.Schemas[baseName]
-	if !ok || base.Type != "object" {
-		return schema
-	}
-	active[baseName] = true
-	base = flattenObject(doc, base, active)
-	delete(active, baseName)
-	properties := make(map[string]ir.SchemaProperty, len(base.Properties)+len(schema.Properties))
-	for name, property := range base.Properties {
-		properties[name] = property
-	}
-	for name, property := range schema.Properties {
-		properties[name] = property
-	}
-	requiredSet := make(map[string]struct{}, len(base.Required)+len(schema.Required))
-	for _, name := range append(append([]string(nil), base.Required...), schema.Required...) {
-		requiredSet[name] = struct{}{}
-	}
-	required := make([]string, 0, len(requiredSet))
-	for name := range requiredSet {
-		required = append(required, name)
-	}
-	sort.Strings(required)
-	schema.Base = nil
-	schema.Properties = properties
-	schema.Required = required
-	return schema
 }

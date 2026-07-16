@@ -462,34 +462,8 @@ func validateToolOutput(doc Document, endpoint Endpoint) error {
 }
 
 func compatibleToolSuccessSchema(endpoint Endpoint) (SchemaRef, bool, error) {
-	var found *SchemaRef
-	var canonical []byte
-	for _, response := range endpoint.Responses {
-		if response.StatusCode < 200 || response.StatusCode >= 300 {
-			continue
-		}
-		if len(response.Contents) == 0 {
-			if found != nil {
-				return SchemaRef{}, false, fmt.Errorf("success responses mix body and bodyless shapes")
-			}
-			continue
-		}
-		if len(response.Contents) != 1 || response.Contents[0].BodyKind != "json" || response.Contents[0].Schema == nil {
-			return SchemaRef{}, false, fmt.Errorf("success responses must use one JSON body shape")
-		}
-		ref := *response.Contents[0].Schema
-		encoded, _ := json.Marshal(ref)
-		if found != nil && string(encoded) != string(canonical) {
-			return SchemaRef{}, false, fmt.Errorf("success responses have incompatible body schemas")
-		}
-		copyRef := ref
-		found = &copyRef
-		canonical = encoded
-	}
-	if found == nil {
-		return SchemaRef{}, false, nil
-	}
-	return *found, true, nil
+	ref, _, found, err := ToolSuccessSchema(endpoint)
+	return ref, found, err
 }
 
 func validateToolProjection(doc Document, scope SchemaRef, projection ToolProjection, targets map[string]struct{}, context string) error {
@@ -534,79 +508,17 @@ func validateToolProjection(doc Document, scope SchemaRef, projection ToolProjec
 }
 
 func resolveToolPointer(doc Document, scope SchemaRef, pointer string) (SchemaRef, error) {
-	segments, err := toolPointerSegments(pointer)
-	if err != nil {
-		return SchemaRef{}, err
-	}
-	current := scope
-	for _, segment := range segments {
-		if current.AdditionalProperties != nil {
-			if current.AdditionalProperties.Schema != nil {
-				current = *current.AdditionalProperties.Schema
-			} else if current.AdditionalProperties.Any {
-				current = SchemaRef{Type: "object"}
-			} else {
-				return SchemaRef{}, fmt.Errorf("pointer %q cannot traverse %q", pointer, segment)
-			}
-			continue
-		}
-		schema, ok := concreteSchema(doc, current)
-		if ok && schema.Type == "object" {
-			property, exists := schema.Properties[segment]
-			if !exists {
-				return SchemaRef{}, fmt.Errorf("pointer %q references unknown property %q", pointer, segment)
-			}
-			current = property.Schema
-			continue
-		}
-		return SchemaRef{}, fmt.Errorf("pointer %q cannot traverse %q", pointer, segment)
-	}
-	return current, nil
+	resolved, _, err := ResolveSchemaPointer(doc, scope, pointer)
+	return resolved, err
 }
 
 func toolPointerSegments(pointer string) ([]string, error) {
-	if pointer == "" {
-		return nil, nil
-	}
-	if !strings.HasPrefix(pointer, "/") {
-		return nil, fmt.Errorf("pointer %q must be an RFC 6901 pointer", pointer)
-	}
-	raw := strings.Split(strings.TrimPrefix(pointer, "/"), "/")
-	segments := make([]string, len(raw))
-	for i, value := range raw {
-		if strings.Contains(value, "~") {
-			for j := 0; j < len(value); j++ {
-				if value[j] == '~' && (j+1 >= len(value) || (value[j+1] != '0' && value[j+1] != '1')) {
-					return nil, fmt.Errorf("pointer %q has invalid escape", pointer)
-				}
-			}
-		}
-		segments[i] = strings.ReplaceAll(strings.ReplaceAll(value, "~1", "/"), "~0", "~")
-	}
-	return segments, nil
+	return JSONPointerSegments(pointer)
 }
 
 func toolProjectionChildScope(doc Document, ref SchemaRef) (SchemaRef, string) {
-	if ref.AdditionalProperties != nil {
-		if ref.AdditionalProperties.Schema != nil {
-			return *ref.AdditionalProperties.Schema, "map"
-		}
-		return SchemaRef{Type: "object"}, "map"
-	}
-	if schema, ok := concreteSchema(doc, ref); ok {
-		switch schema.Type {
-		case "array":
-			if schema.Items != nil {
-				return *schema.Items, "array"
-			}
-		case "object":
-			return ref, "object"
-		}
-	}
-	if ref.Type == "array" && ref.Items != nil {
-		return *ref.Items, "array"
-	}
-	return ref, ref.Type
+	kind, child := SchemaProjectionKind(doc, ref)
+	return child, kind
 }
 
 func concreteSchema(doc Document, ref SchemaRef) (Schema, bool) {
@@ -1267,29 +1179,41 @@ func validateEndpointCLI(doc Document, endpoint Endpoint, cli *CLI) error {
 	if !ok {
 		return fmt.Errorf("endpoint %q cli output requires a success response", endpoint.OperationID)
 	}
-	successSchema, hasSuccessSchema := ResolveResponseBodySchema(doc, *successResponse)
+	successRef, hasSuccessSchema := ResolveResponseBodySchemaRef(*successResponse)
 	switch cli.Output.Mode {
 	case "collection":
-		itemSchema, err := validateCLICollectionSchema(doc, endpoint.OperationID, successSchema, hasSuccessSchema, cli)
+		itemRef, err := validateCLICollectionSchema(doc, endpoint.OperationID, successRef, hasSuccessSchema, cli)
 		if err != nil {
 			return err
 		}
 		for _, name := range cli.Output.TableColumns {
-			if _, ok := itemSchema.Properties[name]; !ok {
+			found, err := resolveCLIOutputProperty(doc, itemRef, name)
+			if err != nil {
+				return fmt.Errorf("endpoint %q cli.output.table_columns item field %q: %w", endpoint.OperationID, name, err)
+			}
+			if !found {
 				return fmt.Errorf("endpoint %q cli.output.table_columns references unknown item field %q", endpoint.OperationID, name)
 			}
 		}
 		for _, name := range cli.Output.QuietFields {
-			if _, ok := itemSchema.Properties[name]; !ok {
+			found, err := resolveCLIOutputProperty(doc, itemRef, name)
+			if err != nil {
+				return fmt.Errorf("endpoint %q cli.output.quiet_fields item field %q: %w", endpoint.OperationID, name, err)
+			}
+			if !found {
 				return fmt.Errorf("endpoint %q cli.output.quiet_fields references unknown item field %q", endpoint.OperationID, name)
 			}
 		}
 	case "detail":
-		if !hasSuccessSchema || successSchema.Type != "object" {
+		if _, object := ResolveObjectSchema(doc, successRef); !hasSuccessSchema || !object {
 			return fmt.Errorf("endpoint %q cli.output.mode=detail requires an object success schema", endpoint.OperationID)
 		}
 		for _, name := range append(append([]string(nil), cli.Output.TableColumns...), cli.Output.QuietFields...) {
-			if _, ok := successSchema.Properties[name]; !ok {
+			found, err := resolveCLIOutputProperty(doc, successRef, name)
+			if err != nil {
+				return fmt.Errorf("endpoint %q cli.output response field %q: %w", endpoint.OperationID, name, err)
+			}
+			if !found {
 				return fmt.Errorf("endpoint %q cli.output references unknown response field %q", endpoint.OperationID, name)
 			}
 		}
@@ -1306,32 +1230,37 @@ func validateEndpointCLI(doc Document, endpoint Endpoint, cli *CLI) error {
 	return nil
 }
 
-func validateCLICollectionSchema(doc Document, operationID string, successSchema Schema, hasSuccessSchema bool, cli *CLI) (Schema, error) {
-	if !hasSuccessSchema || successSchema.Type != "object" {
-		return Schema{}, fmt.Errorf("endpoint %q cli.output.mode=collection requires an object success schema", operationID)
+func validateCLICollectionSchema(doc Document, operationID string, successRef SchemaRef, hasSuccessSchema bool, cli *CLI) (SchemaRef, error) {
+	if _, object := ResolveObjectSchema(doc, successRef); !hasSuccessSchema || !object {
+		return SchemaRef{}, fmt.Errorf("endpoint %q cli.output.mode=collection requires an object success schema", operationID)
 	}
 	itemsField := "data"
 	if cli.Pagination != nil && strings.TrimSpace(cli.Pagination.ItemsField) != "" {
 		itemsField = cli.Pagination.ItemsField
 	}
-	property, ok := successSchema.Properties[itemsField]
+	property, ok, err := ResolveObjectProperty(doc, successRef, itemsField)
+	if err != nil {
+		return SchemaRef{}, fmt.Errorf("endpoint %q cli collection items field %q: %w", operationID, itemsField, err)
+	}
 	if !ok {
-		return Schema{}, fmt.Errorf("endpoint %q cli collection items field %q is missing", operationID, itemsField)
+		return SchemaRef{}, fmt.Errorf("endpoint %q cli collection items field %q is missing", operationID, itemsField)
 	}
-	itemSchemaRef := property.Schema
-	itemType := strings.ToLower(strings.TrimSpace(itemSchemaRef.Type))
-	if itemType != "array" {
-		return Schema{}, fmt.Errorf("endpoint %q cli collection items field %q must be an array", operationID, itemsField)
+	kind, itemSchemaRef := SchemaProjectionKind(doc, property.Property.Schema)
+	if kind != "array" {
+		return SchemaRef{}, fmt.Errorf("endpoint %q cli collection items field %q must be an array", operationID, itemsField)
 	}
-	if itemSchemaRef.Items == nil {
-		return Schema{}, fmt.Errorf("endpoint %q cli collection items field %q must declare items", operationID, itemsField)
+	if _, ok := ResolveObjectSchema(doc, itemSchemaRef); !ok {
+		return SchemaRef{}, fmt.Errorf("endpoint %q cli collection item schema could not be resolved to an object", operationID)
 	}
-	itemSchema, ok := ResolveSchema(doc, *itemSchemaRef.Items)
-	if !ok {
-		return Schema{}, fmt.Errorf("endpoint %q cli collection item schema could not be resolved", operationID)
+	return itemSchemaRef, nil
+}
+
+func resolveCLIOutputProperty(doc Document, scope SchemaRef, name string) (bool, error) {
+	_, found, err := ResolveObjectProperty(doc, scope, name)
+	if err != nil {
+		return false, err
 	}
-	itemSchema.Type = strings.ToLower(strings.TrimSpace(itemSchema.Type))
-	return itemSchema, nil
+	return found, nil
 }
 
 func normalizeEndpointCLI(doc Document, endpoint Endpoint) (*CLI, error) {
@@ -1480,23 +1409,25 @@ func deriveDefaultCLIOutput(doc Document, endpoint Endpoint) (*CLIOutput, *CLIPa
 	if strings.EqualFold(endpoint.Method, "DELETE") || successResponse.StatusCode == 204 {
 		return &CLIOutput{Mode: "empty"}, nil
 	}
-	successSchema, ok := ResolveResponseBodySchema(doc, *successResponse)
+	successRef, ok := ResolveResponseBodySchemaRef(*successResponse)
 	if !ok {
 		return &CLIOutput{Mode: "raw"}, nil
 	}
-	if successSchema.Type == "object" {
-		if itemsProperty, ok := successSchema.Properties["data"]; ok && strings.EqualFold(itemsProperty.Schema.Type, "array") {
+	if successSchema, object := ResolveObjectSchema(doc, successRef); object {
+		if itemsProperty, found, err := ResolveObjectProperty(doc, successRef, "data"); err == nil && found {
+			kind, itemRef := SchemaProjectionKind(doc, itemsProperty.Property.Schema)
+			if kind != "array" {
+				return &CLIOutput{Mode: "detail", QuietFields: defaultQuietFields(successSchema)}, nil
+			}
 			output := &CLIOutput{Mode: "collection"}
 			pagination := &CLIPagination{}
 			pagination.ItemsField = "data"
-			if nextProperty, ok := successSchema.Properties["next_page_token"]; ok && strings.EqualFold(nextProperty.Schema.Type, "string") {
+			if nextProperty, found, err := ResolveObjectProperty(doc, successRef, "next_page_token"); err == nil && found && schemaRefHasType(doc, nextProperty.Property.Schema, "string") {
 				pagination.NextPageTokenField = "next_page_token"
 			}
-			if itemsProperty.Schema.Items != nil && itemsProperty.Schema.Items.Ref != "" {
-				if itemSchema, ok := ResolveSchema(doc, *itemsProperty.Schema.Items); ok && itemSchema.Type == "object" {
-					output.TableColumns = OrderedPropertyNames(itemSchema)
-					output.QuietFields = defaultQuietFields(itemSchema)
-				}
+			if itemSchema, ok := ResolveObjectSchema(doc, itemRef); ok {
+				output.TableColumns = OrderedPropertyNames(itemSchema)
+				output.QuietFields = defaultQuietFields(itemSchema)
 			}
 			return output, pagination
 		}
@@ -1506,6 +1437,11 @@ func deriveDefaultCLIOutput(doc Document, endpoint Endpoint) (*CLIOutput, *CLIPa
 		}, nil
 	}
 	return &CLIOutput{Mode: "raw"}, nil
+}
+
+func schemaRefHasType(doc Document, ref SchemaRef, expected string) bool {
+	schema, ok := resolveConcreteSchema(doc, ref)
+	return ok && strings.EqualFold(schema.Type, expected)
 }
 
 func defaultQuietFields(schema Schema) []string {

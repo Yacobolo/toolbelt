@@ -103,7 +103,7 @@ APIGen flattens endpoint parameters and JSON object-body properties into the mod
 
 Output modes are `raw`, `project`, and `empty`. Project mode uses recursive selection nodes with an RFC 6901 `source`, optional `target`, optional child `select`, and optional `count_as`. Child selection applies to objects, array items, and map values according to the resolved schema. Optional cursor metadata defines a source pointer plus `target` and `has_more_target` names.
 
-Every successful response variant must be empty or share one compatible JSON schema. Projection pointers, node kinds, aliases, count targets, cursor targets, and collisions are validated against that schema. Tool `metadata` accepts only JSON-compatible `x-*` keys.
+The successful response set must be consistently bodyless or provide a JSON representation for every status, and all JSON representations must share one compatible schema. Additional non-JSON representations remain available to server and CLI generation but do not participate in the tool output schema. Generated tool requests select the JSON representation, including overriding an endpoint `Accept` parameter. Projection pointers, node kinds, aliases, count targets, cursor targets, and collisions are validated against the shared JSON schema. Tool `metadata` accepts only JSON-compatible `x-*` keys.
 
 Generated runtime descriptors include operation ID, transport, effect, resolved confirmation, tags, input/output JSON Schemas, bindings, projection, and metadata. Canonical OpenAPI emits the normalized value as `x-apigen-tool`.
 

@@ -18,7 +18,7 @@ Canonical OpenAPI is the published API artifact for HTTP targets. JSON IR is the
 Install the CLI:
 
 ```bash
-go install github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.5.0
+go install github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.5.1
 ```
 
 Or run from this module during local development:
@@ -170,14 +170,14 @@ if ok {
 }
 ```
 
-`runtime/agenttool` strictly validates arguments, builds HTTP requests, preserves non-2xx responses, and projects successful JSON responses. APIGen remains provider-neutral: authorization, credentials, policy decisions, confirmation UI, agent SDK conversion, and operation dispatch stay in the consumer. Canonical OpenAPI publishes normalized descriptors as `x-apigen-tool`.
+`runtime/agenttool` strictly validates arguments, builds HTTP requests, negotiates the generated JSON response representation, preserves non-2xx responses, and projects successful JSON responses. APIGen remains provider-neutral: authorization, credentials, policy decisions, confirmation UI, agent SDK conversion, and operation dispatch stay in the consumer. Canonical OpenAPI publishes normalized descriptors as `x-apigen-tool`.
 
 Generic operation `x-*` extensions remain available for downstream metadata. `x-agent` is reserved and rejected; there is no raw compatibility parser.
 
 Install as a dependency with:
 
 ```bash
-go get github.com/Yacobolo/toolbelt/apigen@v0.5.0
+go get github.com/Yacobolo/toolbelt/apigen@v0.5.1
 ```
 
 ## Contract Notes

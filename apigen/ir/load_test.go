@@ -131,6 +131,188 @@ func TestValidate_AcceptsProjectionSelectionOnMapValues(t *testing.T) {
 	require.NoError(t, Validate(doc))
 }
 
+func TestValidate_AcceptsToolJSONSuccessAlongsideBinaryRepresentation(t *testing.T) {
+	doc := Document{
+		SchemaVersion: CurrentSchemaVersion,
+		API:           API{BasePath: "/"},
+		Info:          Info{Title: "Exports", Version: "1"},
+		Schemas:       map[string]Schema{"Export": {Type: "object"}},
+		Endpoints: []Endpoint{{
+			Method: "get", Path: "/export", OperationID: "getExport",
+			Responses: []Response{{StatusCode: 200, Description: "ok", Contents: []BodyContent{
+				{ContentType: "application/vnd.apache.arrow.file", BodyKind: "binary", Schema: &SchemaRef{Type: "string", Format: "binary"}},
+				{ContentType: "application/json", BodyKind: "json", Schema: &SchemaRef{Ref: "Export"}},
+			}}},
+			Tool: &Tool{Name: "get_export", Effect: "read", Output: ToolOutput{Mode: "raw"}},
+		}},
+	}
+
+	require.NoError(t, Validate(doc))
+}
+
+func TestValidate_RejectsToolWithDistinctJSONSuccessShapes(t *testing.T) {
+	doc := Document{
+		SchemaVersion: CurrentSchemaVersion,
+		API:           API{BasePath: "/"},
+		Info:          Info{Title: "Exports", Version: "1"},
+		Schemas:       map[string]Schema{"Summary": {Type: "object"}, "Details": {Type: "object"}},
+		Endpoints: []Endpoint{{
+			Method: "get", Path: "/export", OperationID: "getExport",
+			Responses: []Response{{StatusCode: 200, Description: "ok", Contents: []BodyContent{
+				{ContentType: "application/json", BodyKind: "json", Schema: &SchemaRef{Ref: "Summary"}},
+				{ContentType: "application/vnd.example.details+json", BodyKind: "json", Schema: &SchemaRef{Ref: "Details"}},
+			}}},
+			Tool: &Tool{Name: "get_export", Effect: "read", Output: ToolOutput{Mode: "raw"}},
+		}},
+	}
+
+	err := Validate(doc)
+	require.ErrorContains(t, err, "incompatible JSON body schemas")
+}
+
+func TestValidate_RejectsToolWithBinaryOnlySuccessBody(t *testing.T) {
+	doc := Document{
+		SchemaVersion: CurrentSchemaVersion,
+		API:           API{BasePath: "/"},
+		Info:          Info{Title: "Exports", Version: "1"},
+		Endpoints: []Endpoint{{
+			Method: "get", Path: "/export", OperationID: "getExport",
+			Responses: []Response{{StatusCode: 200, Description: "ok", Contents: []BodyContent{{
+				ContentType: "application/vnd.apache.arrow.file", BodyKind: "binary", Schema: &SchemaRef{Type: "string", Format: "binary"},
+			}}}},
+			Tool: &Tool{Name: "get_export", Effect: "read", Output: ToolOutput{Mode: "raw"}},
+		}},
+	}
+
+	err := Validate(doc)
+	require.ErrorContains(t, err, "body content but no JSON representation")
+}
+
+func TestValidate_AcceptsProjectionsThroughDiscriminatedUnionContainers(t *testing.T) {
+	doc := discriminatedUnionDocument()
+	doc.Schemas["Page"] = Schema{
+		Type: "object",
+		Properties: map[string]SchemaProperty{
+			"primary":       {Schema: SchemaRef{Ref: "Visual"}},
+			"visuals":       {Schema: SchemaRef{Type: "array", Items: &SchemaRef{Ref: "Visual"}}},
+			"visuals_by_id": {Schema: SchemaRef{Type: "object", AdditionalProperties: &AdditionalProperties{Schema: &SchemaRef{Ref: "Visual"}}}},
+		},
+		Required: []string{"primary", "visuals", "visuals_by_id"},
+	}
+	doc.Endpoints = []Endpoint{{
+		Method: "get", Path: "/page", OperationID: "getPage",
+		Responses: []Response{{StatusCode: 200, Description: "ok", Contents: []BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &SchemaRef{Ref: "Page"}}}}},
+		Tool: &Tool{Name: "get_page", Effect: "read", Output: ToolOutput{Mode: "project", Select: []ToolProjection{
+			{Source: "/primary", Select: []ToolProjection{{Source: "/title"}}},
+			{Source: "/visuals", Select: []ToolProjection{{Source: "/title"}}},
+			{Source: "/visuals_by_id", Select: []ToolProjection{{Source: "/title"}}},
+		}}},
+	}}
+
+	require.NoError(t, Validate(doc))
+}
+
+func TestValidate_RejectsProjectionOfIncompatibleUnionProperty(t *testing.T) {
+	doc := discriminatedUnionDocument()
+	chart := doc.Schemas["ChartVisual"]
+	chart.Properties["value"] = SchemaProperty{Schema: SchemaRef{Type: "string"}}
+	chart.Required = append(chart.Required, "value")
+	doc.Schemas["ChartVisual"] = chart
+	text := doc.Schemas["TextVisual"]
+	text.Properties["value"] = SchemaProperty{Schema: SchemaRef{Type: "integer"}}
+	text.Required = append(text.Required, "value")
+	doc.Schemas["TextVisual"] = text
+	doc.Endpoints = []Endpoint{{
+		Method: "get", Path: "/visual", OperationID: "getVisual",
+		Responses: []Response{{StatusCode: 200, Description: "ok", Contents: []BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &SchemaRef{Ref: "Visual"}}}}},
+		Tool:      &Tool{Name: "get_visual", Effect: "read", Output: ToolOutput{Mode: "project", Select: []ToolProjection{{Source: "/value"}}}},
+	}}
+
+	err := Validate(doc)
+	require.ErrorContains(t, err, `property "value" has incompatible schemas`)
+}
+
+func TestResolveSchemaPointerMarksUnionPropertyOptionalUnlessEveryVariantRequiresIt(t *testing.T) {
+	doc := discriminatedUnionDocument()
+	text := doc.Schemas["TextVisual"]
+	text.Required = []string{"kind"}
+	base := doc.Schemas["VisualBase"]
+	base.Required = []string{"kind"}
+	doc.Schemas["VisualBase"] = base
+	chart := doc.Schemas["ChartVisual"]
+	chart.Required = []string{"kind", "title"}
+	doc.Schemas["ChartVisual"] = chart
+	doc.Schemas["TextVisual"] = text
+
+	ref, optional, err := ResolveSchemaPointer(doc, SchemaRef{Ref: "Visual"}, "/title")
+	require.NoError(t, err)
+	require.Equal(t, "string", ref.Type)
+	require.True(t, optional)
+}
+
+func TestValidate_AcceptsCLIOutputThroughDiscriminatedUnions(t *testing.T) {
+	t.Run("collection envelope and items", func(t *testing.T) {
+		doc := discriminatedUnionDocument()
+		doc.Schemas["PageBase"] = Schema{
+			Type: "object",
+			Properties: map[string]SchemaProperty{
+				"kind": {Schema: SchemaRef{Type: "string"}},
+				"data": {Schema: SchemaRef{Type: "array", Items: &SchemaRef{Ref: "Visual"}}},
+			},
+			Required: []string{"kind", "data"},
+		}
+		doc.Schemas["ChartPage"] = Schema{Type: "object", Base: &SchemaRef{Ref: "PageBase"}, Properties: map[string]SchemaProperty{"kind": {Schema: SchemaRef{Type: "string", Enum: []string{"chart"}}}, "chart_count": {Schema: SchemaRef{Type: "integer"}}}, Required: []string{"kind"}}
+		doc.Schemas["TextPage"] = Schema{Type: "object", Base: &SchemaRef{Ref: "PageBase"}, Properties: map[string]SchemaProperty{"kind": {Schema: SchemaRef{Type: "string", Enum: []string{"text"}}}, "text_count": {Schema: SchemaRef{Type: "integer"}}}, Required: []string{"kind"}}
+		doc.Schemas["Page"] = Schema{Type: "union", OneOf: []SchemaRef{{Ref: "ChartPage"}, {Ref: "TextPage"}}, Discriminator: &Discriminator{PropertyName: "kind", Mapping: map[string]string{"chart": "ChartPage", "text": "TextPage"}}}
+		doc.Endpoints = []Endpoint{{
+			Method: "get", Path: "/visuals", OperationID: "listVisuals",
+			Responses: []Response{{StatusCode: 200, Description: "ok", Contents: []BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &SchemaRef{Ref: "Page"}}}}},
+			CLI:       &CLI{Command: []string{"visuals", "list"}, BodyInput: "none", Confirm: "none", Output: &CLIOutput{Mode: "collection", TableColumns: []string{"title"}}, Pagination: &CLIPagination{ItemsField: "data"}},
+		}}
+
+		require.NoError(t, Validate(doc))
+	})
+
+	t.Run("detail", func(t *testing.T) {
+		doc := discriminatedUnionDocument()
+		doc.Endpoints = []Endpoint{{
+			Method: "get", Path: "/visual", OperationID: "getVisual",
+			Responses: []Response{{StatusCode: 200, Description: "ok", Contents: []BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &SchemaRef{Ref: "Visual"}}}}},
+			CLI:       &CLI{Command: []string{"visuals", "get"}, BodyInput: "none", Confirm: "none", Output: &CLIOutput{Mode: "detail", TableColumns: []string{"title"}}},
+		}}
+
+		require.NoError(t, Validate(doc))
+	})
+}
+
+func TestOrderedPropertyNamesAppendsPropertiesMissingFromAuthoredOrder(t *testing.T) {
+	schema := Schema{
+		Properties:    map[string]SchemaProperty{"kind": {}, "title": {}, "subtitle": {}},
+		PropertyOrder: []string{"kind"},
+	}
+
+	require.Equal(t, []string{"kind", "subtitle", "title"}, OrderedPropertyNames(schema))
+}
+
+func discriminatedUnionDocument() Document {
+	return Document{
+		SchemaVersion: CurrentSchemaVersion,
+		API:           API{BasePath: "/"},
+		Info:          Info{Title: "Visual API", Version: "1"},
+		Schemas: map[string]Schema{
+			"Visual": {Type: "union", OneOf: []SchemaRef{{Ref: "ChartVisual"}, {Ref: "TextVisual"}}, Discriminator: &Discriminator{PropertyName: "kind", Mapping: map[string]string{"chart": "ChartVisual", "text": "TextVisual"}}},
+			"VisualBase": {
+				Type:          "object",
+				Properties:    map[string]SchemaProperty{"kind": {Schema: SchemaRef{Type: "string"}}, "title": {Schema: SchemaRef{Type: "string"}}},
+				PropertyOrder: []string{"kind", "title"},
+				Required:      []string{"kind", "title"},
+			},
+			"ChartVisual": {Type: "object", Base: &SchemaRef{Ref: "VisualBase"}, Properties: map[string]SchemaProperty{"kind": {Schema: SchemaRef{Type: "string", Enum: []string{"chart"}}}}, PropertyOrder: []string{"kind"}, Required: []string{"kind"}},
+			"TextVisual":  {Type: "object", Base: &SchemaRef{Ref: "VisualBase"}, Properties: map[string]SchemaProperty{"kind": {Schema: SchemaRef{Type: "string", Enum: []string{"text"}}}}, PropertyOrder: []string{"kind"}, Required: []string{"kind"}},
+		},
+	}
+}
+
 func TestLoad_RejectsLegacyAgentExtension(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "ir.json")

@@ -33,6 +33,29 @@ func TestBuildRequestBindsContextDefaultsAndBody(t *testing.T) {
 	require.JSONEq(t, `{"title":"Quarterly report"}`, string(body))
 }
 
+func TestBuildRequestNegotiatesGeneratedJSONResponseMedia(t *testing.T) {
+	contract := Contract{
+		Name: "get_export", Method: http.MethodGet, Path: "/export",
+		ResponseContentType: "application/json",
+	}
+
+	request, err := BuildRequest(contract, json.RawMessage(`{}`), nil)
+	require.NoError(t, err)
+	require.Equal(t, "application/json", request.Header.Get("Accept"))
+}
+
+func TestBuildRequestOverridesAcceptBindingWithContractedResponseMedia(t *testing.T) {
+	contract := Contract{
+		Name: "get_export", Method: http.MethodGet, Path: "/export",
+		ResponseContentType: "application/json",
+		Bindings:            []Binding{{Argument: "accept", Source: "header", WireName: "Accept", Mode: "model", Schema: ValueSchema{Type: "string"}}},
+	}
+
+	request, err := BuildRequest(contract, json.RawMessage(`{"accept":"application/vnd.apache.arrow.file"}`), nil)
+	require.NoError(t, err)
+	require.Equal(t, "application/json", request.Header.Get("Accept"))
+}
+
 func TestBuildRequestRejectsUnknownArgumentsAndMissingContext(t *testing.T) {
 	contract := Contract{
 		Name:   "get_item",
