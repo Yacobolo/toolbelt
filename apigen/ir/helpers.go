@@ -487,6 +487,120 @@ func resolveObjectSchema(doc Document, ref SchemaRef, active map[string]bool) (S
 	}
 }
 
+// ResolveCommonObjectSchema returns the deterministic object surface shared by
+// every schema reference. Properties that are absent or incompatible in any
+// branch are excluded from the common view.
+func ResolveCommonObjectSchema(doc Document, refs []SchemaRef) (Schema, bool) {
+	if len(refs) == 0 {
+		return Schema{}, false
+	}
+	views := make([]Schema, len(refs))
+	for i, ref := range refs {
+		view, ok := ResolveObjectSchema(doc, ref)
+		if !ok {
+			return Schema{}, false
+		}
+		views[i] = view
+	}
+	first := views[0]
+	properties := make(map[string]SchemaProperty)
+	order := make([]string, 0, len(first.Properties))
+	required := make([]string, 0, len(first.Required))
+	for _, name := range OrderedPropertyNames(first) {
+		property, found, err := ResolveCommonObjectProperty(doc, refs, name)
+		if err != nil || !found {
+			continue
+		}
+		properties[name] = property.Property
+		order = append(order, name)
+		if property.Required {
+			required = append(required, name)
+		}
+	}
+	return Schema{Type: "object", Properties: properties, PropertyOrder: order, Required: required}, true
+}
+
+// ResolveCommonObjectProperty resolves one compatible property shared by each
+// object schema reference.
+func ResolveCommonObjectProperty(doc Document, refs []SchemaRef, name string) (ResolvedObjectProperty, bool, error) {
+	if len(refs) == 0 {
+		return ResolvedObjectProperty{}, false, nil
+	}
+	var resolved ResolvedObjectProperty
+	for i, ref := range refs {
+		candidate, found, err := ResolveObjectProperty(doc, ref, name)
+		if err != nil {
+			return ResolvedObjectProperty{}, false, err
+		}
+		if !found {
+			return ResolvedObjectProperty{}, false, nil
+		}
+		if i == 0 {
+			resolved = candidate
+			continue
+		}
+		merged, compatible := mergeCompatibleSchemaRefs(doc, resolved.Property.Schema, candidate.Property.Schema)
+		if !compatible {
+			return ResolvedObjectProperty{}, false, fmt.Errorf("property %q has incompatible schemas across object variants", name)
+		}
+		resolved.Property.Schema = merged
+		resolved.Required = resolved.Required && candidate.Required
+	}
+	return resolved, true, nil
+}
+
+// ResolveObjectArrayItemSchemas retains the item schema from each object or
+// union branch instead of collapsing heterogeneous arrays to array<any>.
+func ResolveObjectArrayItemSchemas(doc Document, ref SchemaRef, name string) ([]SchemaRef, bool, error) {
+	return resolveObjectArrayItemSchemas(doc, ref, name, map[string]bool{})
+}
+
+func resolveObjectArrayItemSchemas(doc Document, ref SchemaRef, name string, active map[string]bool) ([]SchemaRef, bool, error) {
+	schema, ok := resolveConcreteSchema(doc, ref)
+	if !ok {
+		return nil, false, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(schema.Type)) {
+	case "object":
+		schema = FlattenObjectSchema(doc, schema)
+		property, found := schema.Properties[name]
+		if !found {
+			return nil, false, nil
+		}
+		kind, item := SchemaProjectionKind(doc, property.Schema)
+		if kind != "array" {
+			return nil, false, fmt.Errorf("property %q must be an array in every object variant", name)
+		}
+		return []SchemaRef{item}, true, nil
+	case "union":
+		key := schemaRefKey(ref)
+		if key != "" {
+			if active[key] {
+				return nil, false, fmt.Errorf("property %q traverses a recursive union", name)
+			}
+			active[key] = true
+			defer delete(active, key)
+		}
+		if len(schema.OneOf) == 0 {
+			return nil, false, nil
+		}
+		items := make([]SchemaRef, 0, len(schema.OneOf))
+		for _, variant := range schema.OneOf {
+			variantItems, found, err := resolveObjectArrayItemSchemas(doc, variant, name, active)
+			if err != nil {
+				return nil, false, err
+			}
+			if !found {
+				return nil, false, nil
+			}
+			items = append(items, variantItems...)
+		}
+		return items, true, nil
+	default:
+		return nil, false, nil
+	}
+}
+
 // ResolveSchemaPointer resolves an RFC 6901 property pointer against an object
 // surface and reports whether any traversed property or map entry is optional.
 func ResolveSchemaPointer(doc Document, scope SchemaRef, pointer string) (SchemaRef, bool, error) {

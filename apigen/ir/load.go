@@ -1182,12 +1182,12 @@ func validateEndpointCLI(doc Document, endpoint Endpoint, cli *CLI) error {
 	successRef, hasSuccessSchema := ResolveResponseBodySchemaRef(*successResponse)
 	switch cli.Output.Mode {
 	case "collection":
-		itemRef, err := validateCLICollectionSchema(doc, endpoint.OperationID, successRef, hasSuccessSchema, cli)
+		item, err := validateCLICollectionSchema(doc, endpoint.OperationID, successRef, hasSuccessSchema, cli)
 		if err != nil {
 			return err
 		}
 		for _, name := range cli.Output.TableColumns {
-			found, err := resolveCLIOutputProperty(doc, itemRef, name)
+			found, err := resolveCLIOutputPropertySet(doc, item.Refs, name)
 			if err != nil {
 				return fmt.Errorf("endpoint %q cli.output.table_columns item field %q: %w", endpoint.OperationID, name, err)
 			}
@@ -1196,7 +1196,7 @@ func validateEndpointCLI(doc Document, endpoint Endpoint, cli *CLI) error {
 			}
 		}
 		for _, name := range cli.Output.QuietFields {
-			found, err := resolveCLIOutputProperty(doc, itemRef, name)
+			found, err := resolveCLIOutputPropertySet(doc, item.Refs, name)
 			if err != nil {
 				return fmt.Errorf("endpoint %q cli.output.quiet_fields item field %q: %w", endpoint.OperationID, name, err)
 			}
@@ -1230,33 +1230,42 @@ func validateEndpointCLI(doc Document, endpoint Endpoint, cli *CLI) error {
 	return nil
 }
 
-func validateCLICollectionSchema(doc Document, operationID string, successRef SchemaRef, hasSuccessSchema bool, cli *CLI) (SchemaRef, error) {
+type cliCollectionItemSchema struct {
+	Refs []SchemaRef
+}
+
+func validateCLICollectionSchema(doc Document, operationID string, successRef SchemaRef, hasSuccessSchema bool, cli *CLI) (cliCollectionItemSchema, error) {
 	if _, object := ResolveObjectSchema(doc, successRef); !hasSuccessSchema || !object {
-		return SchemaRef{}, fmt.Errorf("endpoint %q cli.output.mode=collection requires an object success schema", operationID)
+		return cliCollectionItemSchema{}, fmt.Errorf("endpoint %q cli.output.mode=collection requires an object success schema", operationID)
 	}
 	itemsField := "data"
 	if cli.Pagination != nil && strings.TrimSpace(cli.Pagination.ItemsField) != "" {
 		itemsField = cli.Pagination.ItemsField
 	}
-	property, ok, err := ResolveObjectProperty(doc, successRef, itemsField)
+	itemRefs, ok, err := ResolveObjectArrayItemSchemas(doc, successRef, itemsField)
 	if err != nil {
-		return SchemaRef{}, fmt.Errorf("endpoint %q cli collection items field %q: %w", operationID, itemsField, err)
+		return cliCollectionItemSchema{}, fmt.Errorf("endpoint %q cli collection items field %q: %w", operationID, itemsField, err)
 	}
 	if !ok {
-		return SchemaRef{}, fmt.Errorf("endpoint %q cli collection items field %q is missing", operationID, itemsField)
+		return cliCollectionItemSchema{}, fmt.Errorf("endpoint %q cli collection items field %q is missing", operationID, itemsField)
 	}
-	kind, itemSchemaRef := SchemaProjectionKind(doc, property.Property.Schema)
-	if kind != "array" {
-		return SchemaRef{}, fmt.Errorf("endpoint %q cli collection items field %q must be an array", operationID, itemsField)
+	_, ok = ResolveCommonObjectSchema(doc, itemRefs)
+	if !ok {
+		return cliCollectionItemSchema{}, fmt.Errorf("endpoint %q cli collection item schemas could not be resolved to object variants", operationID)
 	}
-	if _, ok := ResolveObjectSchema(doc, itemSchemaRef); !ok {
-		return SchemaRef{}, fmt.Errorf("endpoint %q cli collection item schema could not be resolved to an object", operationID)
-	}
-	return itemSchemaRef, nil
+	return cliCollectionItemSchema{Refs: itemRefs}, nil
 }
 
 func resolveCLIOutputProperty(doc Document, scope SchemaRef, name string) (bool, error) {
 	_, found, err := ResolveObjectProperty(doc, scope, name)
+	if err != nil {
+		return false, err
+	}
+	return found, nil
+}
+
+func resolveCLIOutputPropertySet(doc Document, scopes []SchemaRef, name string) (bool, error) {
+	_, found, err := ResolveCommonObjectProperty(doc, scopes, name)
 	if err != nil {
 		return false, err
 	}
@@ -1317,14 +1326,16 @@ func normalizeEndpointCLI(doc Document, endpoint Endpoint) (*CLI, error) {
 		if cli.Output.Mode == "" {
 			cli.Output.Mode = output.Mode
 		}
-		if len(cli.Output.TableColumns) == 0 {
-			cli.Output.TableColumns = append([]string(nil), output.TableColumns...)
-		}
-		if len(cli.Output.QuietFields) == 0 {
-			cli.Output.QuietFields = append([]string(nil), output.QuietFields...)
+		if cli.Output.Mode == output.Mode {
+			if len(cli.Output.TableColumns) == 0 {
+				cli.Output.TableColumns = append([]string(nil), output.TableColumns...)
+			}
+			if len(cli.Output.QuietFields) == 0 {
+				cli.Output.QuietFields = append([]string(nil), output.QuietFields...)
+			}
 		}
 	}
-	if cli.Pagination == nil {
+	if cli.Pagination == nil && cli.Output != nil && cli.Output.Mode == "collection" {
 		cli.Pagination = pagination
 	}
 	return cli, nil
@@ -1414,18 +1425,14 @@ func deriveDefaultCLIOutput(doc Document, endpoint Endpoint) (*CLIOutput, *CLIPa
 		return &CLIOutput{Mode: "raw"}, nil
 	}
 	if successSchema, object := ResolveObjectSchema(doc, successRef); object {
-		if itemsProperty, found, err := ResolveObjectProperty(doc, successRef, "data"); err == nil && found {
-			kind, itemRef := SchemaProjectionKind(doc, itemsProperty.Property.Schema)
-			if kind != "array" {
-				return &CLIOutput{Mode: "detail", QuietFields: defaultQuietFields(successSchema)}, nil
-			}
+		if itemRefs, found, err := ResolveObjectArrayItemSchemas(doc, successRef, "data"); err == nil && found {
 			output := &CLIOutput{Mode: "collection"}
 			pagination := &CLIPagination{}
 			pagination.ItemsField = "data"
 			if nextProperty, found, err := ResolveObjectProperty(doc, successRef, "next_page_token"); err == nil && found && schemaRefHasType(doc, nextProperty.Property.Schema, "string") {
 				pagination.NextPageTokenField = "next_page_token"
 			}
-			if itemSchema, ok := ResolveObjectSchema(doc, itemRef); ok {
+			if itemSchema, ok := ResolveCommonObjectSchema(doc, itemRefs); ok {
 				output.TableColumns = OrderedPropertyNames(itemSchema)
 				output.QuietFields = defaultQuietFields(itemSchema)
 			}
