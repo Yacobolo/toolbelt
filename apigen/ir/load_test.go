@@ -308,6 +308,40 @@ func TestValidate_AcceptsCLIOutputThroughDiscriminatedUnions(t *testing.T) {
 	})
 }
 
+func TestValidate_AcceptsCLICollectionForUnionArraysWithDifferentObjectItems(t *testing.T) {
+	doc := heterogeneousArrayUnionDocument()
+	doc.Endpoints = []Endpoint{{
+		Method: "get", Path: "/result", OperationID: "getResult",
+		Responses: []Response{{StatusCode: 200, Description: "ok", Contents: []BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &SchemaRef{Ref: "Result"}}}}},
+		CLI: &CLI{
+			Command:    []string{"result"},
+			Output:     &CLIOutput{Mode: "collection"},
+			Pagination: &CLIPagination{ItemsField: "data"},
+		},
+	}}
+
+	require.NoError(t, Validate(doc))
+	require.NoError(t, Normalize(&doc))
+	require.Equal(t, []string{"id"}, doc.Endpoints[0].CLI.Output.TableColumns)
+	require.Equal(t, []string{"id"}, doc.Endpoints[0].CLI.Output.QuietFields)
+}
+
+func TestNormalize_DoesNotInferPaginationForExplicitRawCLIOutput(t *testing.T) {
+	doc := heterogeneousArrayUnionDocument()
+	doc.Endpoints = []Endpoint{{
+		Method: "get", Path: "/result", OperationID: "getResult",
+		Responses: []Response{{StatusCode: 200, Description: "ok", Contents: []BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &SchemaRef{Ref: "Result"}}}}},
+		CLI:       &CLI{Command: []string{"result"}, Output: &CLIOutput{Mode: "raw"}},
+	}}
+
+	require.NoError(t, Validate(doc))
+	require.NoError(t, Normalize(&doc))
+	require.Equal(t, "raw", doc.Endpoints[0].CLI.Output.Mode)
+	require.Empty(t, doc.Endpoints[0].CLI.Output.TableColumns)
+	require.Empty(t, doc.Endpoints[0].CLI.Output.QuietFields)
+	require.Nil(t, doc.Endpoints[0].CLI.Pagination)
+}
+
 func TestOrderedPropertyNamesAppendsPropertiesMissingFromAuthoredOrder(t *testing.T) {
 	schema := Schema{
 		Properties:    map[string]SchemaProperty{"kind": {}, "title": {}, "subtitle": {}},
@@ -343,6 +377,14 @@ func heterogeneousArrayUnionDocument() Document {
 		Info:          Info{Title: "Results", Version: "1"},
 		Schemas: map[string]Schema{
 			"Result": {Type: "union", OneOf: []SchemaRef{{Ref: "Strings"}, {Ref: "Numbers"}}, Discriminator: &Discriminator{PropertyName: "shape", Mapping: map[string]string{"strings": "Strings", "numbers": "Numbers"}}},
+			"StringItem": {Type: "object", Properties: map[string]SchemaProperty{
+				"id":    {Schema: SchemaRef{Type: "string"}},
+				"value": {Schema: SchemaRef{Type: "string"}},
+			}, Required: []string{"id", "value"}},
+			"NumberItem": {Type: "object", Properties: map[string]SchemaProperty{
+				"id":    {Schema: SchemaRef{Type: "string"}},
+				"value": {Schema: SchemaRef{Type: "integer", Format: "int32"}},
+			}, Required: []string{"id", "value"}},
 			"ResultBase": {
 				Type: "object",
 				Properties: map[string]SchemaProperty{
@@ -355,7 +397,7 @@ func heterogeneousArrayUnionDocument() Document {
 				Type: "object", Base: &SchemaRef{Ref: "ResultBase"},
 				Properties: map[string]SchemaProperty{
 					"shape": {Schema: SchemaRef{Type: "string", Enum: []string{"strings"}}},
-					"data":  {Schema: SchemaRef{Type: "array", Items: &SchemaRef{Type: "string"}}},
+					"data":  {Schema: SchemaRef{Type: "array", Items: &SchemaRef{Ref: "StringItem"}}},
 				},
 				Required: []string{"shape", "data"},
 			},
@@ -363,7 +405,7 @@ func heterogeneousArrayUnionDocument() Document {
 				Type: "object", Base: &SchemaRef{Ref: "ResultBase"},
 				Properties: map[string]SchemaProperty{
 					"shape": {Schema: SchemaRef{Type: "string", Enum: []string{"numbers"}}},
-					"data":  {Schema: SchemaRef{Type: "array", Items: &SchemaRef{Type: "integer", Format: "int32"}}},
+					"data":  {Schema: SchemaRef{Type: "array", Items: &SchemaRef{Ref: "NumberItem"}}},
 				},
 				Required: []string{"shape", "data"},
 			},
