@@ -539,6 +539,7 @@ func SchemaProjectionKind(doc Document, ref SchemaRef) (string, SchemaRef) {
 			if schema.Items != nil {
 				return "array", *schema.Items
 			}
+			return "array", SchemaRef{}
 		case "object", "union":
 			if _, object := ResolveObjectSchema(doc, ref); object {
 				return "object", ref
@@ -600,11 +601,11 @@ func mergeCompatibleSchemaRefs(doc Document, left, right SchemaRef) (SchemaRef, 
 		return SchemaRef{Type: leftType}, true
 	case "array":
 		if leftSchema.Items == nil || rightSchema.Items == nil {
-			return SchemaRef{}, false
+			return SchemaRef{Type: "array"}, true
 		}
 		items, ok := mergeCompatibleSchemaRefs(doc, *leftSchema.Items, *rightSchema.Items)
 		if !ok {
-			return SchemaRef{}, false
+			return SchemaRef{Type: "array"}, true
 		}
 		return SchemaRef{Type: "array", Items: &items}, true
 	case "object":
