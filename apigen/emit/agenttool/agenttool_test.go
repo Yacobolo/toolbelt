@@ -266,6 +266,47 @@ func TestBuildCompilesProjectionsThroughDiscriminatedUnions(t *testing.T) {
 	}
 }
 
+func TestBuildCompilesCountProjectionForUnionArraysWithDifferentItemSchemas(t *testing.T) {
+	doc := ir.Document{
+		SchemaVersion: ir.CurrentSchemaVersion,
+		API:           ir.API{BasePath: "/"},
+		Info:          ir.Info{Title: "Results", Version: "1"},
+		Schemas: map[string]ir.Schema{
+			"Result": {Type: "union", OneOf: []ir.SchemaRef{{Ref: "Strings"}, {Ref: "Numbers"}}},
+			"Strings": {Type: "object", Properties: map[string]ir.SchemaProperty{
+				"data": {Schema: ir.SchemaRef{Type: "array", Items: &ir.SchemaRef{Type: "string"}}},
+			}, Required: []string{"data"}},
+			"Numbers": {Type: "object", Properties: map[string]ir.SchemaProperty{
+				"data": {Schema: ir.SchemaRef{Type: "array", Items: &ir.SchemaRef{Type: "integer", Format: "int32"}}},
+			}, Required: []string{"data"}},
+			"Page": {Type: "object", Properties: map[string]ir.SchemaProperty{
+				"results": {Schema: ir.SchemaRef{Type: "object", AdditionalProperties: &ir.AdditionalProperties{Schema: &ir.SchemaRef{Ref: "Result"}}}},
+			}, Required: []string{"results"}},
+		},
+		Endpoints: []ir.Endpoint{{
+			Method: "get", Path: "/results", OperationID: "getResults",
+			Responses: []ir.Response{{StatusCode: 200, Description: "ok", Contents: []ir.BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Ref: "Page"}}}}},
+			Tool:      &ir.Tool{Name: "get_results", Effect: "read", Output: ir.ToolOutput{Mode: "project", Select: []ir.ToolProjection{{Source: "/results", Select: []ir.ToolProjection{{Source: "/data", CountAs: "count"}}}}}},
+		}},
+	}
+
+	contracts, err := Build(doc)
+	require.NoError(t, err)
+	outer := contracts["get_results"].Output.Select[0]
+	require.Equal(t, "map", outer.Kind)
+	projection := outer.Select[0]
+	require.Equal(t, "array", projection.Kind)
+	require.Equal(t, "array", projection.Schema.Type)
+	require.Nil(t, projection.Schema.Items)
+
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(contracts["get_results"].OutputSchema, &schema))
+	results := schema["properties"].(map[string]any)["results"].(map[string]any)
+	properties := results["additionalProperties"].(map[string]any)["properties"].(map[string]any)
+	require.Equal(t, map[string]any{"type": "array"}, properties["data"])
+	require.Equal(t, map[string]any{"type": "integer"}, properties["count"])
+}
+
 func requireNoEmptySchemaTypes(t *testing.T, value any) {
 	t.Helper()
 	switch typed := value.(type) {

@@ -232,6 +232,29 @@ func TestValidate_RejectsProjectionOfIncompatibleUnionProperty(t *testing.T) {
 	require.ErrorContains(t, err, `property "value" has incompatible schemas`)
 }
 
+func TestValidate_AcceptsCountProjectionForUnionArraysWithDifferentItemSchemas(t *testing.T) {
+	doc := heterogeneousArrayUnionDocument()
+	doc.Endpoints = []Endpoint{{
+		Method: "get", Path: "/result", OperationID: "getResult",
+		Responses: []Response{{StatusCode: 200, Description: "ok", Contents: []BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &SchemaRef{Ref: "Result"}}}}},
+		Tool:      &Tool{Name: "get_result", Effect: "read", Output: ToolOutput{Mode: "project", Select: []ToolProjection{{Source: "/data", CountAs: "count"}}}},
+	}}
+
+	require.NoError(t, Validate(doc))
+}
+
+func TestValidate_RejectsNestedProjectionWithoutCommonUnionArrayItemSchema(t *testing.T) {
+	doc := heterogeneousArrayUnionDocument()
+	doc.Endpoints = []Endpoint{{
+		Method: "get", Path: "/result", OperationID: "getResult",
+		Responses: []Response{{StatusCode: 200, Description: "ok", Contents: []BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &SchemaRef{Ref: "Result"}}}}},
+		Tool:      &Tool{Name: "get_result", Effect: "read", Output: ToolOutput{Mode: "project", Select: []ToolProjection{{Source: "/data", Select: []ToolProjection{{Source: "/value"}}}}}},
+	}}
+
+	err := Validate(doc)
+	require.ErrorContains(t, err, `pointer "/value" references unknown property "value"`)
+}
+
 func TestResolveSchemaPointerMarksUnionPropertyOptionalUnlessEveryVariantRequiresIt(t *testing.T) {
 	doc := discriminatedUnionDocument()
 	text := doc.Schemas["TextVisual"]
@@ -309,6 +332,41 @@ func discriminatedUnionDocument() Document {
 			},
 			"ChartVisual": {Type: "object", Base: &SchemaRef{Ref: "VisualBase"}, Properties: map[string]SchemaProperty{"kind": {Schema: SchemaRef{Type: "string", Enum: []string{"chart"}}}}, PropertyOrder: []string{"kind"}, Required: []string{"kind"}},
 			"TextVisual":  {Type: "object", Base: &SchemaRef{Ref: "VisualBase"}, Properties: map[string]SchemaProperty{"kind": {Schema: SchemaRef{Type: "string", Enum: []string{"text"}}}}, PropertyOrder: []string{"kind"}, Required: []string{"kind"}},
+		},
+	}
+}
+
+func heterogeneousArrayUnionDocument() Document {
+	return Document{
+		SchemaVersion: CurrentSchemaVersion,
+		API:           API{BasePath: "/"},
+		Info:          Info{Title: "Results", Version: "1"},
+		Schemas: map[string]Schema{
+			"Result": {Type: "union", OneOf: []SchemaRef{{Ref: "Strings"}, {Ref: "Numbers"}}, Discriminator: &Discriminator{PropertyName: "shape", Mapping: map[string]string{"strings": "Strings", "numbers": "Numbers"}}},
+			"ResultBase": {
+				Type: "object",
+				Properties: map[string]SchemaProperty{
+					"shape": {Schema: SchemaRef{Type: "string"}},
+					"data":  {Schema: SchemaRef{Type: "array", Items: &SchemaRef{}}},
+				},
+				Required: []string{"shape", "data"},
+			},
+			"Strings": {
+				Type: "object", Base: &SchemaRef{Ref: "ResultBase"},
+				Properties: map[string]SchemaProperty{
+					"shape": {Schema: SchemaRef{Type: "string", Enum: []string{"strings"}}},
+					"data":  {Schema: SchemaRef{Type: "array", Items: &SchemaRef{Type: "string"}}},
+				},
+				Required: []string{"shape", "data"},
+			},
+			"Numbers": {
+				Type: "object", Base: &SchemaRef{Ref: "ResultBase"},
+				Properties: map[string]SchemaProperty{
+					"shape": {Schema: SchemaRef{Type: "string", Enum: []string{"numbers"}}},
+					"data":  {Schema: SchemaRef{Type: "array", Items: &SchemaRef{Type: "integer", Format: "int32"}}},
+				},
+				Required: []string{"shape", "data"},
+			},
 		},
 	}
 }
