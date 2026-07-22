@@ -1316,6 +1316,7 @@ describe("APIGen TypeSpec emitter", () => {
       ref: "VisualizationEnvelope",
     });
     expect(doc.contracts.map((contract: any) => contract.name)).toEqual(["DashboardEnvelope"]);
+    expect(doc.schemas.VisualizationEnvelope).toBeDefined();
   });
 
   it("fails without writing IR for invalid contract metadata keys", async () => {

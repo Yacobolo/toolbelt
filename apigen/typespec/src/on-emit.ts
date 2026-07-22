@@ -596,8 +596,6 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
   if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
     return;
   }
-  const builder = new IRBuilder(context.program);
-  const contracts = contractRoots(context.program, builder);
   if (services.length > 1) {
     reportDiagnostic(context.program, {
       code: "multiple-services",
@@ -609,6 +607,11 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
 
   let doc: Document;
   const httpServices = services.filter((service) => service.operations.length > 0);
+  const localNamespace = httpServices.length === 1
+    ? namespaceName(httpServices[0].namespace)
+    : packageMetadata(context.program).namespace;
+  const builder = new IRBuilder(context.program);
+  const contracts = contractRoots(context.program, builder, localNamespace);
   if (httpServices.length === 1) {
     doc = buildDocument(context.program, builder, httpServices[0], context.options);
     if (contracts.length > 0) {
@@ -626,14 +629,6 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
     doc = buildContractDocument(context.program, contracts, context.options);
   }
   doc.schemas = builder.emitSchemas();
-  if (doc.contracts && doc.schemas && doc.info.namespace) {
-    doc.contracts = doc.contracts.filter((contract) => {
-      const name = contract.schema.ref;
-      const namespace = name ? doc.schemas?.[name]?.namespace : undefined;
-      return namespace === doc.info.namespace || namespace?.startsWith(`${doc.info.namespace}.`);
-    });
-    if (doc.contracts.length === 0) delete doc.contracts;
-  }
   if (builder.hasFailed()) {
     return;
   }
@@ -690,9 +685,13 @@ function namespaceName(namespace: Namespace | undefined): string | undefined {
   return parts.length > 0 ? parts.join(".") : undefined;
 }
 
-function contractRoots(program: Program, builder: IRBuilder): Contract[] {
+function contractRoots(program: Program, builder: IRBuilder, localNamespace: string | undefined): Contract[] {
   const roots: Contract[] = [];
   for (const [target, options] of getContracts({ program })) {
+    const namespace = namespaceName(target.namespace);
+    if (localNamespace && namespace !== localNamespace && !namespace?.startsWith(`${localNamespace}.`)) {
+      continue;
+    }
     const schema = builder.namedSchemaRef(target, `contract ${target.name}`);
     const root = prune({
       name: options.name ?? target.name,
