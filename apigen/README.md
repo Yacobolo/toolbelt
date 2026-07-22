@@ -18,7 +18,7 @@ Canonical OpenAPI is the published API artifact for HTTP targets. JSON IR is the
 Install the CLI:
 
 ```bash
-go install github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.6.2
+go install github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.6.3
 ```
 
 Or run from this module during local development:
@@ -191,7 +191,7 @@ Generic operation `x-*` extensions remain available for downstream metadata. `x-
 Install as a dependency with:
 
 ```bash
-go get github.com/Yacobolo/toolbelt/apigen@v0.6.2
+go get github.com/Yacobolo/toolbelt/apigen@v0.6.3
 ```
 
 ## Contract Notes
