@@ -5,15 +5,46 @@ always named `sourcebook` and is stored at `~/.codex/skills/sourcebook`.
 
 ## Install
 
-Sourcebook requires Go 1.25 or newer and `git` on `PATH`.
+Sourcebook requires `git` on `PATH`. Go is not required when using the release
+installers.
 
-Install the latest version directly from the repository:
+### macOS and Linux
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Yacobolo/toolbelt/main/sourcebook/install.sh | sh
+```
+
+The installer detects macOS or Linux and amd64 or arm64, verifies the release
+checksum, and installs to `~/.local/bin`. Pin a version or choose another
+directory with environment variables:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Yacobolo/toolbelt/main/sourcebook/install.sh |
+  SOURCEBOOK_VERSION=0.1.0 SOURCEBOOK_INSTALL_DIR="$HOME/bin" sh
+```
+
+### Windows
+
+Run in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/Yacobolo/toolbelt/main/sourcebook/install.ps1 | iex
+```
+
+The PowerShell installer detects amd64 or arm64, verifies the release checksum,
+installs under `%LOCALAPPDATA%\Programs\Sourcebook`, and adds that directory to
+the user `PATH`. Set `$env:SOURCEBOOK_VERSION` or
+`$env:SOURCEBOOK_INSTALL_DIR` before running it to override the defaults.
+
+### With Go
+
+With Go 1.25 or newer, install directly from the module:
 
 ```sh
 go install github.com/Yacobolo/toolbelt/sourcebook/cmd/sourcebook@latest
 ```
 
-Or install the current checkout while developing:
+To install the current checkout while developing:
 
 ```sh
 cd sourcebook
