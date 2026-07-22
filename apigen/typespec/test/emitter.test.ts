@@ -1294,6 +1294,7 @@ describe("APIGen TypeSpec emitter", () => {
   it("preserves producer namespace ownership for imported contract references", async () => {
     const doc = await compileSource(`
       namespace VisualizationContracts {
+        @apigen.contract
         model VisualizationEnvelope {
           revision: int64;
         }
@@ -1314,6 +1315,7 @@ describe("APIGen TypeSpec emitter", () => {
     expect(doc.schemas.DashboardEnvelope.properties.visual.schema).toEqual({
       ref: "VisualizationEnvelope",
     });
+    expect(doc.contracts.map((contract: any) => contract.name)).toEqual(["DashboardEnvelope"]);
   });
 
   it("fails without writing IR for invalid contract metadata keys", async () => {

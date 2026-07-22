@@ -357,6 +357,15 @@ export async function $onEmit(context) {
         doc = buildContractDocument(context.program, contracts, context.options);
     }
     doc.schemas = builder.emitSchemas();
+    if (doc.contracts && doc.schemas && doc.info.namespace) {
+        doc.contracts = doc.contracts.filter((contract) => {
+            const name = contract.schema.ref;
+            const namespace = name ? doc.schemas?.[name]?.namespace : undefined;
+            return namespace === doc.info.namespace || namespace?.startsWith(`${doc.info.namespace}.`);
+        });
+        if (doc.contracts.length === 0)
+            delete doc.contracts;
+    }
     if (builder.hasFailed()) {
         return;
     }
