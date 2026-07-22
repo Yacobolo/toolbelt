@@ -60,7 +60,7 @@ import { type EmitterOptions, reportDiagnostic } from "./lib.js";
 interface Document {
   schema_version: "v4";
   api: { base_path: string };
-  info: { title: string; version: string; description?: string };
+  info: { title: string; version: string; description?: string; namespace?: string };
   openapi?: {
     version?: string;
     tag_order?: string[];
@@ -206,6 +206,7 @@ interface Header {
 
 interface Schema {
   type: string;
+  namespace?: string;
   title?: string;
   description?: string;
   properties?: Record<string, SchemaProperty>;
@@ -418,6 +419,7 @@ class IRBuilder {
       }
       return {
         type: "union",
+        namespace: namespaceName(model.namespace),
         one_of: oneOf,
         discriminator: { property_name: union.propertyName, mapping },
       };
@@ -428,6 +430,7 @@ class IRBuilder {
   private objectSchema(model: Model): Schema {
     const schema: Schema = {
       type: "object",
+      namespace: namespaceName(model.namespace),
     };
     if (model.baseModel) {
       const baseName = getDiscriminator(this.program, model.baseModel)
@@ -484,6 +487,7 @@ class IRBuilder {
       const required = [union.options.discriminatorPropertyName];
       const schema: Schema = {
         type: "object",
+        namespace: namespaceName(type.namespace),
         properties,
         property_order: [...required],
         required: [...required],
@@ -501,6 +505,7 @@ class IRBuilder {
     }
     return {
       type: "union",
+      namespace: namespaceName(type.namespace),
       one_of: oneOf,
       discriminator: {
         property_name: union.options.discriminatorPropertyName,
@@ -512,6 +517,7 @@ class IRBuilder {
   private enumSchema(type: Enum): Schema {
     const schema: Schema = {
       type: "string",
+      namespace: namespaceName(type.namespace),
       enum: enumValues(type),
     };
     const doc = getDoc(this.program, type);
@@ -628,25 +634,37 @@ function buildContractDocument(
       title: pkg.title,
       version: pkg.version,
       description: pkg.description,
+      namespace: pkg.namespace,
     }),
     contracts,
   }) as Document;
 }
 
-function packageMetadata(program: Program): { title: string; version: string; description?: string } {
+function packageMetadata(program: Program): { title: string; version: string; description?: string; namespace?: string } {
   const packages = getPackages({ program });
   if (packages.length > 0) {
-    const [, pkg] = packages[0];
+    const [namespace, pkg] = packages[0];
     return {
       title: pkg.title,
       version: pkg.version,
       description: pkg.description,
+      namespace: namespaceName(namespace),
     };
   }
   return {
     title: "Data Contracts",
     version: "0.1.0",
   };
+}
+
+function namespaceName(namespace: Namespace | undefined): string | undefined {
+  const parts: string[] = [];
+  let current = namespace;
+  while (current) {
+    if (current.name) parts.unshift(current.name);
+    current = current.namespace;
+  }
+  return parts.length > 0 ? parts.join(".") : undefined;
 }
 
 function contractRoots(program: Program, builder: IRBuilder): Contract[] {
@@ -739,6 +757,7 @@ function buildDocument(
       title: info.title ?? serviceInfo?.title ?? "API",
       version: info.version ?? "0.1.0",
       description: info.description,
+      namespace: namespaceName(namespace),
     }),
     openapi: prune({
       version: "3.0.0",

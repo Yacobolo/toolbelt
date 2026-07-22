@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	cligoemit "github.com/Yacobolo/toolbelt/apigen/emit/cligo"
+	"github.com/Yacobolo/toolbelt/apigen/emit/contractimport"
 	jsonschemaemit "github.com/Yacobolo/toolbelt/apigen/emit/jsonschema"
 	modelgoemit "github.com/Yacobolo/toolbelt/apigen/emit/modelgo"
 	modeltsemit "github.com/Yacobolo/toolbelt/apigen/emit/modelts"
@@ -47,6 +48,7 @@ type commandConfig struct {
 	GoModelsPackage      string
 	TSOut                string
 	JSONSchemaOut        string
+	ContractImports      map[string]contractImportSpec
 }
 
 type targetManifest struct {
@@ -66,27 +68,34 @@ type cliOutputSpec struct {
 	File    string `yaml:"file"`
 }
 
+type contractImportSpec struct {
+	GoPackage        string `yaml:"go_package"`
+	GoAlias          string `yaml:"go_alias"`
+	TypeScriptModule string `yaml:"typescript_module"`
+}
+
 type targetSpec struct {
-	Name                 string         `yaml:"name"`
-	Kind                 string         `yaml:"kind"`
-	TypeSpecDir          string         `yaml:"typespec_dir"`
-	IROut                string         `yaml:"ir_out"`
-	OpenAPIOut           string         `yaml:"openapi_out"`
-	ServerOut            string         `yaml:"server_out"`
-	ServerPackage        string         `yaml:"server_package"`
-	RequestModelsOut     string         `yaml:"request_models_out"`
-	RequestModelsPackage string         `yaml:"request_models_package"`
-	CompatTypesOut       string         `yaml:"compat_types_out"`
-	CompatTypesPackage   string         `yaml:"compat_types_package"`
-	CLIOut               string         `yaml:"-"`
-	CLIPackage           string         `yaml:"cli_package"`
-	GenerateCLI          *bool          `yaml:"generate_cli"`
-	GoOut                *goOutputSpec  `yaml:"go_out"`
-	CLIOutGroup          *cliOutputSpec `yaml:"-"`
-	GoModelsOut          string         `yaml:"go_models_out"`
-	GoModelsPackage      string         `yaml:"go_models_package"`
-	TSOut                string         `yaml:"ts_out"`
-	JSONSchemaOut        string         `yaml:"json_schema_out"`
+	Name                 string                        `yaml:"name"`
+	Kind                 string                        `yaml:"kind"`
+	TypeSpecDir          string                        `yaml:"typespec_dir"`
+	IROut                string                        `yaml:"ir_out"`
+	OpenAPIOut           string                        `yaml:"openapi_out"`
+	ServerOut            string                        `yaml:"server_out"`
+	ServerPackage        string                        `yaml:"server_package"`
+	RequestModelsOut     string                        `yaml:"request_models_out"`
+	RequestModelsPackage string                        `yaml:"request_models_package"`
+	CompatTypesOut       string                        `yaml:"compat_types_out"`
+	CompatTypesPackage   string                        `yaml:"compat_types_package"`
+	CLIOut               string                        `yaml:"-"`
+	CLIPackage           string                        `yaml:"cli_package"`
+	GenerateCLI          *bool                         `yaml:"generate_cli"`
+	GoOut                *goOutputSpec                 `yaml:"go_out"`
+	CLIOutGroup          *cliOutputSpec                `yaml:"-"`
+	GoModelsOut          string                        `yaml:"go_models_out"`
+	GoModelsPackage      string                        `yaml:"go_models_package"`
+	TSOut                string                        `yaml:"ts_out"`
+	JSONSchemaOut        string                        `yaml:"json_schema_out"`
+	ContractImports      map[string]contractImportSpec `yaml:"contract_imports"`
 }
 
 var goPackagePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
@@ -100,25 +109,26 @@ type typeSpecPackage struct {
 
 func (target *targetSpec) UnmarshalYAML(unmarshal func(any) error) error {
 	type rawTargetSpec struct {
-		Name                 string        `yaml:"name"`
-		Kind                 string        `yaml:"kind"`
-		TypeSpecDir          string        `yaml:"typespec_dir"`
-		IROut                string        `yaml:"ir_out"`
-		OpenAPIOut           string        `yaml:"openapi_out"`
-		ServerOut            string        `yaml:"server_out"`
-		ServerPackage        string        `yaml:"server_package"`
-		RequestModelsOut     string        `yaml:"request_models_out"`
-		RequestModelsPackage string        `yaml:"request_models_package"`
-		CompatTypesOut       string        `yaml:"compat_types_out"`
-		CompatTypesPackage   string        `yaml:"compat_types_package"`
-		CLIOut               any           `yaml:"cli_out"`
-		CLIPackage           string        `yaml:"cli_package"`
-		GenerateCLI          *bool         `yaml:"generate_cli"`
-		GoOut                *goOutputSpec `yaml:"go_out"`
-		GoModelsOut          string        `yaml:"go_models_out"`
-		GoModelsPackage      string        `yaml:"go_models_package"`
-		TSOut                string        `yaml:"ts_out"`
-		JSONSchemaOut        string        `yaml:"json_schema_out"`
+		Name                 string                        `yaml:"name"`
+		Kind                 string                        `yaml:"kind"`
+		TypeSpecDir          string                        `yaml:"typespec_dir"`
+		IROut                string                        `yaml:"ir_out"`
+		OpenAPIOut           string                        `yaml:"openapi_out"`
+		ServerOut            string                        `yaml:"server_out"`
+		ServerPackage        string                        `yaml:"server_package"`
+		RequestModelsOut     string                        `yaml:"request_models_out"`
+		RequestModelsPackage string                        `yaml:"request_models_package"`
+		CompatTypesOut       string                        `yaml:"compat_types_out"`
+		CompatTypesPackage   string                        `yaml:"compat_types_package"`
+		CLIOut               any                           `yaml:"cli_out"`
+		CLIPackage           string                        `yaml:"cli_package"`
+		GenerateCLI          *bool                         `yaml:"generate_cli"`
+		GoOut                *goOutputSpec                 `yaml:"go_out"`
+		GoModelsOut          string                        `yaml:"go_models_out"`
+		GoModelsPackage      string                        `yaml:"go_models_package"`
+		TSOut                string                        `yaml:"ts_out"`
+		JSONSchemaOut        string                        `yaml:"json_schema_out"`
+		ContractImports      map[string]contractImportSpec `yaml:"contract_imports"`
 	}
 
 	var raw rawTargetSpec
@@ -145,6 +155,7 @@ func (target *targetSpec) UnmarshalYAML(unmarshal func(any) error) error {
 		GoModelsPackage:      raw.GoModelsPackage,
 		TSOut:                raw.TSOut,
 		JSONSchemaOut:        raw.JSONSchemaOut,
+		ContractImports:      raw.ContractImports,
 	}
 
 	if raw.CLIOut == nil {
@@ -256,7 +267,7 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 		if err != nil {
 			return failf(stderr, "load ir: %v", err)
 		}
-		if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CanonicalOpenAPIPath); err != nil {
+		if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CanonicalOpenAPIPath, config.ContractImports); err != nil {
 			return failf(stderr, "generate server: %v", err)
 		}
 	case "cli":
@@ -281,7 +292,7 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 			}
 			return 0
 		}
-		if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CanonicalOpenAPIPath); err != nil {
+		if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CanonicalOpenAPIPath, config.ContractImports); err != nil {
 			return failf(stderr, "generate server: %v", err)
 		}
 		if config.GenerateCLI {
@@ -317,6 +328,7 @@ func resolveCommandConfig(command string, manifestPath string, targetName string
 	config.GoModelsPackage = coalesceString(target.GoModelsPackage, defaults.GoModelsPackage)
 	config.TSOut = target.TSOut
 	config.JSONSchemaOut = target.JSONSchemaOut
+	config.ContractImports = target.ContractImports
 	if config.Kind == "http" && target.usesGroupedGoOut() {
 		config.ServerOut = filepath.Join(target.GoOut.Dir, coalesceString(target.GoOut.ServerFile, "server.apigen.gen.go"))
 		config.ServerPackage, err = inferOrValidateManifestPackage("go_out", target.GoOut.Package, target.GoOut.Dir)
@@ -513,6 +525,21 @@ func validateTargetSpec(target targetSpec) error {
 	if strings.TrimSpace(target.TypeSpecDir) == "" {
 		return fmt.Errorf("target %q typespec_dir is required", target.Name)
 	}
+	aliases := map[string]string{}
+	for namespace, binding := range target.ContractImports {
+		if strings.TrimSpace(namespace) == "" {
+			return fmt.Errorf("target %q contract_imports namespace is required", target.Name)
+		}
+		if strings.TrimSpace(binding.GoPackage) != "" && strings.TrimSpace(binding.GoAlias) == "" {
+			return fmt.Errorf("target %q contract import %q requires go_alias", target.Name, namespace)
+		}
+		if previous, ok := aliases[binding.GoAlias]; binding.GoAlias != "" && ok {
+			return fmt.Errorf("target %q contract imports %q and %q share Go alias %q", target.Name, previous, namespace, binding.GoAlias)
+		}
+		if binding.GoAlias != "" {
+			aliases[binding.GoAlias] = namespace
+		}
+	}
 	if target.kind() == "contracts" {
 		if strings.TrimSpace(target.IROut) == "" {
 			return fmt.Errorf("target %q ir_out is required", target.Name)
@@ -538,6 +565,14 @@ func validateTargetSpec(target targetSpec) error {
 		return fmt.Errorf("target %q cli_out.dir is required", target.Name)
 	}
 	return nil
+}
+
+func emitterContractImports(values map[string]contractImportSpec) contractimport.Bindings {
+	out := make(contractimport.Bindings, len(values))
+	for namespace, value := range values {
+		out[namespace] = contractimport.Binding{GoPackage: value.GoPackage, GoAlias: value.GoAlias, TypeScriptModule: value.TypeScriptModule}
+	}
+	return out
 }
 
 func inferOrValidateManifestPackage(fieldName string, explicit string, dir string) (string, error) {
@@ -888,7 +923,7 @@ func generateOpenAPI(doc ir.Document, outPath string) error {
 	return nil
 }
 
-func generateServer(doc ir.Document, outPath string, serverPackage string, requestModelsOutPath string, requestModelsPackage string, canonicalOpenAPIPath string) error {
+func generateServer(doc ir.Document, outPath string, serverPackage string, requestModelsOutPath string, requestModelsPackage string, canonicalOpenAPIPath string, configuredImports ...map[string]contractImportSpec) error {
 	if err := servergoemit.ValidateOperationIDs(doc); err != nil {
 		return fmt.Errorf("validate operation ids: %w", err)
 	}
@@ -910,8 +945,12 @@ func generateServer(doc ir.Document, outPath string, serverPackage string, reque
 	if err := writeFile(outPath, formatted); err != nil {
 		return err
 	}
+	var imports map[string]contractImportSpec
+	if len(configuredImports) > 0 {
+		imports = configuredImports[0]
+	}
 	requestModels, err := requestmodelgoemit.Emit(doc, requestmodelgoemit.Options{
-		PackageName: requestModelsPackage,
+		PackageName: requestModelsPackage, ContractImports: emitterContractImports(imports),
 	})
 	if err != nil {
 		return fmt.Errorf("emit request models go: %w", err)
@@ -946,7 +985,7 @@ func generateContracts(doc ir.Document, config commandConfig) error {
 		return fmt.Errorf("document does not declare contracts")
 	}
 	if config.GoModelsOut != "" {
-		b, err := modelgoemit.Emit(doc, modelgoemit.Options{PackageName: config.GoModelsPackage})
+		b, err := modelgoemit.Emit(doc, modelgoemit.Options{PackageName: config.GoModelsPackage, ContractImports: emitterContractImports(config.ContractImports)})
 		if err != nil {
 			return fmt.Errorf("emit go models: %w", err)
 		}
@@ -959,7 +998,7 @@ func generateContracts(doc ir.Document, config commandConfig) error {
 		}
 	}
 	if config.TSOut != "" {
-		b, err := modeltsemit.Emit(doc, modeltsemit.Options{})
+		b, err := modeltsemit.Emit(doc, modeltsemit.Options{ContractImports: emitterContractImports(config.ContractImports)})
 		if err != nil {
 			return fmt.Errorf("emit typescript models: %w", err)
 		}

@@ -189,6 +189,11 @@ func TestResolveCommandConfig_ContractsManifestTarget(t *testing.T) {
     go_models_package: contracts
     ts_out: web/generated/contracts.ts
     json_schema_out: schemas/contracts.schema.json
+    contract_imports:
+      LeapViewVisualization:
+        go_package: example.com/project/visualization
+        go_alias: visualizationir
+        typescript_module: ../visualization
 `), 0o644))
 
 	config, err := resolveCommandConfig("all", manifestPath, "signal-contracts", commandConfig{})
@@ -200,6 +205,9 @@ func TestResolveCommandConfig_ContractsManifestTarget(t *testing.T) {
 	require.Equal(t, "contracts", config.GoModelsPackage)
 	require.Equal(t, filepath.Join(dir, "web", "generated", "contracts.ts"), config.TSOut)
 	require.Equal(t, filepath.Join(dir, "schemas", "contracts.schema.json"), config.JSONSchemaOut)
+	require.Equal(t, contractImportSpec{
+		GoPackage: "example.com/project/visualization", GoAlias: "visualizationir", TypeScriptModule: "../visualization",
+	}, config.ContractImports["LeapViewVisualization"])
 
 	_, err = resolveCommandConfig("openapi", manifestPath, "signal-contracts", commandConfig{})
 	require.Error(t, err)

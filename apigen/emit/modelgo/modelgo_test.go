@@ -1,6 +1,9 @@
 package modelgo
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/Yacobolo/toolbelt/apigen/ir"
@@ -25,6 +28,7 @@ func TestEmit_GeneratesContractRootsAndDependencies(t *testing.T) {
 
 func TestEmit_GeneratesStrictDiscriminatedUnion(t *testing.T) {
 	doc := ir.Document{
+		Info: ir.Info{Namespace: "LeapViewSignals"},
 		Schemas: map[string]ir.Schema{
 			"Visual":      {Type: "union", OneOf: []ir.SchemaRef{{Ref: "ChartVisual"}, {Ref: "TextVisual"}}, Discriminator: &ir.Discriminator{PropertyName: "shape", Mapping: map[string]string{"chart": "ChartVisual", "text": "TextVisual"}}},
 			"VisualBase":  {Type: "object", Properties: map[string]ir.SchemaProperty{"shape": {Schema: ir.SchemaRef{Type: "string"}}}, Required: []string{"shape"}},
@@ -45,6 +49,61 @@ func TestEmit_GeneratesStrictDiscriminatedUnion(t *testing.T) {
 	require.Contains(t, content, `case "chart":`)
 	require.Contains(t, content, `if _, ok := fields["points"]; !ok`)
 	require.Contains(t, content, `required property points is missing`)
+}
+
+func TestEmit_ReferencesImportedContractNamespaceWithoutRegeneratingIt(t *testing.T) {
+	doc := ir.Document{
+		Info: ir.Info{Namespace: "LeapViewSignals"},
+		Schemas: map[string]ir.Schema{
+			"DashboardEnvelope": {
+				Type: "object", Namespace: "LeapViewSignals",
+				Properties: map[string]ir.SchemaProperty{"visual": {Schema: ir.SchemaRef{Ref: "VisualizationEnvelope"}}},
+				Required:   []string{"visual"},
+			},
+			"VisualizationEnvelope": {Type: "object", Namespace: "LeapViewVisualization"},
+		},
+		Contracts: []ir.Contract{{Name: "DashboardEnvelope", Schema: ir.SchemaRef{Ref: "DashboardEnvelope"}}},
+	}
+
+	b, err := Emit(doc, Options{PackageName: "signals", ContractImports: map[string]ContractImport{
+		"LeapViewVisualization": {GoPackage: "example.com/project/visualization", GoAlias: "visualizationir"},
+	}})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, `visualizationir "example.com/project/visualization"`)
+	require.Contains(t, content, "Visual visualizationir.VisualizationEnvelope")
+	require.NotContains(t, content, "type VisualizationEnvelope struct")
+}
+
+func TestEmit_ImportedProducerAndConsumerPackagesCompile(t *testing.T) {
+	doc := ir.Document{
+		Info: ir.Info{Namespace: "LeapViewSignals"},
+		Schemas: map[string]ir.Schema{
+			"DashboardEnvelope": {
+				Type: "object", Namespace: "LeapViewSignals",
+				Properties: map[string]ir.SchemaProperty{"visual": {Schema: ir.SchemaRef{Ref: "VisualizationEnvelope"}}},
+				Required:   []string{"visual"},
+			},
+			"VisualizationEnvelope": {Type: "object", Namespace: "LeapViewVisualization"},
+		},
+		Contracts: []ir.Contract{{Name: "DashboardEnvelope", Schema: ir.SchemaRef{Ref: "DashboardEnvelope"}}},
+	}
+
+	generated, err := Emit(doc, Options{PackageName: "signals", ContractImports: map[string]ContractImport{
+		"LeapViewVisualization": {GoPackage: "example.com/contracts/visualization", GoAlias: "visualizationir"},
+	}})
+	require.NoError(t, err)
+
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "signals"), 0o750))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "visualization"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/contracts\n\ngo 1.24\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "visualization", "models.go"), []byte("package visualization\n\ntype VisualizationEnvelope struct{}\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "signals", "models.gen.go"), generated, 0o600))
+	command := exec.Command("go", "test", "./...")
+	command.Dir = root
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
 }
 
 func contractDoc() ir.Document {

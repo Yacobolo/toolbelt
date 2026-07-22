@@ -27,6 +27,7 @@ func TestEmit_AliasesRequestRoots(t *testing.T) {
 	t.Helper()
 
 	doc := ir.Document{
+		Info: ir.Info{Namespace: "LeapViewAPI"},
 		Schemas: map[string]ir.Schema{
 			"CreateWidgetRequest": {Type: "object"},
 		},
@@ -36,6 +37,30 @@ func TestEmit_AliasesRequestRoots(t *testing.T) {
 	b, err := Emit(doc, Options{})
 	require.NoError(t, err)
 	require.Contains(t, string(b), "type GenSchemaCreateWidgetRequest = CreateWidgetRequest")
+}
+
+func TestEmit_ReferencesImportedResponseModelsWithoutRegeneratingThem(t *testing.T) {
+	doc := ir.Document{
+		Info: ir.Info{Namespace: "LeapViewAPI"},
+		Schemas: map[string]ir.Schema{
+			"DashboardResponse": {
+				Type: "object", Namespace: "LeapViewAPI",
+				Properties: map[string]ir.SchemaProperty{"visual": {Schema: ir.SchemaRef{Ref: "VisualizationEnvelope"}}},
+				Required:   []string{"visual"},
+			},
+			"VisualizationEnvelope": {Type: "object", Namespace: "LeapViewVisualization"},
+		},
+		Endpoints: []ir.Endpoint{{OperationID: "dashboard", Responses: []ir.Response{{StatusCode: 200, Contents: jsonContent(ir.SchemaRef{Ref: "DashboardResponse"})}}}},
+	}
+
+	b, err := Emit(doc, Options{PackageName: "gen", ContractImports: map[string]ContractImport{
+		"LeapViewVisualization": {GoPackage: "example.com/project/visualization", GoAlias: "visualizationir"},
+	}})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, `visualizationir "example.com/project/visualization"`)
+	require.Contains(t, content, "Visual visualizationir.VisualizationEnvelope")
+	require.NotContains(t, content, "type VisualizationEnvelope struct")
 }
 
 func TestEmit_AliasesNonStructRequestRoots(t *testing.T) {

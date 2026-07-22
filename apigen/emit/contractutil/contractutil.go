@@ -10,9 +10,22 @@ import (
 // DependencyNames returns the sorted transitive schema dependency set for all
 // contract roots in doc.
 func DependencyNames(doc ir.Document) []string {
+	local, _ := DependencyNamesPartition(doc, nil)
+	return local
+}
+
+// DependencyNamesPartition returns local dependencies and the first imported
+// schema roots crossed while traversing contract dependencies.
+func DependencyNamesPartition(doc ir.Document, external func(string, ir.Schema) bool) ([]string, []string) {
 	seen := map[string]struct{}{}
+	imported := map[string]struct{}{}
 	queue := []string{}
 	for _, contract := range doc.Contracts {
+		if name, ok := ir.NormalizedSchemaRefName(contract.Schema); ok && external != nil {
+			if schema, exists := doc.Schemas[name]; exists && external(name, schema) {
+				continue
+			}
+		}
 		collectRef(contract.Schema, seen, &queue)
 	}
 	for len(queue) > 0 {
@@ -22,14 +35,26 @@ func DependencyNames(doc ir.Document) []string {
 		if !ok {
 			continue
 		}
+		if external != nil && external(name, schema) {
+			imported[name] = struct{}{}
+			continue
+		}
 		collectSchema(schema, seen, &queue)
 	}
-	names := make([]string, 0, len(seen))
+	names := make([]string, 0, len(seen)-len(imported))
 	for name := range seen {
+		if _, ok := imported[name]; ok {
+			continue
+		}
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	return names
+	importedNames := make([]string, 0, len(imported))
+	for name := range imported {
+		importedNames = append(importedNames, name)
+	}
+	sort.Strings(importedNames)
+	return names, importedNames
 }
 
 // OrderedProperties returns schema properties in authored order followed by any

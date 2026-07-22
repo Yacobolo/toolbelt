@@ -47,6 +47,7 @@ func TestEmit_GeneratesContractInterfaces(t *testing.T) {
 
 func TestEmit_GeneratesDiscriminatedUnion(t *testing.T) {
 	doc := ir.Document{
+		Info: ir.Info{Namespace: "LeapViewSignals"},
 		Schemas: map[string]ir.Schema{
 			"Visual":      {Type: "union", OneOf: []ir.SchemaRef{{Ref: "ChartVisual"}, {Ref: "TextVisual"}}, Discriminator: &ir.Discriminator{PropertyName: "shape", Mapping: map[string]string{"chart": "ChartVisual", "text": "TextVisual"}}},
 			"VisualBase":  {Type: "object", Properties: map[string]ir.SchemaProperty{"shape": {Schema: ir.SchemaRef{Type: "string"}}}, Required: []string{"shape"}},
@@ -62,4 +63,28 @@ func TestEmit_GeneratesDiscriminatedUnion(t *testing.T) {
 	require.Contains(t, content, "export type Visual = ChartVisual | TextVisual")
 	require.Contains(t, content, "export interface ChartVisual extends VisualBase")
 	require.Contains(t, content, "shape: 'chart'")
+}
+
+func TestEmit_ReferencesImportedContractNamespaceWithoutRegeneratingIt(t *testing.T) {
+	doc := ir.Document{
+		Info: ir.Info{Namespace: "LeapViewSignals"},
+		Schemas: map[string]ir.Schema{
+			"DashboardEnvelope": {
+				Type: "object", Namespace: "LeapViewSignals",
+				Properties: map[string]ir.SchemaProperty{"visual": {Schema: ir.SchemaRef{Ref: "VisualizationEnvelope"}}},
+				Required:   []string{"visual"},
+			},
+			"VisualizationEnvelope": {Type: "object", Namespace: "LeapViewVisualization"},
+		},
+		Contracts: []ir.Contract{{Name: "DashboardEnvelope", Schema: ir.SchemaRef{Ref: "DashboardEnvelope"}}},
+	}
+
+	b, err := Emit(doc, Options{ContractImports: map[string]ContractImport{
+		"LeapViewVisualization": {TypeScriptModule: "../visualization"},
+	}})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, `import type * as LeapViewVisualization from '../visualization'`)
+	require.Contains(t, content, "visual: LeapViewVisualization.VisualizationEnvelope")
+	require.NotContains(t, content, "export interface VisualizationEnvelope")
 }

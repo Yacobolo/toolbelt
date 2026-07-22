@@ -18,7 +18,7 @@ Canonical OpenAPI is the published API artifact for HTTP targets. JSON IR is the
 Install the CLI:
 
 ```bash
-go install github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.5.3
+go install github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.6.0
 ```
 
 Or run from this module during local development:
@@ -50,6 +50,11 @@ targets:
       dir: internal/api/gen
     cli_out:
       dir: cmd/cli/gen
+    contract_imports:
+      ExampleVisualization:
+        go_package: example.com/project/internal/visualization
+        go_alias: visualization
+        typescript_module: ../visualization
 
   - name: data-contracts
     kind: contracts
@@ -78,6 +83,13 @@ Manifest target fields:
 - `go_models_package`
 - `ts_out`
 - `json_schema_out`
+- `contract_imports`
+
+`contract_imports` maps TypeSpec namespaces owned by another generated target
+to their canonical Go package and TypeScript module. Consumer models reference
+those packages instead of regenerating the imported declarations. OpenAPI and
+JSON Schema remain self-contained. Every imported namespace used by a target
+must have a mapping; aliases must be unique within the target.
 
 HTTP targets require `typespec_dir`, `ir_out`, and `openapi_out`. Contract targets require `typespec_dir`, `ir_out`, and at least one of `go_models_out`, `ts_out`, or `json_schema_out`. `openapi`, `server`, and `cli` are HTTP-target commands and fail clearly for contract targets.
 
@@ -177,7 +189,7 @@ Generic operation `x-*` extensions remain available for downstream metadata. `x-
 Install as a dependency with:
 
 ```bash
-go get github.com/Yacobolo/toolbelt/apigen@v0.5.3
+go get github.com/Yacobolo/toolbelt/apigen@v0.6.0
 ```
 
 ## Contract Notes
