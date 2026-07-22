@@ -37,7 +37,7 @@ func TestValidateRejectsImportedUnionVariants(t *testing.T) {
 	doc := ir.Document{
 		Info: ir.Info{Namespace: "Consumer"},
 		Schemas: map[string]ir.Schema{
-			"Visual":      {Type: "union", Namespace: "Consumer", OneOf: []ir.SchemaRef{{Ref: "PointVisual"}}},
+			"Visual":      {Type: "union", Namespace: "Consumer", OneOf: []ir.SchemaRef{{Ref: "PointVisual"}}, Discriminator: &ir.Discriminator{PropertyName: "kind", Mapping: map[string]string{"point": "PointVisual"}}},
 			"PointVisual": {Type: "object", Namespace: "Producer"},
 		},
 	}

@@ -37,6 +37,7 @@ type commandConfig struct {
 	OpenAPIOut           string
 	CanonicalOpenAPIPath string
 	TypeSpecDir          string
+	TypeSpecEntrypoint   string
 	ServerOut            string
 	ServerPackage        string
 	RequestModelsOut     string
@@ -78,6 +79,7 @@ type targetSpec struct {
 	Name                 string                        `yaml:"name"`
 	Kind                 string                        `yaml:"kind"`
 	TypeSpecDir          string                        `yaml:"typespec_dir"`
+	TypeSpecEntrypoint   string                        `yaml:"typespec_entrypoint"`
 	IROut                string                        `yaml:"ir_out"`
 	OpenAPIOut           string                        `yaml:"openapi_out"`
 	ServerOut            string                        `yaml:"server_out"`
@@ -112,6 +114,7 @@ func (target *targetSpec) UnmarshalYAML(unmarshal func(any) error) error {
 		Name                 string                        `yaml:"name"`
 		Kind                 string                        `yaml:"kind"`
 		TypeSpecDir          string                        `yaml:"typespec_dir"`
+		TypeSpecEntrypoint   string                        `yaml:"typespec_entrypoint"`
 		IROut                string                        `yaml:"ir_out"`
 		OpenAPIOut           string                        `yaml:"openapi_out"`
 		ServerOut            string                        `yaml:"server_out"`
@@ -140,6 +143,7 @@ func (target *targetSpec) UnmarshalYAML(unmarshal func(any) error) error {
 		Name:                 raw.Name,
 		Kind:                 raw.Kind,
 		TypeSpecDir:          raw.TypeSpecDir,
+		TypeSpecEntrypoint:   raw.TypeSpecEntrypoint,
 		IROut:                raw.IROut,
 		OpenAPIOut:           raw.OpenAPIOut,
 		ServerOut:            raw.ServerOut,
@@ -259,7 +263,7 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 			return failf(stderr, "generate openapi: %v", err)
 		}
 	case "typespec-compile":
-		if err := compileTypeSpec(config.TypeSpecDir, config.IROut, config.OpenAPIOut); err != nil {
+		if err := compileTypeSpec(config.TypeSpecDir, config.IROut, config.OpenAPIOut, config.TypeSpecEntrypoint); err != nil {
 			return failf(stderr, "compile typespec: %v", err)
 		}
 	case "server":
@@ -320,6 +324,7 @@ func resolveCommandConfig(command string, manifestPath string, targetName string
 	config := defaults
 	config.Kind = target.kind()
 	config.TypeSpecDir = target.TypeSpecDir
+	config.TypeSpecEntrypoint = target.TypeSpecEntrypoint
 	config.IRPath = target.IROut
 	config.IROut = target.IROut
 	config.OpenAPIOut = target.OpenAPIOut
@@ -525,6 +530,9 @@ func validateTargetSpec(target targetSpec) error {
 	if strings.TrimSpace(target.TypeSpecDir) == "" {
 		return fmt.Errorf("target %q typespec_dir is required", target.Name)
 	}
+	if entrypoint := filepath.Clean(strings.TrimSpace(target.TypeSpecEntrypoint)); entrypoint != "." && (filepath.IsAbs(entrypoint) || entrypoint == ".." || strings.HasPrefix(entrypoint, ".."+string(filepath.Separator))) {
+		return fmt.Errorf("target %q typespec_entrypoint must stay within typespec_dir", target.Name)
+	}
 	aliases := map[string]string{}
 	for namespace, binding := range target.ContractImports {
 		if strings.TrimSpace(namespace) == "" {
@@ -586,7 +594,7 @@ func inferOrValidateManifestPackage(fieldName string, explicit string, dir strin
 	return packageName, nil
 }
 
-func compileTypeSpec(typeSpecDir string, irOutPath string, openAPIOutPath string) error {
+func compileTypeSpec(typeSpecDir string, irOutPath string, openAPIOutPath string, configuredEntrypoint ...string) error {
 	absTypeSpecDir, err := filepath.Abs(typeSpecDir)
 	if err != nil {
 		return fmt.Errorf("resolve typespec dir: %w", err)
@@ -615,6 +623,17 @@ func compileTypeSpec(typeSpecDir string, irOutPath string, openAPIOutPath string
 		return err
 	}
 	defer cleanup()
+	compileTarget := stagedTypeSpecDir
+	if len(configuredEntrypoint) > 0 && strings.TrimSpace(configuredEntrypoint[0]) != "" {
+		entrypoint := filepath.Clean(configuredEntrypoint[0])
+		if filepath.IsAbs(entrypoint) || entrypoint == ".." || strings.HasPrefix(entrypoint, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("typespec_entrypoint must stay within typespec_dir")
+		}
+		compileTarget = filepath.Join(stagedTypeSpecDir, entrypoint)
+		if _, err := os.Stat(compileTarget); err != nil {
+			return fmt.Errorf("stat typespec entrypoint: %w", err)
+		}
+	}
 
 	tempIRPath, err := tempOutputPath(absIROutPath)
 	if err != nil {
@@ -635,7 +654,7 @@ func compileTypeSpec(typeSpecDir string, irOutPath string, openAPIOutPath string
 		"node",
 		tsp,
 		"compile",
-		stagedTypeSpecDir,
+		compileTarget,
 		"--import",
 		pkg.Dir,
 		"--emit",

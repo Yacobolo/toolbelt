@@ -177,6 +177,8 @@ func tsType(doc ir.Document, imports contractimport.Bindings, aliases map[string
 			return strings.Join(values, " | ")
 		}
 		return "string"
+	case "null":
+		return "null"
 	default:
 		return "unknown"
 	}

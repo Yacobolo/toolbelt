@@ -96,7 +96,7 @@ func (bindings Bindings) Validate(doc ir.Document) error {
 			if nameExternal && !dependencyExternal {
 				return fmt.Errorf("contract import cycle: external schema %q references local schema %q", name, dependency)
 			}
-			if schema.Type == "union" && !nameExternal && dependencyExternal {
+			if schema.Type == "union" && schema.Discriminator != nil && !nameExternal && dependencyExternal {
 				return fmt.Errorf("local union %q cannot use imported variant %q", name, dependency)
 			}
 		}

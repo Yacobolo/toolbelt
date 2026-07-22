@@ -75,7 +75,11 @@ func emitSchema(b *strings.Builder, doc ir.Document, name string, schema ir.Sche
 	typeName := exportedName(name)
 	switch schema.Type {
 	case "union":
-		gounion.Emit(b, doc, name, schema, resolveName)
+		if schema.Discriminator == nil {
+			b.WriteString("type " + typeName + " = any\n\n")
+		} else {
+			gounion.Emit(b, doc, name, schema, resolveName)
+		}
 	case "object", "":
 		b.WriteString("type ")
 		b.WriteString(typeName)
@@ -93,7 +97,7 @@ func emitSchema(b *strings.Builder, doc ir.Document, name string, schema ir.Sche
 				fieldType = "*" + fieldType
 			}
 			b.WriteString("\t")
-			b.WriteString(exportedName(propertyName))
+			b.WriteString(fieldName(propertyName))
 			b.WriteString(" ")
 			b.WriteString(fieldType)
 			b.WriteString(" `json:\"")
@@ -154,7 +158,7 @@ func emitImports(b *strings.Builder, values map[string]string) {
 
 func hasUnion(doc ir.Document, names []string) bool {
 	for _, name := range names {
-		if doc.Schemas[name].Type == "union" {
+		if doc.Schemas[name].Type == "union" && doc.Schemas[name].Discriminator != nil {
 			return true
 		}
 	}
@@ -194,6 +198,28 @@ func exportedName(value string) string {
 	}
 	for i := range parts {
 		parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:]
+	}
+	return strings.Join(parts, "")
+}
+
+var initialisms = map[string]string{
+	"api": "API", "html": "HTML", "http": "HTTP", "https": "HTTPS",
+	"id": "ID", "ip": "IP", "json": "JSON", "ms": "MS", "nan": "NaN",
+	"rpc": "RPC", "sql": "SQL", "sso": "SSO", "tcp": "TCP", "tls": "TLS",
+	"ui": "UI", "uri": "URI", "url": "URL", "uuid": "UUID", "xml": "XML",
+}
+
+func fieldName(value string) string {
+	parts := splitIdentifier(value)
+	if len(parts) == 0 {
+		return "Value"
+	}
+	for index, part := range parts {
+		if initialism, ok := initialisms[strings.ToLower(part)]; ok {
+			parts[index] = initialism
+			continue
+		}
+		parts[index] = strings.ToUpper(part[:1]) + part[1:]
 	}
 	return strings.Join(parts, "")
 }

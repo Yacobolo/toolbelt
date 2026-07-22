@@ -165,6 +165,35 @@ describe("APIGen TypeSpec emitter", () => {
     expect(doc.schemas.Component.one_of).toHaveLength(2);
   });
 
+  it("emits named JSON scalar unions without a discriminator", async () => {
+    const doc = await compileSource(`
+      @apigen.\`package\`(#{ title: "Scalar Contracts", version: "1.0.0" })
+      namespace ScalarContracts;
+
+      union JsonScalar {
+        text: string,
+        integer: int64,
+        number: float64,
+        boolean: boolean,
+        nil: null,
+      }
+
+      @apigen.contract model Mapping { value: JsonScalar; }
+    `);
+
+    expect(doc.schemas.JsonScalar).toEqual({
+      type: "union",
+      namespace: "ScalarContracts",
+      one_of: [
+        { type: "string" },
+        { type: "integer", format: "int64" },
+        { type: "number", format: "double" },
+        { type: "boolean" },
+        { type: "null" },
+      ],
+    });
+  });
+
   it("emits an explicit generated transport error contract", async () => {
     const doc = await compileSource(`
       using Http;

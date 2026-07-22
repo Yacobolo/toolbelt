@@ -26,6 +26,23 @@ func TestEmit_GeneratesContractRootsAndDependencies(t *testing.T) {
 	require.Contains(t, content, "Note *string `json:\"note,omitempty\"`")
 }
 
+func TestEmit_PreservesGoInitialismsInJSONFieldNames(t *testing.T) {
+	doc := ir.Document{
+		Info: ir.Info{Namespace: "Signals"},
+		Schemas: map[string]ir.Schema{
+			"Envelope": {Type: "object", Namespace: "Signals", Properties: map[string]ir.SchemaProperty{
+				"dashboardId": {Schema: ir.SchemaRef{Type: "string"}},
+				"urlParams":   {Schema: ir.SchemaRef{Type: "string"}},
+			}, Required: []string{"dashboardId", "urlParams"}},
+		},
+		Contracts: []ir.Contract{{Name: "Envelope", Schema: ir.SchemaRef{Ref: "Envelope"}}},
+	}
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	require.Contains(t, string(b), "DashboardID string")
+	require.Contains(t, string(b), "URLParams string")
+}
+
 func TestEmit_GeneratesStrictDiscriminatedUnion(t *testing.T) {
 	doc := ir.Document{
 		Info: ir.Info{Namespace: "LeapViewSignals"},
