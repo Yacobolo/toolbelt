@@ -18,7 +18,7 @@ Canonical OpenAPI is the published API artifact for HTTP targets. JSON IR is the
 Install the CLI:
 
 ```bash
-go install github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.6.0
+go install github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.6.1
 ```
 
 Or run from this module during local development:
@@ -44,6 +44,7 @@ targets:
   - name: example
     kind: http
     typespec_dir: api/typespec
+    typespec_entrypoint: public/main.tsp
     ir_out: api/gen/json-ir.json
     openapi_out: api/gen/openapi.yaml
     go_out:
@@ -70,6 +71,7 @@ Manifest target fields:
 
 - `kind` (`http` by default, or `contracts`)
 - `typespec_dir`
+- `typespec_entrypoint` (optional path within `typespec_dir`)
 - `ir_out`
 - `openapi_out`
 - `go_out.dir`
@@ -189,7 +191,7 @@ Generic operation `x-*` extensions remain available for downstream metadata. `x-
 Install as a dependency with:
 
 ```bash
-go get github.com/Yacobolo/toolbelt/apigen@v0.6.0
+go get github.com/Yacobolo/toolbelt/apigen@v0.6.1
 ```
 
 ## Contract Notes

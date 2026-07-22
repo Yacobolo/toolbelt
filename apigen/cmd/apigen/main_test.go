@@ -184,6 +184,7 @@ func TestResolveCommandConfig_ContractsManifestTarget(t *testing.T) {
   - name: signal-contracts
     kind: contracts
     typespec_dir: contracts/typespec
+    typespec_entrypoint: signals/main.tsp
     ir_out: contracts/gen/json-ir.json
     go_models_out: contracts/gen/models.gen.go
     go_models_package: contracts
@@ -200,6 +201,7 @@ func TestResolveCommandConfig_ContractsManifestTarget(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "contracts", config.Kind)
 	require.Equal(t, filepath.Join(dir, "contracts", "typespec"), config.TypeSpecDir)
+	require.Equal(t, "signals/main.tsp", config.TypeSpecEntrypoint)
 	require.Equal(t, filepath.Join(dir, "contracts", "gen", "json-ir.json"), config.IRPath)
 	require.Equal(t, filepath.Join(dir, "contracts", "gen", "models.gen.go"), config.GoModelsOut)
 	require.Equal(t, "contracts", config.GoModelsPackage)
@@ -305,6 +307,25 @@ op listWidgets(): Widget;
 	require.Len(t, doc.Endpoints, 1)
 	require.Equal(t, []string{"widgets", "list"}, doc.Endpoints[0].CLI.Command)
 	require.FileExists(t, openAPIPath)
+}
+
+func TestCompileTypeSpec_SupportsEntrypointWithinSharedSourceRoot(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	setupManagedTypeSpecCache(t)
+	typeSpecDir := filepath.Join(dir, "typespec")
+	require.NoError(t, os.MkdirAll(filepath.Join(typeSpecDir, "signals"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(typeSpecDir, "visualization"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(typeSpecDir, "visualization", "main.tsp"), []byte(`namespace Visualization { model Envelope { revision: int64; } }`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(typeSpecDir, "signals", "main.tsp"), []byte("import \"@yacobolo/apigen\";\nimport \"../visualization/main.tsp\";\n@apigen.`package`(#{ title: \"Signals\", version: \"1.0.0\" })\nnamespace Signals {\n  @apigen.contract model Dashboard { visual: Visualization.Envelope; }\n}\n"), 0o644))
+	irPath := filepath.Join(dir, "json-ir.json")
+
+	require.NoError(t, compileTypeSpec(typeSpecDir, irPath, "", filepath.Join("signals", "main.tsp")))
+	doc, err := loadDocument(irPath)
+	require.NoError(t, err)
+	require.Equal(t, "Signals", doc.Info.Title)
+	require.Equal(t, "Visualization", doc.Schemas["Envelope"].Namespace)
 }
 
 func TestCompileTypeSpecAndGenerateServer_SupportsInlineBinaryRequestBody(t *testing.T) {

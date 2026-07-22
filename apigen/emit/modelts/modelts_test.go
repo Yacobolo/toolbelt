@@ -88,3 +88,17 @@ func TestEmit_ReferencesImportedContractNamespaceWithoutRegeneratingIt(t *testin
 	require.Contains(t, content, "visual: LeapViewVisualization.VisualizationEnvelope")
 	require.NotContains(t, content, "export interface VisualizationEnvelope")
 }
+
+func TestEmit_RendersScalarUnion(t *testing.T) {
+	doc := ir.Document{
+		Info: ir.Info{Namespace: "Contracts"},
+		Schemas: map[string]ir.Schema{
+			"JsonScalar": {Type: "union", Namespace: "Contracts", OneOf: []ir.SchemaRef{{Type: "string"}, {Type: "number"}, {Type: "boolean"}, {Type: "null"}}},
+			"Mapping":    {Type: "object", Namespace: "Contracts", Properties: map[string]ir.SchemaProperty{"value": {Schema: ir.SchemaRef{Ref: "JsonScalar"}}}, Required: []string{"value"}},
+		},
+		Contracts: []ir.Contract{{Name: "Mapping", Schema: ir.SchemaRef{Ref: "Mapping"}}},
+	}
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	require.Contains(t, string(b), "export type JsonScalar = string | number | boolean | null")
+}

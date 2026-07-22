@@ -70,6 +70,9 @@ class IRBuilder {
         if (type.kind === "Intrinsic" && type.name === "unknown") {
             return {};
         }
+        if (type.kind === "Intrinsic" && type.name === "null") {
+            return { type: "null" };
+        }
         this.unsupported(type, context);
         return { type: "string" };
     }
@@ -205,6 +208,14 @@ class IRBuilder {
         return schema;
     }
     unionSchema(type) {
+        const scalarVariants = [...type.variants.values()];
+        if (scalarVariants.length > 0 && scalarVariants.every((variant) => isJSONScalarType(variant.type))) {
+            return {
+                type: "union",
+                namespace: namespaceName(type.namespace),
+                one_of: scalarVariants.map((variant) => this.schemaRef(variant.type, `union ${type.name} variant`)),
+            };
+        }
         const [union, diagnostics] = getDiscriminatedUnion(this.program, type);
         this.program.reportDiagnostics(diagnostics);
         if (!union || !type.name) {
@@ -301,6 +312,9 @@ class IRBuilder {
             target,
         });
     }
+}
+function isJSONScalarType(type) {
+    return type.kind === "Scalar" || type.kind === "String" || type.kind === "Boolean" || type.kind === "Number" || (type.kind === "Intrinsic" && type.name === "null");
 }
 export async function $onEmit(context) {
     const outputFile = context.options["output-file"];

@@ -184,7 +184,11 @@ func emitCanonicalSchemaType(b *strings.Builder, doc ir.Document, rootName strin
 	typeName := exportedName(rootName)
 	switch schema.Type {
 	case "union":
-		gounion.Emit(b, doc, rootName, schema, resolveName)
+		if schema.Discriminator == nil {
+			b.WriteString("type " + typeName + " = any\n\n")
+		} else {
+			gounion.Emit(b, doc, rootName, schema, resolveName)
+		}
 		return nil
 	case "object", "":
 		b.WriteString("type ")
@@ -385,7 +389,7 @@ func schemaDependencies(schema ir.Schema) []string {
 
 func documentHasLocalUnion(doc ir.Document, imports contractimport.Bindings) bool {
 	for name, schema := range doc.Schemas {
-		if _, _, external := imports.Schema(doc, name); !external && schema.Type == "union" {
+		if _, _, external := imports.Schema(doc, name); !external && schema.Type == "union" && schema.Discriminator != nil {
 			return true
 		}
 	}
