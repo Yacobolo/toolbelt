@@ -847,7 +847,18 @@ func validateSchemaDefinition(doc Document, name string, schema Schema) error {
 			return fmt.Errorf("schema %q union must declare one_of", name)
 		}
 		if schema.Discriminator == nil {
-			return fmt.Errorf("schema %q union must declare discriminator", name)
+			seenVariants := make(map[string]struct{}, len(schema.OneOf))
+			for idx, variant := range schema.OneOf {
+				if !isScalarUnionVariant(variant) {
+					return fmt.Errorf("schema %q union one_of[%d] must be an inline scalar when discriminator is omitted", name, idx)
+				}
+				key := fmt.Sprintf("%s:%s:%v", variant.Type, variant.Format, variant.Enum)
+				if _, exists := seenVariants[key]; exists {
+					return fmt.Errorf("schema %q union has duplicate scalar one_of variant %q", name, variant.Type)
+				}
+				seenVariants[key] = struct{}{}
+			}
+			return nil
 		}
 		seenVariants := make(map[string]struct{}, len(schema.OneOf))
 		for idx, variant := range schema.OneOf {
@@ -905,6 +916,18 @@ func validateSchemaDefinition(doc Document, name string, schema Schema) error {
 		}
 	}
 	return nil
+}
+
+func isScalarUnionVariant(variant SchemaRef) bool {
+	if variant.Ref != "" || variant.Items != nil || variant.AdditionalProperties != nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(variant.Type)) {
+	case "boolean", "integer", "number", "string", "null":
+		return true
+	default:
+		return false
+	}
 }
 
 func containsString(values []string, expected string) bool {

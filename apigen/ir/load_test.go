@@ -959,6 +959,33 @@ func TestValidate_AcceptsDiscriminatedComposition(t *testing.T) {
 	require.NoError(t, Validate(doc))
 }
 
+func TestValidate_AcceptsScalarUnionWithoutDiscriminator(t *testing.T) {
+	doc := Document{
+		SchemaVersion: CurrentSchemaVersion,
+		API:           API{BasePath: "/"},
+		Info:          Info{Title: "Contracts", Version: "1.0.0"},
+		Schemas: map[string]Schema{
+			"JsonScalar": {Type: "union", OneOf: []SchemaRef{{Type: "string"}, {Type: "integer", Format: "int64"}, {Type: "number", Format: "double"}, {Type: "boolean"}, {Type: "null"}}},
+		},
+		Contracts: []Contract{{Name: "scalar", Schema: SchemaRef{Ref: "JsonScalar"}}},
+	}
+	require.NoError(t, Validate(doc))
+}
+
+func TestValidate_RejectsObjectUnionWithoutDiscriminator(t *testing.T) {
+	doc := Document{
+		SchemaVersion: CurrentSchemaVersion,
+		API:           API{BasePath: "/"},
+		Info:          Info{Title: "Contracts", Version: "1.0.0"},
+		Schemas: map[string]Schema{
+			"Value": {Type: "union", OneOf: []SchemaRef{{Type: "object"}}},
+		},
+		Contracts: []Contract{{Name: "value", Schema: SchemaRef{Ref: "Value"}}},
+	}
+	err := Validate(doc)
+	require.ErrorContains(t, err, "must be an inline scalar")
+}
+
 func TestValidate_RejectsInvalidDiscriminatorMapping(t *testing.T) {
 	doc := Document{
 		SchemaVersion: CurrentSchemaVersion,
