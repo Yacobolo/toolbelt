@@ -40,6 +40,7 @@ type Info struct {
 	Title       string `json:"title"`
 	Version     string `json:"version"`
 	Description string `json:"description,omitempty"`
+	Namespace   string `json:"namespace,omitempty"`
 }
 
 // Server describes a server URL entry.
@@ -280,6 +281,7 @@ type AdditionalProperties struct {
 // Schema is a JSON schema subset used by apigen.
 type Schema struct {
 	Type          string                    `json:"type"`
+	Namespace     string                    `json:"namespace,omitempty"`
 	Title         string                    `json:"title,omitempty"`
 	Description   string                    `json:"description,omitempty"`
 	Example       any                       `json:"example,omitempty"`

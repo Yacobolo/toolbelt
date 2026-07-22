@@ -81,6 +81,7 @@ describe("APIGen TypeSpec emitter", () => {
     expect(doc.schemas.WidgetStatus).toEqual({
       type: "string",
       enum: ["active", "archived"],
+      namespace: "EnumAPI",
     });
 		expect(doc.schemas.Widget.base).toEqual({ ref: "Resource" });
 		expect(doc.schemas.Widget.property_order).toEqual(["status", "name"]);
@@ -120,6 +121,7 @@ describe("APIGen TypeSpec emitter", () => {
 
     expect(doc.schemas.Visual).toEqual({
       type: "union",
+      namespace: "VisualAPI",
       one_of: [{ ref: "ChartVisual" }, { ref: "TextVisual" }],
       discriminator: {
         property_name: "shape",
@@ -1233,6 +1235,7 @@ describe("APIGen TypeSpec emitter", () => {
       title: "LibreDash Signal Contracts",
       version: "1.0.0",
       description: "UI contracts",
+      namespace: "SignalContracts",
     });
     expect(doc.endpoints).toBeUndefined();
     expect(doc.contracts).toEqual([
@@ -1256,6 +1259,31 @@ describe("APIGen TypeSpec emitter", () => {
         "x-libredash-signal-key": "visuals",
         "x-libredash-patch-mode": "merge",
       },
+    });
+  });
+
+  it("preserves producer namespace ownership for imported contract references", async () => {
+    const doc = await compileSource(`
+      namespace VisualizationContracts {
+        model VisualizationEnvelope {
+          revision: int64;
+        }
+      }
+
+      @apigen.\`package\`(#{ title: "Signal Contracts", version: "1.0.0" })
+      namespace SignalContracts {
+        @apigen.contract(#{ kind: "ui-signal" })
+        model DashboardEnvelope {
+          visual: VisualizationContracts.VisualizationEnvelope;
+        }
+      }
+    `);
+
+    expect(doc.info.namespace).toBe("SignalContracts");
+    expect(doc.schemas.DashboardEnvelope.namespace).toBe("SignalContracts");
+    expect(doc.schemas.VisualizationEnvelope.namespace).toBe("VisualizationContracts");
+    expect(doc.schemas.DashboardEnvelope.properties.visual.schema).toEqual({
+      ref: "VisualizationEnvelope",
     });
   });
 
