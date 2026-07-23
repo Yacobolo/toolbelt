@@ -312,6 +312,10 @@ func TestEmit_PreservesDiscriminatedUnionInRequestModels(t *testing.T) {
 	content := string(b)
 	require.Contains(t, content, "Visuals []Visual")
 	require.Contains(t, content, "type VisualVariant interface")
+	require.Contains(t, content, "func (*ChartVisual) isVisualVariant()")
+	require.NotContains(t, content, "func (ChartVisual) isVisualVariant()")
+	require.Contains(t, content, "type VisualVisitor interface")
+	require.Contains(t, content, "func (value *Visual) Base() (*VisualBase, error)")
 	require.Contains(t, content, "func (value *Visual) UnmarshalJSON")
 }
 
