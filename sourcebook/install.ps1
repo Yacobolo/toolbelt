@@ -130,6 +130,38 @@ function Get-SourcebookFile {
     Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $Destination
 }
 
+function Get-SourcebookSHA256 {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    $Algorithm = [System.Security.Cryptography.SHA256]::Create()
+    $Stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $Hash = $Algorithm.ComputeHash($Stream)
+        return [System.BitConverter]::ToString($Hash).Replace("-", "").ToLowerInvariant()
+    }
+    finally {
+        $Stream.Dispose()
+        $Algorithm.Dispose()
+    }
+}
+
+function Expand-SourcebookZip {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+
+    $ExpandArchive = Get-Command Expand-Archive -ErrorAction SilentlyContinue
+    if ($null -ne $ExpandArchive) {
+        Expand-Archive -LiteralPath $Path -DestinationPath $Destination
+        return
+    }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $Destination)
+}
+
 $TemporaryDir = Join-Path ([System.IO.Path]::GetTempPath()) ("sourcebook-install-" + [System.Guid]::NewGuid())
 $StagedBinary = $null
 New-Item -ItemType Directory -Path $TemporaryDir | Out-Null
@@ -148,13 +180,13 @@ try {
         throw "sourcebook installer: checksum not found for $Asset"
     }
     $ExpectedChecksum = ($ChecksumLine -split '\s+')[0].ToLowerInvariant()
-    $ActualChecksum = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    $ActualChecksum = Get-SourcebookSHA256 -Path $Archive
     if ($ActualChecksum -ne $ExpectedChecksum) {
         throw "sourcebook installer: checksum verification failed for $Asset"
     }
 
     $ExtractedDir = Join-Path $TemporaryDir "extracted"
-    Expand-Archive -LiteralPath $Archive -DestinationPath $ExtractedDir
+    Expand-SourcebookZip -Path $Archive -Destination $ExtractedDir
     $SourceBinary = Join-Path $ExtractedDir "sourcebook.exe"
     if (-not (Test-Path -LiteralPath $SourceBinary -PathType Leaf)) {
         throw "sourcebook installer: archive does not contain sourcebook.exe"
