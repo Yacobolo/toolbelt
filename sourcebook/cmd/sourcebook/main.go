@@ -87,7 +87,40 @@ func newRootCommand(app *sourcebook.App, stdin io.Reader, stdout, stderr io.Writ
 		SilenceUsage:  true,
 		Args:          cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			return command.Help()
+			if !ui.IsInteractive(command.InOrStdin(), command.OutOrStdout()) {
+				return command.Help()
+			}
+			for {
+				sources, err := app.Sources()
+				if err != nil {
+					return err
+				}
+				action, err := ui.SelectDashboardAction(
+					command.Context(),
+					command.InOrStdin(),
+					command.OutOrStdout(),
+					buildVersion,
+					app.SkillDir(),
+					sources,
+				)
+				if err != nil {
+					return err
+				}
+				var child *cobra.Command
+				switch action {
+				case ui.DashboardAdd:
+					child = newAddCommand(app)
+				case ui.DashboardUpdate:
+					child = newUpdateCommand(app)
+				case ui.DashboardRemove:
+					child = newRemoveCommand(app)
+				default:
+					return nil
+				}
+				if err := executeDashboardCommand(command, child); err != nil {
+					return err
+				}
+			}
 		},
 	}
 	root.SetIn(stdin)
@@ -120,7 +153,7 @@ func newRootCommand(app *sourcebook.App, stdin io.Reader, stdout, stderr io.Writ
 	defaultHelp := root.HelpFunc()
 	root.SetHelpFunc(func(command *cobra.Command, args []string) {
 		if command == root {
-			fmt.Fprint(command.OutOrStdout(), ui.RenderHelp(ui.IsTerminal(command.OutOrStdout())))
+			fmt.Fprint(command.OutOrStdout(), ui.RenderHelp(ui.ColorEnabled(command.OutOrStdout())))
 			return
 		}
 		defaultHelp(command, args)
@@ -135,6 +168,16 @@ func newRootCommand(app *sourcebook.App, stdin io.Reader, stdout, stderr io.Writ
 		newVersionCommand(buildVersion),
 	)
 	return root
+}
+
+func executeDashboardCommand(parent, child *cobra.Command) error {
+	child.SetIn(parent.InOrStdin())
+	child.SetOut(parent.OutOrStdout())
+	child.SetErr(parent.ErrOrStderr())
+	child.SetArgs([]string{})
+	child.SilenceErrors = true
+	child.SilenceUsage = true
+	return child.ExecuteContext(parent.Context())
 }
 
 func newUpgradeCommand(upgrader upgradeRunner, buildVersion string) *cobra.Command {
@@ -153,7 +196,7 @@ func newUpgradeCommand(upgrader upgradeRunner, buildVersion string) *cobra.Comma
 				command.Context(),
 				command.InOrStdin(),
 				command.OutOrStdout(),
-				ui.IsTerminal(command.OutOrStdout()),
+				ui.IsInteractive(command.InOrStdin(), command.OutOrStdout()),
 				ui.Action{
 					Working: "Checking for Sourcebook updates",
 					Success: "Sourcebook update check complete",
@@ -203,11 +246,12 @@ func newAddCommand(app *sourcebook.App) *cobra.Command {
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: cobra.NoFileCompletions,
 		RunE: func(command *cobra.Command, args []string) error {
+			interactive := ui.IsInteractive(command.InOrStdin(), command.OutOrStdout())
 			if len(args) == 1 && presetID != "" {
 				return errors.New("repository URL and --preset cannot be used together")
 			}
 			if len(args) == 1 {
-				return ui.RunAction(command.Context(), command.InOrStdin(), command.OutOrStdout(), ui.IsTerminal(command.OutOrStdout()), ui.Action{
+				return ui.RunAction(command.Context(), command.InOrStdin(), command.OutOrStdout(), interactive, ui.Action{
 					Working: "Cloning repository",
 					Success: "Git repository added to Sourcebook",
 					Run: func(ctx context.Context) error {
@@ -216,21 +260,53 @@ func newAddCommand(app *sourcebook.App) *cobra.Command {
 				})
 			}
 			if presetID == "" {
-				if !ui.IsTerminal(command.OutOrStdout()) {
+				if !interactive {
 					return errors.New("repository URL or --preset is required when not running interactively")
 				}
 				entries := app.CatalogEntries()
-				if len(entries) == 0 {
-					return errors.New("no catalogue presets are available")
+				sources, err := app.Sources()
+				if err != nil {
+					return err
 				}
 				var selected bool
-				var err error
-				presetID, selected, err = ui.SelectPreset(command.Context(), command.InOrStdin(), command.OutOrStdout(), entries)
+				presetID, selected, err = ui.SelectPreset(
+					command.Context(),
+					command.InOrStdin(),
+					command.OutOrStdout(),
+					entries,
+					sources,
+				)
 				if err != nil {
 					return err
 				}
 				if !selected {
 					return nil
+				}
+				if presetID == ui.GitRepositorySelection {
+					repositoryURL, submitted, err := ui.InputRepositoryURL(
+						command.Context(),
+						command.InOrStdin(),
+						command.OutOrStdout(),
+					)
+					if err != nil {
+						return err
+					}
+					if !submitted {
+						return nil
+					}
+					return ui.RunAction(
+						command.Context(),
+						command.InOrStdin(),
+						command.OutOrStdout(),
+						interactive,
+						ui.Action{
+							Working: "Cloning repository",
+							Success: "Git repository added to Sourcebook",
+							Run: func(ctx context.Context) error {
+								return app.Add(ctx, repositoryURL)
+							},
+						},
+					)
 				}
 			}
 			source := sourcebook.Source{Name: presetID}
@@ -247,7 +323,7 @@ func newAddCommand(app *sourcebook.App) *cobra.Command {
 				command.Context(),
 				command.InOrStdin(),
 				command.OutOrStdout(),
-				ui.IsTerminal(command.OutOrStdout()),
+				interactive,
 				source,
 				func(ctx context.Context, report sourcebook.UpdateReporter) error {
 					return app.AddPreset(ctx, presetID, report)
@@ -276,7 +352,7 @@ func newUpdateCommand(app *sourcebook.App) *cobra.Command {
 		Short: "Select and refresh sources",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(command *cobra.Command, args []string) error {
-			interactive := ui.IsTerminal(command.OutOrStdout())
+			interactive := ui.IsInteractive(command.InOrStdin(), command.OutOrStdout())
 			if updateAll && len(args) > 0 {
 				return errors.New("source names and --all cannot be used together")
 			}
@@ -357,8 +433,9 @@ func newRemoveCommand(app *sourcebook.App) *cobra.Command {
 		Short: "Select and remove a source",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			interactive := ui.IsTerminal(command.OutOrStdout())
+			interactive := ui.IsInteractive(command.InOrStdin(), command.OutOrStdout())
 			name := ""
+			var selectedSource sourcebook.Source
 			if len(args) == 1 {
 				name = args[0]
 			} else {
@@ -381,8 +458,26 @@ func newRemoveCommand(app *sourcebook.App) *cobra.Command {
 				if !selected {
 					return nil
 				}
+				for _, source := range sources {
+					if source.Name == name {
+						selectedSource = source
+						break
+					}
+				}
+				confirmed, err := ui.ConfirmRemoval(
+					command.Context(),
+					command.InOrStdin(),
+					command.OutOrStdout(),
+					selectedSource,
+				)
+				if err != nil {
+					return err
+				}
+				if !confirmed {
+					return nil
+				}
 			}
-			return ui.RunAction(command.Context(), command.InOrStdin(), command.OutOrStdout(), ui.IsTerminal(command.OutOrStdout()), ui.Action{
+			return ui.RunAction(command.Context(), command.InOrStdin(), command.OutOrStdout(), interactive, ui.Action{
 				Working: "Removing " + name,
 				Success: name + " removed",
 				Run: func(context.Context) error {
@@ -420,7 +515,11 @@ func newListCommand(app *sourcebook.App) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, err = fmt.Fprint(output, ui.RenderSources(sources, true))
+			_, err = fmt.Fprint(output, ui.RenderSources(
+				sources,
+				ui.ColorEnabled(output),
+				ui.TerminalWidth(output),
+			))
 			return err
 		},
 	}

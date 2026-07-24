@@ -206,7 +206,7 @@ func (a *App) RegisterCatalogEntry(entry CatalogEntry) error {
 		return fmt.Errorf("catalogue entry %q has no source URL", entry.ID)
 	}
 	if entry.Provider == ProviderGit {
-		validatedURL, err := validateRepositoryURL(entry.SourceURL)
+		validatedURL, err := ValidateRepositoryURL(entry.SourceURL)
 		if err != nil {
 			return fmt.Errorf("catalogue entry %q repository URL: %w", entry.ID, err)
 		}
@@ -253,6 +253,11 @@ func (a *App) CatalogEntries() []CatalogEntry {
 	return entries
 }
 
+// SkillDir returns the generated Sourcebook skill directory.
+func (a *App) SkillDir() string {
+	return a.skillDir
+}
+
 func (a *App) Add(ctx context.Context, repositoryURL string) (returnErr error) {
 	release, err := a.acquireMutationLock()
 	if err != nil {
@@ -269,7 +274,7 @@ func (a *App) Add(ctx context.Context, repositoryURL string) (returnErr error) {
 		return err
 	}
 
-	repositoryURL, err = validateRepositoryURL(repositoryURL)
+	repositoryURL, err = ValidateRepositoryURL(repositoryURL)
 	if err != nil {
 		return err
 	}
@@ -809,7 +814,7 @@ func (a *App) validateSources(sources []Source, filename string) error {
 			return fmt.Errorf("parse %s: source %q uses unavailable provider %q", filename, source.Name, source.Provider)
 		}
 		if source.Provider == ProviderGit {
-			if _, err := validateRepositoryURL(source.URL); err != nil {
+			if _, err := ValidateRepositoryURL(source.URL); err != nil {
 				return fmt.Errorf("parse %s: source %q: %w", filename, source.Name, err)
 			}
 			if err := validateGitRef(source.GitRef); err != nil {
@@ -1035,7 +1040,9 @@ func repositoryName(repositoryURL string) (string, error) {
 	return name, nil
 }
 
-func validateRepositoryURL(repositoryURL string) (string, error) {
+// ValidateRepositoryURL validates and normalizes a repository URL before it is
+// displayed or persisted.
+func ValidateRepositoryURL(repositoryURL string) (string, error) {
 	repositoryURL = strings.TrimSpace(repositoryURL)
 	if repositoryURL == "" {
 		return "", errors.New("repository URL is empty")

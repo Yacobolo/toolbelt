@@ -75,27 +75,35 @@ $BinDir = [System.IO.Path]::GetFullPath($BinDir)
 
 $TargetOS = $env:SOURCEBOOK_OS
 if ([string]::IsNullOrWhiteSpace($TargetOS)) {
-    $IsWindowsPlatform = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
-        [System.Runtime.InteropServices.OSPlatform]::Windows
-    )
-    if (-not $IsWindowsPlatform) {
+    if ($env:OS -ne "Windows_NT") {
         throw "sourcebook installer: install.ps1 supports Windows only"
     }
     $TargetOS = "windows"
 }
+$TargetOS = $TargetOS.Trim().ToLowerInvariant()
 if ($TargetOS -ne "windows") {
     throw "sourcebook installer: unsupported operating system: $TargetOS"
 }
 
 $TargetArch = $env:SOURCEBOOK_ARCH
 if ([string]::IsNullOrWhiteSpace($TargetArch)) {
-    $DetectedArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
+    # PROCESSOR_ARCHITEW6432 identifies the native OS architecture when a
+    # 32-bit PowerShell process is running under WOW64.
+    $DetectedArch = $env:PROCESSOR_ARCHITEW6432
+    if ([string]::IsNullOrWhiteSpace($DetectedArch)) {
+        $DetectedArch = $env:PROCESSOR_ARCHITECTURE
+    }
+    if ([string]::IsNullOrWhiteSpace($DetectedArch)) {
+        throw "sourcebook installer: could not determine the Windows architecture"
+    }
+    $DetectedArch = $DetectedArch.Trim().ToUpperInvariant()
     switch ($DetectedArch) {
-        "x64" { $TargetArch = "amd64" }
-        "arm64" { $TargetArch = "arm64" }
+        "AMD64" { $TargetArch = "amd64" }
+        "ARM64" { $TargetArch = "arm64" }
         default { throw "sourcebook installer: unsupported architecture: $DetectedArch" }
     }
 }
+$TargetArch = $TargetArch.Trim().ToLowerInvariant()
 if ($TargetArch -notin @("amd64", "arm64")) {
     throw "sourcebook installer: unsupported architecture: $TargetArch"
 }
@@ -174,6 +182,7 @@ try {
     }
 
     Write-Output "Sourcebook v$Version installed to $(Join-Path $BinDir 'sourcebook.exe')"
+    Write-Output "Open a new terminal if Sourcebook still reports an older version."
 }
 finally {
     if (-not [string]::IsNullOrWhiteSpace($StagedBinary) -and (Test-Path -LiteralPath $StagedBinary)) {

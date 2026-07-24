@@ -24,8 +24,12 @@ variables:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Yacobolo/toolbelt/main/sourcebook/install.sh |
-  SOURCEBOOK_VERSION=0.1.0 SOURCEBOOK_INSTALL_DIR="$HOME/bin" sh
+  SOURCEBOOK_VERSION=0.3.0 SOURCEBOOK_INSTALL_DIR="$HOME/bin" sh
 ```
+
+If an existing shell still resolves an older binary after installation, refresh
+its command cache with `rehash` (zsh) or `hash -r` (bash), then run
+`sourcebook --version`.
 
 ### Windows
 
@@ -41,6 +45,8 @@ amd64 or arm64, verifies the release checksum, installs under
 installer location, and adds that directory to the user `PATH`. Set
 `$env:SOURCEBOOK_VERSION` or
 `$env:SOURCEBOOK_INSTALL_DIR` before running it to override the defaults.
+Windows PowerShell 5.1 and PowerShell 7 are supported. Architecture detection
+also handles a 32-bit Windows PowerShell process running on 64-bit Windows.
 
 ### With Go
 
@@ -57,8 +63,11 @@ cd sourcebook
 go install ./cmd/sourcebook
 ```
 
-Run `sourcebook` with no arguments to see the command overview. Use
-`sourcebook <command> --help` for command-specific help.
+Run `sourcebook` with no arguments in a terminal to open the interactive
+dashboard. The dashboard shows the active skill directory and installed
+sources; press `a` to add, `u` to update, `r` to remove, `/` to search, or `?`
+for complete key help. Redirected no-argument output remains a stable command
+overview. Use `sourcebook <command> --help` for command-specific help.
 
 ## Upgrade Sourcebook
 
@@ -117,6 +126,10 @@ Add documentation from the interactive built-in source list:
 sourcebook add
 ```
 
+The first choice accepts a Git repository URL, so ad-hoc repositories can also
+be added without leaving the interactive flow. Catalogue entries already in
+Sourcebook are marked `Installed` and cannot accidentally be added twice.
+
 The built-in catalogue currently contains:
 
 - `azure-docs` — Microsoft Azure documentation from `articles/`
@@ -156,8 +169,9 @@ Select sources to refresh interactively:
 sourcebook update
 ```
 
-Use Space to select one or more sources and Enter to update them. The first
-choice selects every source. For scripts, pass source names or `--all`
+The picker starts with no sources selected. Use Space to toggle sources, `a` to
+select or clear all, and Enter to update the current selection. Enter never
+implicitly selects everything. For scripts, pass source names or `--all`
 explicitly:
 
 ```sh
@@ -191,9 +205,10 @@ sourcebook list
 sourcebook remove
 ```
 
-Use arrow keys or `j`/`k` to navigate, `/` to filter, Enter to remove the
-selected source, and Escape or `q` to cancel. For scripts and other
-non-interactive use, pass the source name directly:
+Use arrow keys or `j`/`k` to navigate, `/` to filter, and Enter to choose a
+source. Interactive removal then requires an explicit `y`; Enter, `n`, Escape,
+or `q` cancels. For scripts and other non-interactive use, pass the source name
+directly:
 
 ```sh
 sourcebook remove project
@@ -207,6 +222,10 @@ automatically after the next successful mutation.
 Sourcebook prevents overlapping add, update, and remove operations. Every
 source is staged before installation, and metadata files are written
 atomically. A failed provider or write preserves the previous usable Sourcebook.
+
+Interactive layouts adapt to narrow terminals, and update rows remain in a
+stable alphabetical order while concurrent work progresses. Bubble Tea honors
+standard terminal color settings including `NO_COLOR` and `TERM=dumb`.
 
 For private repositories, use SSH or a Git credential helper. Sourcebook
 rejects credentials and tokens embedded in repository URLs so they cannot be
@@ -236,15 +255,15 @@ go vet ./...
 Inject a release version when building an artifact:
 
 ```sh
-go build -ldflags "-X main.version=v0.1.0" -o sourcebook ./cmd/sourcebook
+go build -ldflags "-X main.version=v0.3.0" -o sourcebook ./cmd/sourcebook
 ```
 
 Stable releases are automated. After the intended commit is on `main`, push a
 semantic Sourcebook tag:
 
 ```sh
-git tag sourcebook/v0.2.0
-git push origin sourcebook/v0.2.0
+git tag sourcebook/v0.3.0
+git push origin sourcebook/v0.3.0
 ```
 
 The Sourcebook release workflow runs the test suite, uses GoReleaser to build

@@ -1,0 +1,40 @@
+name: Test Sourcebook
+
+on:
+  pull_request:
+    paths:
+      - "sourcebook/**"
+      - ".github/workflows/sourcebook-ci.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "sourcebook/**"
+      - ".github/workflows/sourcebook-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: sourcebook/go.mod
+          cache-dependency-path: sourcebook/go.sum
+
+      - name: Test
+        working-directory: sourcebook
+        run: go test ./...

@@ -145,11 +145,14 @@ func RunAction(ctx context.Context, input io.Reader, output io.Writer, interacti
 	return markReported(completed.err)
 }
 
-func RenderSources(sources []sourcebook.Source, color bool) string {
+func RenderSources(sources []sourcebook.Source, color bool, width int) string {
 	sources = append([]sourcebook.Source(nil), sources...)
 	sort.Slice(sources, func(i, j int) bool {
 		return sources[i].Name < sources[j].Name
 	})
+	if width <= 0 {
+		width = 120
+	}
 
 	title := lipgloss.NewStyle()
 	subtitle := lipgloss.NewStyle()
@@ -186,7 +189,6 @@ func RenderSources(sources []sourcebook.Source, color bool) string {
 
 	nameWidth := len("NAME")
 	providerWidth := len("TYPE")
-	urlWidth := len("SOURCE")
 	for _, source := range sources {
 		if len(source.Name) > nameWidth {
 			nameWidth = len(source.Name)
@@ -194,10 +196,52 @@ func RenderSources(sources []sourcebook.Source, color bool) string {
 		if len(source.Provider) > providerWidth {
 			providerWidth = len(source.Provider)
 		}
-		if len(source.URL) > urlWidth {
-			urlWidth = len(source.URL)
-		}
 	}
+
+	if width < 46 {
+		for _, source := range sources {
+			view.WriteString(name.Render(source.Name))
+			view.WriteString("\n")
+			fmt.Fprintf(
+				&view,
+				"  %s · %s\n",
+				hint.Render(source.Provider),
+				hint.Render(formatUpdatedAtCompact(source.UpdatedAt)),
+			)
+		}
+		return view.String()
+	}
+
+	const updatedWidth = len("2006-01-02 15:04 UTC")
+	fixedWidth := nameWidth + 2 + providerWidth + 2 + updatedWidth
+	urlWidth := width - fixedWidth - 2
+	showURL := urlWidth >= len("SOURCE")
+	if showURL {
+		maxURLWidth := len("SOURCE")
+		for _, source := range sources {
+			if len(source.URL) > maxURLWidth {
+				maxURLWidth = len(source.URL)
+			}
+		}
+		urlWidth = min(urlWidth, maxURLWidth)
+	}
+
+	if !showURL {
+		fmt.Fprintf(&view, "%s  %s  %s\n",
+			header.Render(fmt.Sprintf("%-*s", nameWidth, "NAME")),
+			header.Render(fmt.Sprintf("%-*s", providerWidth, "TYPE")),
+			header.Render("LAST UPDATED"),
+		)
+		for _, source := range sources {
+			fmt.Fprintf(&view, "%s  %s  %s\n",
+				name.Render(fmt.Sprintf("%-*s", nameWidth, source.Name)),
+				hint.Render(fmt.Sprintf("%-*s", providerWidth, source.Provider)),
+				hint.Render(formatUpdatedAt(source.UpdatedAt)),
+			)
+		}
+		return view.String()
+	}
+
 	fmt.Fprintf(&view, "%s  %s  %s  %s\n",
 		header.Render(fmt.Sprintf("%-*s", nameWidth, "NAME")),
 		header.Render(fmt.Sprintf("%-*s", providerWidth, "TYPE")),
@@ -208,11 +252,25 @@ func RenderSources(sources []sourcebook.Source, color bool) string {
 		fmt.Fprintf(&view, "%s  %s  %s  %s\n",
 			name.Render(fmt.Sprintf("%-*s", nameWidth, source.Name)),
 			hint.Render(fmt.Sprintf("%-*s", providerWidth, source.Provider)),
-			url.Render(fmt.Sprintf("%-*s", urlWidth, source.URL)),
+			url.Render(fmt.Sprintf("%-*s", urlWidth, truncate(source.URL, urlWidth))),
 			hint.Render(formatUpdatedAt(source.UpdatedAt)),
 		)
 	}
 	return view.String()
+}
+
+func truncate(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	characters := []rune(value)
+	if len(characters) <= width {
+		return value
+	}
+	if width == 1 {
+		return "…"
+	}
+	return string(characters[:width-1]) + "…"
 }
 
 func formatUpdatedAt(updatedAt time.Time) string {
@@ -220,6 +278,13 @@ func formatUpdatedAt(updatedAt time.Time) string {
 		return "never"
 	}
 	return updatedAt.UTC().Format("2006-01-02 15:04 UTC")
+}
+
+func formatUpdatedAtCompact(updatedAt time.Time) string {
+	if updatedAt.IsZero() {
+		return "never"
+	}
+	return updatedAt.UTC().Format("2006-01-02")
 }
 
 func RenderHelp(color bool) string {
@@ -243,7 +308,7 @@ func RenderHelp(color bool) string {
 	view.WriteString("\n")
 	rows := [][2]string{
 		{"sourcebook add <repository-url>", "Add a Git repository"},
-		{"sourcebook add", "Select a catalogue source"},
+		{"sourcebook add", "Add Git or select a catalogue source"},
 		{"sourcebook update", "Select sources to refresh"},
 		{"sourcebook remove [name]", "Select and remove a source"},
 		{"sourcebook list", "List sources"},
@@ -259,4 +324,42 @@ func RenderHelp(color bool) string {
 func IsTerminal(output io.Writer) bool {
 	file, ok := output.(*os.File)
 	return ok && term.IsTerminal(int(file.Fd()))
+}
+
+// IsInteractive requires both input and output to be terminals. Checking both
+// avoids opening a picker that cannot receive key presses when stdin is piped.
+func IsInteractive(input io.Reader, output io.Writer) bool {
+	if os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	inputFile, inputOK := input.(*os.File)
+	outputFile, outputOK := output.(*os.File)
+	return inputOK && outputOK &&
+		term.IsTerminal(int(inputFile.Fd())) &&
+		term.IsTerminal(int(outputFile.Fd()))
+}
+
+// ColorEnabled reports whether styled static output should contain color.
+// Bubble Tea performs its own equivalent terminal-profile detection.
+func ColorEnabled(output io.Writer) bool {
+	if !IsTerminal(output) {
+		return false
+	}
+	if os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	return true
+}
+
+// TerminalWidth returns the current terminal width or a conservative default.
+func TerminalWidth(output io.Writer) int {
+	file, ok := output.(*os.File)
+	if !ok {
+		return 120
+	}
+	width, _, err := term.GetSize(int(file.Fd()))
+	if err != nil || width <= 0 {
+		return 120
+	}
+	return width
 }
