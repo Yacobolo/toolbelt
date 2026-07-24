@@ -7,7 +7,6 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$DefaultVersion = "0.1.0"
 $Repository = "Yacobolo/toolbelt"
 
 if ($Help) {
@@ -18,9 +17,10 @@ Usage:
   .\install.ps1 [-Version <version>] [-BinDir <directory>]
 
 Environment:
-  SOURCEBOOK_VERSION                   Release version (default: 0.1.0)
-  SOURCEBOOK_INSTALL_DIR               Install directory
+  SOURCEBOOK_VERSION                   Release version (default: latest)
+  SOURCEBOOK_INSTALL_DIR               Install directory (default: %LOCALAPPDATA%\Programs\OpenAI\Codex\bin)
   SOURCEBOOK_RELEASE_BASE_URL          Override release download base URL
+  SOURCEBOOK_RELEASES_API_URL          Override GitHub releases API URL
 "@
     return
 }
@@ -29,7 +29,32 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
     $Version = $env:SOURCEBOOK_VERSION
 }
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    $Version = $DefaultVersion
+    $Version = "latest"
+}
+if ($Version -eq "latest") {
+    $ReleasesAPIURL = $env:SOURCEBOOK_RELEASES_API_URL
+    if ([string]::IsNullOrWhiteSpace($ReleasesAPIURL)) {
+        $ReleasesAPIURL = "https://api.github.com/repos/$Repository/releases?per_page=100"
+    }
+    $ReleasesURI = [System.Uri]$ReleasesAPIURL
+    if ($ReleasesURI.IsFile) {
+        $Releases = Get-Content -LiteralPath $ReleasesURI.LocalPath -Raw | ConvertFrom-Json
+    }
+    else {
+        $Releases = Invoke-RestMethod -UseBasicParsing -Uri $ReleasesAPIURL
+    }
+    $LatestRelease = @($Releases) |
+        Where-Object {
+            -not $_.draft -and
+            -not $_.prerelease -and
+            $_.tag_name -match '^sourcebook/v[0-9]+\.[0-9]+\.[0-9]+$'
+        } |
+        Sort-Object { [System.Version]($_.tag_name -replace '^sourcebook/v', '') } -Descending |
+        Select-Object -First 1
+    if ($null -eq $LatestRelease) {
+        throw "sourcebook installer: could not determine the latest Sourcebook release"
+    }
+    $Version = $LatestRelease.tag_name
 }
 $Version = $Version -replace '^sourcebook/v', '' -replace '^v', ''
 if ($Version -notmatch '^[0-9A-Za-z._-]+$') {
@@ -44,7 +69,7 @@ if ([string]::IsNullOrWhiteSpace($BinDir)) {
     if ([string]::IsNullOrWhiteSpace($LocalAppData)) {
         $LocalAppData = Join-Path $HOME "AppData\Local"
     }
-    $BinDir = Join-Path $LocalAppData "Programs\Sourcebook"
+    $BinDir = Join-Path $LocalAppData "Programs\OpenAI\Codex\bin"
 }
 $BinDir = [System.IO.Path]::GetFullPath($BinDir)
 

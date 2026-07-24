@@ -53,6 +53,54 @@ func TestShellInstallerDownloadsVerifiesAndInstallsRelease(t *testing.T) {
 	}
 }
 
+func TestShellInstallerUsesDocumentedDefaultDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX installer is not used on Windows")
+	}
+
+	fixture := newInstallerFixture(t, false)
+	homeDir := t.TempDir()
+	command := exec.Command("sh", "install.sh", "--version", fixture.version)
+	command.Env = append(os.Environ(),
+		"HOME="+homeDir,
+		"SOURCEBOOK_INSTALL_DIR=",
+		"SOURCEBOOK_RELEASE_BASE_URL=file://"+fixture.root,
+		"SOURCEBOOK_OS="+fixture.targetOS,
+		"SOURCEBOOK_ARCH="+fixture.targetArch,
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("install.sh failed: %v\n%s", err, output)
+	}
+	installed := filepath.Join(homeDir, ".local", "bin", "sourcebook")
+	if _, err := os.Stat(installed); err != nil {
+		t.Fatalf("default installed binary stat error = %v", err)
+	}
+}
+
+func TestShellInstallerDefaultsToLatestSourcebookRelease(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX installer is not used on Windows")
+	}
+
+	fixture := newInstallerFixture(t, false)
+	binDir := filepath.Join(t.TempDir(), "bin")
+	command := exec.Command("sh", "install.sh", "--bin-dir", binDir)
+	command.Env = append(os.Environ(),
+		"SOURCEBOOK_RELEASE_BASE_URL=file://"+fixture.root,
+		"SOURCEBOOK_RELEASES_API_URL=file://"+filepath.Join(fixture.root, "releases.json"),
+		"SOURCEBOOK_OS="+fixture.targetOS,
+		"SOURCEBOOK_ARCH="+fixture.targetArch,
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("install.sh failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "v"+fixture.version) {
+		t.Fatalf("installer output does not contain resolved version:\n%s", output)
+	}
+}
+
 func TestShellInstallerRejectsInvalidChecksum(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX installer is not used on Windows")
@@ -90,10 +138,19 @@ func TestPowerShellInstallerContainsRequiredSafetyChecks(t *testing.T) {
 		"checksums.txt",
 		"Expand-Archive",
 		"SOURCEBOOK_INSTALL_DIR",
+		"SOURCEBOOK_RELEASES_API_URL",
+		"ConvertFrom-Json",
+		`Programs\OpenAI\Codex\bin`,
 	} {
 		if !strings.Contains(script, required) {
 			t.Errorf("install.ps1 does not contain %q", required)
 		}
+	}
+	if strings.Contains(script, `$DefaultVersion = "0.1.0"`) {
+		t.Error("install.ps1 still defaults to the initial release")
+	}
+	if strings.Contains(script, `Programs\Sourcebook`) {
+		t.Error("install.ps1 still uses the old nonstandard Windows install directory")
 	}
 }
 
@@ -106,9 +163,19 @@ func TestREADMEDocumentsInstallers(t *testing.T) {
 	for _, command := range []string{
 		"curl -fsSL https://raw.githubusercontent.com/Yacobolo/toolbelt/main/sourcebook/install.sh | sh",
 		"irm https://raw.githubusercontent.com/Yacobolo/toolbelt/main/sourcebook/install.ps1 | iex",
+		"sourcebook upgrade",
 	} {
 		if !strings.Contains(readme, command) {
 			t.Errorf("README.md does not contain %q", command)
+		}
+	}
+	for _, documentedPath := range []string{
+		"CODEX_HOME",
+		`%LOCALAPPDATA%\Programs\OpenAI\Codex\bin`,
+		"~/.local/bin",
+	} {
+		if !strings.Contains(readme, documentedPath) {
+			t.Errorf("README.md does not contain %q", documentedPath)
 		}
 	}
 }
@@ -150,6 +217,14 @@ func newInstallerFixture(t *testing.T, invalidChecksum bool) installerFixture {
 	}
 	checksums := fmt.Sprintf("%s  %s\n", digest, assetName)
 	if err := os.WriteFile(filepath.Join(releaseDir, "checksums.txt"), []byte(checksums), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	releases := fmt.Sprintf(`[
+  {"tag_name":"apigen/v99.0.0","draft":false,"prerelease":false},
+  {"tag_name":"sourcebook/v1.0.0","draft":false,"prerelease":false},
+  {"tag_name":"sourcebook/v%s","draft":false,"prerelease":false}
+]`, fixture.version)
+	if err := os.WriteFile(filepath.Join(fixture.root, "releases.json"), []byte(releases), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return fixture
