@@ -87,6 +87,7 @@ func TestShellInstallerDefaultsToLatestSourcebookRelease(t *testing.T) {
 	binDir := filepath.Join(t.TempDir(), "bin")
 	command := exec.Command("sh", "install.sh", "--bin-dir", binDir)
 	command.Env = append(os.Environ(),
+		"SOURCEBOOK_VERSION=",
 		"SOURCEBOOK_RELEASE_BASE_URL=file://"+fixture.root,
 		"SOURCEBOOK_RELEASES_API_URL=file://"+filepath.Join(fixture.root, "releases.json"),
 		"SOURCEBOOK_OS="+fixture.targetOS,
