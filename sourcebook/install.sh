@@ -168,6 +168,7 @@ mv -f "$staged_binary" "$bin_dir/sourcebook"
 staged_binary=
 
 printf 'Sourcebook v%s installed to %s/sourcebook\n' "$version" "$bin_dir"
+printf 'If your shell still reports an older version, run hash -r (bash) or rehash (zsh).\n'
 case ":${PATH:-}:" in
 *":$bin_dir:"*) ;;
 *) printf 'Add %s to PATH to run sourcebook from any directory.\n' "$bin_dir" >&2 ;;

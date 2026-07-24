@@ -2,6 +2,7 @@ package sourcebook_test
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
@@ -134,10 +135,14 @@ func TestPowerShellInstallerContainsRequiredSafetyChecks(t *testing.T) {
 	}
 	script := string(contents)
 	for _, required := range []string{
-		"RuntimeInformation]::OSArchitecture",
-		"Get-FileHash",
+		`$env:OS`,
+		`Windows_NT`,
+		`$env:PROCESSOR_ARCHITEW6432`,
+		`$env:PROCESSOR_ARCHITECTURE`,
+		"SHA256]::Create",
 		"checksums.txt",
 		"Expand-Archive",
+		"ZipFile]::ExtractToDirectory",
 		"SOURCEBOOK_INSTALL_DIR",
 		"SOURCEBOOK_RELEASES_API_URL",
 		"ConvertFrom-Json",
@@ -152,6 +157,72 @@ func TestPowerShellInstallerContainsRequiredSafetyChecks(t *testing.T) {
 	}
 	if strings.Contains(script, `Programs\Sourcebook`) {
 		t.Error("install.ps1 still uses the old nonstandard Windows install directory")
+	}
+	if strings.Contains(script, "RuntimeInformation") {
+		t.Error("install.ps1 relies on RuntimeInformation, which is unavailable in some Windows PowerShell environments")
+	}
+	wow64 := strings.Index(script, `$env:PROCESSOR_ARCHITEW6432`)
+	native := strings.Index(script, `$env:PROCESSOR_ARCHITECTURE`)
+	if wow64 < 0 || native < 0 || wow64 > native {
+		t.Error("install.ps1 must prefer PROCESSOR_ARCHITEW6432 before PROCESSOR_ARCHITECTURE")
+	}
+}
+
+func TestPowerShellInstallerDownloadsVerifiesAndInstallsRelease(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell installer requires Windows")
+	}
+
+	targetArch := runtime.GOARCH
+	if targetArch != "amd64" && targetArch != "arm64" {
+		t.Skipf("unsupported Windows test architecture %s", targetArch)
+	}
+	fixtureRoot := t.TempDir()
+	version := "9.8.7"
+	releaseDir := filepath.Join(fixtureRoot, "sourcebook", "v"+version)
+	if err := os.MkdirAll(releaseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	assetName := fmt.Sprintf("sourcebook_%s_windows_%s.zip", version, targetArch)
+	assetPath := filepath.Join(releaseDir, assetName)
+	writeZip(t, assetPath, map[string][]byte{
+		"sourcebook.exe": []byte("sourcebook fixture"),
+	})
+	assetContents, err := os.ReadFile(assetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checksums := fmt.Sprintf("%x  %s\n", sha256.Sum256(assetContents), assetName)
+	if err := os.WriteFile(filepath.Join(releaseDir, "checksums.txt"), []byte(checksums), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	binDir := filepath.Join(t.TempDir(), "bin")
+	command := exec.Command(
+		"powershell.exe",
+		"-NoLogo",
+		"-NoProfile",
+		"-ExecutionPolicy", "Bypass",
+		"-File", "install.ps1",
+		"-Version", version,
+		"-BinDir", binDir,
+	)
+	releaseBaseURL := "file:///" + strings.TrimPrefix(filepath.ToSlash(fixtureRoot), "/")
+	command.Env = append(os.Environ(),
+		"SOURCEBOOK_RELEASE_BASE_URL="+releaseBaseURL,
+		"SOURCEBOOK_OS=",
+		"SOURCEBOOK_ARCH=",
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("install.ps1 failed: %v\n%s", err, output)
+	}
+	installed := filepath.Join(binDir, "sourcebook.exe")
+	if _, err := os.Stat(installed); err != nil {
+		t.Fatalf("installed binary stat error = %v", err)
+	}
+	if !strings.Contains(string(output), "Sourcebook v"+version+" installed") {
+		t.Fatalf("installer output does not report success:\n%s", output)
 	}
 }
 
@@ -177,6 +248,19 @@ func TestREADMEDocumentsInstallers(t *testing.T) {
 	} {
 		if !strings.Contains(readme, documentedPath) {
 			t.Errorf("README.md does not contain %q", documentedPath)
+		}
+	}
+}
+
+func TestInstallersExplainShellCommandCaching(t *testing.T) {
+	for _, filename := range []string{"install.sh", "install.ps1"} {
+		contents, err := os.ReadFile(filename)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lower := strings.ToLower(string(contents))
+		if !strings.Contains(lower, "older version") {
+			t.Errorf("%s does not explain what to do when the shell resolves an older version", filename)
 		}
 	}
 }
@@ -257,6 +341,30 @@ func writeTarGz(t *testing.T, filename string, files map[string]archiveFile) {
 		t.Fatal(err)
 	}
 	if err := gzipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeZip(t *testing.T, filename string, files map[string][]byte) {
+	t.Helper()
+	output, err := os.Create(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := zip.NewWriter(output)
+	for name, contents := range files {
+		file, err := archive.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := file.Write(contents); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := archive.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if err := output.Close(); err != nil {

@@ -231,7 +231,7 @@ func (m updateModel) View() tea.View {
 }
 
 func (m updateModel) failedSource() string {
-	for _, progress := range m.sources {
+	for _, progress := range m.sortedProgress() {
 		if progress.state == sourcebook.UpdateFailed {
 			return progress.source.Name
 		}
@@ -245,29 +245,9 @@ func (m updateModel) sortedProgress() []sourceProgress {
 		progress = append(progress, source)
 	}
 	sort.Slice(progress, func(i, j int) bool {
-		leftRank := updateStateRank(progress[i].state)
-		rightRank := updateStateRank(progress[j].state)
-		if leftRank != rightRank {
-			return leftRank < rightRank
-		}
 		return progress[i].source.Name < progress[j].source.Name
 	})
 	return progress
-}
-
-func updateStateRank(state sourcebook.UpdateState) int {
-	switch state {
-	case sourcebook.UpdateCompleted:
-		return 0
-	case sourcebook.UpdateRunning:
-		return 1
-	case sourcebook.UpdateFailed:
-		return 2
-	case sourcebook.UpdateCanceled:
-		return 3
-	default:
-		return 4
-	}
 }
 
 func formatDuration(duration time.Duration) string {

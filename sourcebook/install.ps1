@@ -75,27 +75,35 @@ $BinDir = [System.IO.Path]::GetFullPath($BinDir)
 
 $TargetOS = $env:SOURCEBOOK_OS
 if ([string]::IsNullOrWhiteSpace($TargetOS)) {
-    $IsWindowsPlatform = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
-        [System.Runtime.InteropServices.OSPlatform]::Windows
-    )
-    if (-not $IsWindowsPlatform) {
+    if ($env:OS -ne "Windows_NT") {
         throw "sourcebook installer: install.ps1 supports Windows only"
     }
     $TargetOS = "windows"
 }
+$TargetOS = $TargetOS.Trim().ToLowerInvariant()
 if ($TargetOS -ne "windows") {
     throw "sourcebook installer: unsupported operating system: $TargetOS"
 }
 
 $TargetArch = $env:SOURCEBOOK_ARCH
 if ([string]::IsNullOrWhiteSpace($TargetArch)) {
-    $DetectedArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
+    # PROCESSOR_ARCHITEW6432 identifies the native OS architecture when a
+    # 32-bit PowerShell process is running under WOW64.
+    $DetectedArch = $env:PROCESSOR_ARCHITEW6432
+    if ([string]::IsNullOrWhiteSpace($DetectedArch)) {
+        $DetectedArch = $env:PROCESSOR_ARCHITECTURE
+    }
+    if ([string]::IsNullOrWhiteSpace($DetectedArch)) {
+        throw "sourcebook installer: could not determine the Windows architecture"
+    }
+    $DetectedArch = $DetectedArch.Trim().ToUpperInvariant()
     switch ($DetectedArch) {
-        "x64" { $TargetArch = "amd64" }
-        "arm64" { $TargetArch = "arm64" }
+        "AMD64" { $TargetArch = "amd64" }
+        "ARM64" { $TargetArch = "arm64" }
         default { throw "sourcebook installer: unsupported architecture: $DetectedArch" }
     }
 }
+$TargetArch = $TargetArch.Trim().ToLowerInvariant()
 if ($TargetArch -notin @("amd64", "arm64")) {
     throw "sourcebook installer: unsupported architecture: $TargetArch"
 }
@@ -122,6 +130,38 @@ function Get-SourcebookFile {
     Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $Destination
 }
 
+function Get-SourcebookSHA256 {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    $Algorithm = [System.Security.Cryptography.SHA256]::Create()
+    $Stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $Hash = $Algorithm.ComputeHash($Stream)
+        return [System.BitConverter]::ToString($Hash).Replace("-", "").ToLowerInvariant()
+    }
+    finally {
+        $Stream.Dispose()
+        $Algorithm.Dispose()
+    }
+}
+
+function Expand-SourcebookZip {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+
+    $ExpandArchive = Get-Command Expand-Archive -ErrorAction SilentlyContinue
+    if ($null -ne $ExpandArchive) {
+        Expand-Archive -LiteralPath $Path -DestinationPath $Destination
+        return
+    }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $Destination)
+}
+
 $TemporaryDir = Join-Path ([System.IO.Path]::GetTempPath()) ("sourcebook-install-" + [System.Guid]::NewGuid())
 $StagedBinary = $null
 New-Item -ItemType Directory -Path $TemporaryDir | Out-Null
@@ -140,13 +180,13 @@ try {
         throw "sourcebook installer: checksum not found for $Asset"
     }
     $ExpectedChecksum = ($ChecksumLine -split '\s+')[0].ToLowerInvariant()
-    $ActualChecksum = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    $ActualChecksum = Get-SourcebookSHA256 -Path $Archive
     if ($ActualChecksum -ne $ExpectedChecksum) {
         throw "sourcebook installer: checksum verification failed for $Asset"
     }
 
     $ExtractedDir = Join-Path $TemporaryDir "extracted"
-    Expand-Archive -LiteralPath $Archive -DestinationPath $ExtractedDir
+    Expand-SourcebookZip -Path $Archive -Destination $ExtractedDir
     $SourceBinary = Join-Path $ExtractedDir "sourcebook.exe"
     if (-not (Test-Path -LiteralPath $SourceBinary -PathType Leaf)) {
         throw "sourcebook installer: archive does not contain sourcebook.exe"
@@ -174,6 +214,7 @@ try {
     }
 
     Write-Output "Sourcebook v$Version installed to $(Join-Path $BinDir 'sourcebook.exe')"
+    Write-Output "Open a new terminal if Sourcebook still reports an older version."
 }
 finally {
     if (-not [string]::IsNullOrWhiteSpace($StagedBinary) -and (Test-Path -LiteralPath $StagedBinary)) {
