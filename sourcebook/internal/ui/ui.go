@@ -145,10 +145,10 @@ func RunAction(ctx context.Context, input io.Reader, output io.Writer, interacti
 	return markReported(completed.err)
 }
 
-func RenderRepositories(repositories []sourcebook.Repository, color bool) string {
-	repositories = append([]sourcebook.Repository(nil), repositories...)
-	sort.Slice(repositories, func(i, j int) bool {
-		return repositories[i].Name < repositories[j].Name
+func RenderSources(sources []sourcebook.Source, color bool) string {
+	sources = append([]sourcebook.Source(nil), sources...)
+	sort.Slice(sources, func(i, j int) bool {
+		return sources[i].Name < sources[j].Name
 	})
 
 	title := lipgloss.NewStyle()
@@ -169,41 +169,47 @@ func RenderRepositories(repositories []sourcebook.Repository, color bool) string
 	var view strings.Builder
 	view.WriteString(title.Render("Sourcebook"))
 	view.WriteString("\n")
-	if len(repositories) == 0 {
-		view.WriteString(subtitle.Render("No repositories yet."))
+	if len(sources) == 0 {
+		view.WriteString(subtitle.Render("No sources yet."))
 		view.WriteString("\n\n")
-		view.WriteString(hint.Render("Add one with sourcebook add <repository-url>"))
+		view.WriteString(hint.Render("Add Git with sourcebook add <repository-url>, or run sourcebook add"))
 		view.WriteString("\n")
 		return view.String()
 	}
 
-	count := fmt.Sprintf("%d repositories", len(repositories))
-	if len(repositories) == 1 {
-		count = "1 repository"
+	count := fmt.Sprintf("%d sources", len(sources))
+	if len(sources) == 1 {
+		count = "1 source"
 	}
 	view.WriteString(subtitle.Render(count))
 	view.WriteString("\n\n")
 
 	nameWidth := len("NAME")
-	urlWidth := len("REPOSITORY")
-	for _, repository := range repositories {
-		if len(repository.Name) > nameWidth {
-			nameWidth = len(repository.Name)
+	providerWidth := len("TYPE")
+	urlWidth := len("SOURCE")
+	for _, source := range sources {
+		if len(source.Name) > nameWidth {
+			nameWidth = len(source.Name)
 		}
-		if len(repository.URL) > urlWidth {
-			urlWidth = len(repository.URL)
+		if len(source.Provider) > providerWidth {
+			providerWidth = len(source.Provider)
+		}
+		if len(source.URL) > urlWidth {
+			urlWidth = len(source.URL)
 		}
 	}
-	fmt.Fprintf(&view, "%s  %s  %s\n",
+	fmt.Fprintf(&view, "%s  %s  %s  %s\n",
 		header.Render(fmt.Sprintf("%-*s", nameWidth, "NAME")),
-		header.Render(fmt.Sprintf("%-*s", urlWidth, "REPOSITORY")),
+		header.Render(fmt.Sprintf("%-*s", providerWidth, "TYPE")),
+		header.Render(fmt.Sprintf("%-*s", urlWidth, "SOURCE")),
 		header.Render("LAST UPDATED"),
 	)
-	for _, repository := range repositories {
-		fmt.Fprintf(&view, "%s  %s  %s\n",
-			name.Render(fmt.Sprintf("%-*s", nameWidth, repository.Name)),
-			url.Render(fmt.Sprintf("%-*s", urlWidth, repository.URL)),
-			hint.Render(formatUpdatedAt(repository.UpdatedAt)),
+	for _, source := range sources {
+		fmt.Fprintf(&view, "%s  %s  %s  %s\n",
+			name.Render(fmt.Sprintf("%-*s", nameWidth, source.Name)),
+			hint.Render(fmt.Sprintf("%-*s", providerWidth, source.Provider)),
+			url.Render(fmt.Sprintf("%-*s", urlWidth, source.URL)),
+			hint.Render(formatUpdatedAt(source.UpdatedAt)),
 		)
 	}
 	return view.String()
@@ -231,15 +237,17 @@ func RenderHelp(color bool) string {
 	var view strings.Builder
 	view.WriteString(title.Render("Sourcebook"))
 	view.WriteString("\n")
-	view.WriteString(description.Render("Build one Codex skill from shallow-cloned repositories."))
+	view.WriteString(description.Render("Build one Codex skill from Git repositories and documentation sources."))
 	view.WriteString("\n\n")
 	view.WriteString(heading.Render("Usage"))
 	view.WriteString("\n")
 	rows := [][2]string{
-		{"sourcebook add <repository-url>", "Add a repository"},
-		{"sourcebook update", "Refresh all repositories"},
-		{"sourcebook remove [name]", "Select and remove a repository"},
-		{"sourcebook list", "List repositories"},
+		{"sourcebook add <repository-url>", "Add a Git repository"},
+		{"sourcebook add", "Select a catalogue source"},
+		{"sourcebook update", "Select sources to refresh"},
+		{"sourcebook remove [name]", "Select and remove a source"},
+		{"sourcebook list", "List sources"},
+		{"sourcebook upgrade", "Upgrade Sourcebook"},
 		{"sourcebook version", "Print the version"},
 	}
 	for _, row := range rows {

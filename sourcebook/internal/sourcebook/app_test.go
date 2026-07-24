@@ -14,6 +14,25 @@ import (
 	"time"
 )
 
+func TestDefaultSkillDirUsesCodexHome(t *testing.T) {
+	t.Parallel()
+
+	homeDir := filepath.Join("users", "example")
+	codexHome := filepath.Join("custom", "codex-home")
+	if got, want := DefaultSkillDir(homeDir, codexHome), filepath.Join(codexHome, "skills", "sourcebook"); got != want {
+		t.Fatalf("DefaultSkillDir() = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultSkillDirFallsBackToUserCodexDirectory(t *testing.T) {
+	t.Parallel()
+
+	homeDir := filepath.Join("users", "example")
+	if got, want := DefaultSkillDir(homeDir, ""), filepath.Join(homeDir, ".codex", "skills", "sourcebook"); got != want {
+		t.Fatalf("DefaultSkillDir() = %q, want %q", got, want)
+	}
+}
+
 func TestAddCreatesSourcebookSkill(t *testing.T) {
 	t.Parallel()
 	skillDir := filepath.Join(t.TempDir(), "sourcebook")
@@ -29,23 +48,247 @@ func TestAddCreatesSourcebookSkill(t *testing.T) {
 	}
 
 	assertFileContents(t, filepath.Join(skillDir, "references", "widgets", "README.md"), "widgets version one")
-	wantManifest := "{\n  \"version\": 1,\n  \"repositories\": [\n    {\n      \"name\": \"widgets\",\n      \"url\": \"https://example.com/acme/widgets.git\",\n      \"updated_at\": \"2026-07-22T08:30:00Z\"\n    }\n  ]\n}\n"
-	assertFileContents(t, filepath.Join(skillDir, "repos.json"), wantManifest)
-	wantSkill := "---\nname: sourcebook\ndescription: Source code and documentation for the widgets repository. Use when a task involves widgets or related technologies.\n---\n\n# Sourcebook\n\n## Repositories\n\n- [widgets](references/widgets/) — https://example.com/acme/widgets.git\n"
+	wantManifest := "{\n  \"version\": 2,\n  \"sources\": [\n    {\n      \"name\": \"widgets\",\n      \"provider\": \"git\",\n      \"url\": \"https://example.com/acme/widgets.git\",\n      \"updated_at\": \"2026-07-22T08:30:00Z\"\n    }\n  ]\n}\n"
+	assertFileContents(t, filepath.Join(skillDir, "sources.json"), wantManifest)
+	wantSkill := "---\nname: sourcebook\ndescription: Source code and documentation for widgets. Use when a task involves widgets or related technologies.\n---\n\n# Sourcebook\n\n## Sources\n\n- [widgets](references/widgets/) — https://example.com/acme/widgets.git\n"
 	assertFileContents(t, filepath.Join(skillDir, "SKILL.md"), wantSkill)
+}
+
+func TestAddPresetMigratesLegacyRepositoriesToSources(t *testing.T) {
+	t.Parallel()
+
+	skillDir := filepath.Join(t.TempDir(), "sourcebook")
+	if err := os.MkdirAll(filepath.Join(skillDir, "references", "alpha"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := "{\n  \"version\": 1,\n  \"repositories\": [\n    {\n      \"name\": \"alpha\",\n      \"url\": \"https://example.com/alpha.git\"\n    }\n  ]\n}\n"
+	if err := os.WriteFile(filepath.Join(skillDir, "repos.json"), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New(skillDir, &fakeCloner{})
+	docs := &fakeProvider{contents: "# Documentation\n"}
+	registerTestPreset(t, app, docs, "https://docs.example.com/")
+	if err := app.AddPreset(context.Background(), "example-docs", nil); err != nil {
+		t.Fatalf("AddPreset() error = %v", err)
+	}
+
+	assertFileContents(t, filepath.Join(skillDir, "references", "example-docs", "index.md"), "# Documentation\n")
+	sources := readFile(t, filepath.Join(skillDir, "sources.json"))
+	for _, expected := range []string{
+		`"version": 2`,
+		`"name": "alpha"`,
+		`"provider": "git"`,
+		`"name": "example-docs"`,
+		`"provider": "example"`,
+	} {
+		if !strings.Contains(sources, expected) {
+			t.Errorf("sources.json does not contain %q:\n%s", expected, sources)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(skillDir, "repos.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy repos.json stat error = %v, want not exist", err)
+	}
+
+	skill := readFile(t, filepath.Join(skillDir, "SKILL.md"))
+	for _, expected := range []string{
+		"## Sources",
+		"[alpha](references/alpha/)",
+		"[example-docs](references/example-docs/)",
+		"Example documentation",
+	} {
+		if !strings.Contains(skill, expected) {
+			t.Errorf("SKILL.md does not contain %q:\n%s", expected, skill)
+		}
+	}
+}
+
+func TestProviderUpdateReportsPageProgress(t *testing.T) {
+	t.Parallel()
+
+	skillDir := filepath.Join(t.TempDir(), "sourcebook")
+	app := New(skillDir, &fakeCloner{})
+	docs := &fakeProvider{contents: "first"}
+	registerTestPreset(t, app, docs, "https://docs.example.com/")
+	if err := app.AddPreset(context.Background(), "example-docs", nil); err != nil {
+		t.Fatal(err)
+	}
+	docs.contents = "second"
+
+	var events []UpdateEvent
+	if err := app.UpdateWithProgress(context.Background(), func(event UpdateEvent) {
+		events = append(events, event)
+	}); err != nil {
+		t.Fatalf("UpdateWithProgress() error = %v", err)
+	}
+
+	found := false
+	for _, event := range events {
+		if event.Source == "example-docs" && event.State == UpdateRunning &&
+			event.Phase == "scraping" && event.Current == 2 && event.Total == 4 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("UpdateWithProgress() events = %#v, want provider page progress", events)
+	}
+	assertFileContents(t, filepath.Join(skillDir, "references", "example-docs", "index.md"), "second")
+}
+
+func TestFailedProviderUpdateLeavesAllSourcesUntouched(t *testing.T) {
+	t.Parallel()
+
+	skillDir := filepath.Join(t.TempDir(), "sourcebook")
+	cloner := &fakeCloner{contents: map[string]string{
+		"https://example.com/acme/alpha.git": "alpha one",
+	}}
+	app := New(skillDir, cloner)
+	if err := app.Add(context.Background(), "https://example.com/acme/alpha.git"); err != nil {
+		t.Fatal(err)
+	}
+	docs := &fakeProvider{contents: "docs one"}
+	registerTestPreset(t, app, docs, "https://docs.example.com/")
+	if err := app.AddPreset(context.Background(), "example-docs", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	cloner.contents["https://example.com/acme/alpha.git"] = "alpha two"
+	docs.contents = "docs two"
+	docs.err = errors.New("scrape failed")
+	if err := app.Update(context.Background()); err == nil {
+		t.Fatal("Update() error = nil, want provider failure")
+	}
+
+	assertFileContents(t, filepath.Join(skillDir, "references", "alpha", "README.md"), "alpha one")
+	assertFileContents(t, filepath.Join(skillDir, "references", "example-docs", "index.md"), "docs one")
+}
+
+func TestUpdateSelectedOnlyRefreshesNamedSources(t *testing.T) {
+	t.Parallel()
+
+	skillDir := filepath.Join(t.TempDir(), "sourcebook")
+	cloner := &fakeCloner{contents: map[string]string{
+		"https://example.com/alpha.git": "alpha one",
+		"https://example.com/beta.git":  "beta one",
+	}}
+	app := New(skillDir, cloner)
+	initialTime := time.Date(2026, time.July, 22, 8, 0, 0, 0, time.UTC)
+	app.now = func() time.Time { return initialTime }
+	for _, repositoryURL := range []string{
+		"https://example.com/alpha.git",
+		"https://example.com/beta.git",
+	} {
+		if err := app.Add(context.Background(), repositoryURL); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cloner.contents["https://example.com/alpha.git"] = "alpha two"
+	cloner.contents["https://example.com/beta.git"] = "beta two"
+	updateTime := initialTime.Add(time.Hour)
+	app.now = func() time.Time { return updateTime }
+	if err := app.UpdateSelectedWithProgress(context.Background(), []string{"alpha"}, nil); err != nil {
+		t.Fatalf("UpdateSelectedWithProgress() error = %v", err)
+	}
+
+	assertFileContents(t, filepath.Join(skillDir, "references", "alpha", "README.md"), "alpha two")
+	assertFileContents(t, filepath.Join(skillDir, "references", "beta", "README.md"), "beta one")
+	sources, err := app.Sources()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range sources {
+		want := initialTime
+		if source.Name == "alpha" {
+			want = updateTime
+		}
+		if !source.UpdatedAt.Equal(want) {
+			t.Errorf("%s UpdatedAt = %v, want %v", source.Name, source.UpdatedAt, want)
+		}
+	}
+}
+
+func TestUpdateSelectedRejectsUnknownAndDuplicateNamesBeforeCloning(t *testing.T) {
+	t.Parallel()
+
+	cloner := &fakeCloner{}
+	app := New(filepath.Join(t.TempDir(), "sourcebook"), cloner)
+	if err := app.Add(context.Background(), "https://example.com/alpha.git"); err != nil {
+		t.Fatal(err)
+	}
+	cloner.mu.Lock()
+	cloner.calls = nil
+	cloner.mu.Unlock()
+
+	for _, names := range [][]string{{"missing"}, {"alpha", "alpha"}, nil} {
+		err := app.UpdateSelectedWithProgress(context.Background(), names, nil)
+		if err == nil {
+			t.Fatalf("UpdateSelectedWithProgress(%v) error = nil", names)
+		}
+	}
+	cloner.mu.Lock()
+	defer cloner.mu.Unlock()
+	if len(cloner.calls) != 0 {
+		t.Fatalf("clone calls = %v, want none", cloner.calls)
+	}
+}
+
+func registerTestPreset(t *testing.T, app *App, provider Provider, sourceURL string) {
+	t.Helper()
+	if err := app.RegisterProvider(ProviderDefinition{ID: "example", Provider: provider}); err != nil {
+		t.Fatalf("RegisterProvider() error = %v", err)
+	}
+	if err := app.RegisterCatalogEntry(CatalogEntry{
+		ID:          "example-docs",
+		DisplayName: "Example documentation",
+		Description: "Example documentation fixture",
+		Provider:    "example",
+		SourceName:  "example-docs",
+		SourceURL:   sourceURL,
+	}); err != nil {
+		t.Fatalf("RegisterCatalogEntry() error = %v", err)
+	}
+}
+
+func TestFailedUpdateMetadataWriteRestoresPreviousReferences(t *testing.T) {
+	t.Parallel()
+
+	skillDir := filepath.Join(t.TempDir(), "sourcebook")
+	cloner := &fakeCloner{contents: map[string]string{
+		"https://example.com/acme/alpha.git": "alpha one",
+	}}
+	app := New(skillDir, cloner)
+	if err := app.Add(context.Background(), "https://example.com/acme/alpha.git"); err != nil {
+		t.Fatal(err)
+	}
+	manifestBefore := readFile(t, filepath.Join(skillDir, "sources.json"))
+	cloner.contents["https://example.com/acme/alpha.git"] = "alpha two"
+	if err := os.Remove(filepath.Join(skillDir, "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(skillDir, "SKILL.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := app.Update(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "write SKILL.md") {
+		t.Fatalf("Update() error = %v, want SKILL.md write error", err)
+	}
+	assertFileContents(t, filepath.Join(skillDir, "references", "alpha", "README.md"), "alpha one")
+	assertFileContents(t, filepath.Join(skillDir, "sources.json"), manifestBefore)
 }
 
 func TestRenderedSkillDescriptionListsCurrentRepositories(t *testing.T) {
 	t.Parallel()
 
-	repositories := []Repository{
+	repositories := []Source{
 		{Name: "zeta", URL: "https://example.com/zeta.git"},
 		{Name: "alpha", URL: "https://example.com/alpha.git"},
 	}
 	skill := string(renderSkill(repositories))
-	wantDescription := "description: Source code and documentation for the alpha and zeta repositories. Use when a task involves one of these repositories or related technologies.\n"
+	wantDescription := "description: Source code and documentation for alpha and zeta. Use when a task involves one of these sources or related technologies.\n"
 	if !strings.Contains(skill, wantDescription) {
-		t.Fatalf("SKILL.md does not contain repository-aware description %q:\n%s", wantDescription, skill)
+		t.Fatalf("SKILL.md does not contain source-aware description %q:\n%s", wantDescription, skill)
 	}
 	if strings.Contains(skill, "Open only the repository") {
 		t.Fatalf("SKILL.md contains unwanted usage instruction:\n%s", skill)
@@ -55,9 +298,9 @@ func TestRenderedSkillDescriptionListsCurrentRepositories(t *testing.T) {
 func TestRenderedSkillDescriptionStaysWithinSpecificationLimit(t *testing.T) {
 	t.Parallel()
 
-	repositories := make([]Repository, 30)
+	repositories := make([]Source, 30)
 	for i := range repositories {
-		repositories[i] = Repository{Name: fmt.Sprintf("repository-%02d-with-a-long-descriptive-name", i)}
+		repositories[i] = Source{Name: fmt.Sprintf("repository-%02d-with-a-long-descriptive-name", i)}
 	}
 	description := renderDescription(repositories)
 	if len(description) > 1024 {
@@ -141,7 +384,7 @@ func TestUpdateRecordsSuccessfulRefreshTime(t *testing.T) {
 	if err := app.Update(context.Background()); err != nil {
 		t.Fatalf("Update() error = %v", err)
 	}
-	repositories, err := app.Repositories()
+	repositories, err := app.Sources()
 	if err != nil {
 		t.Fatalf("Repositories() error = %v", err)
 	}
@@ -169,7 +412,7 @@ func TestUpdateRegeneratesSkillMetadataAndTableOfContents(t *testing.T) {
 	}
 	skill := readFile(t, filepath.Join(skillDir, "SKILL.md"))
 	for _, expected := range []string{
-		"description: Source code and documentation for the alpha repository.",
+		"description: Source code and documentation for alpha.",
 		"[alpha](references/alpha/)",
 	} {
 		if !strings.Contains(skill, expected) {
@@ -200,7 +443,7 @@ func TestFailedUpdateLeavesEveryRepositoryUntouched(t *testing.T) {
 	assertFileContents(t, filepath.Join(skillDir, "references", "beta", "README.md"), "beta one")
 	foundFailure := false
 	for event := range events {
-		if event.Repository == "beta" && event.State == UpdateFailed && event.Err != nil {
+		if event.Source == "beta" && event.State == UpdateFailed && event.Err != nil {
 			foundFailure = true
 		}
 	}
@@ -305,13 +548,13 @@ func TestUpdateReportsRepositoryProgress(t *testing.T) {
 
 	states := map[string][]UpdateState{}
 	for event := range events {
-		states[event.Repository] = append(states[event.Repository], event.State)
+		states[event.Source] = append(states[event.Source], event.State)
 		if event.State == UpdateCompleted && event.Duration < 0 {
 			t.Errorf("completed event duration = %v, want non-negative", event.Duration)
 		}
 	}
 	for _, repository := range []string{"alpha", "beta"} {
-		want := []UpdateState{UpdateCloning, UpdateCompleted}
+		want := []UpdateState{UpdateRunning, UpdateCompleted}
 		if got := states[repository]; !reflect.DeepEqual(got, want) {
 			t.Errorf("%s states = %v, want %v", repository, got, want)
 		}
@@ -372,9 +615,9 @@ func TestRemoveDeletesRepositoryAndRegeneratesFiles(t *testing.T) {
 	if strings.Contains(skill, "alpha") || !strings.Contains(skill, "references/beta/") {
 		t.Fatalf("SKILL.md after remove = %q", skill)
 	}
-	manifest := readFile(t, filepath.Join(skillDir, "repos.json"))
+	manifest := readFile(t, filepath.Join(skillDir, "sources.json"))
 	if strings.Contains(manifest, "alpha") || !strings.Contains(manifest, "beta") {
-		t.Fatalf("repos.json after remove = %q", manifest)
+		t.Fatalf("sources.json after remove = %q", manifest)
 	}
 }
 
@@ -386,7 +629,7 @@ func TestFailedSkillWriteRollsBackManifestAndRepository(t *testing.T) {
 	if err := app.Add(context.Background(), "https://example.com/acme/alpha.git"); err != nil {
 		t.Fatalf("Add(alpha) error = %v", err)
 	}
-	manifestBefore := readFile(t, filepath.Join(skillDir, "repos.json"))
+	manifestBefore := readFile(t, filepath.Join(skillDir, "sources.json"))
 	if err := os.Remove(filepath.Join(skillDir, "SKILL.md")); err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +641,7 @@ func TestFailedSkillWriteRollsBackManifestAndRepository(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "write SKILL.md") {
 		t.Fatalf("Add(beta) error = %v, want SKILL.md write error", err)
 	}
-	assertFileContents(t, filepath.Join(skillDir, "repos.json"), manifestBefore)
+	assertFileContents(t, filepath.Join(skillDir, "sources.json"), manifestBefore)
 	if _, err := os.Stat(filepath.Join(skillDir, "references", "beta")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("rolled-back beta repository stat error = %v, want not exist", err)
 	}
@@ -420,12 +663,12 @@ func TestListIsSortedByRepositoryName(t *testing.T) {
 	if err := app.List(&output); err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	want := "alpha\thttps://example.com/acme/alpha.git\t2026-07-22T08:30:00Z\nzeta\thttps://example.com/acme/zeta.git\t2026-07-22T08:30:00Z\n"
+	want := "alpha\tgit\thttps://example.com/acme/alpha.git\t2026-07-22T08:30:00Z\nzeta\tgit\thttps://example.com/acme/zeta.git\t2026-07-22T08:30:00Z\n"
 	if got := output.String(); got != want {
 		t.Fatalf("List() = %q, want %q", got, want)
 	}
 
-	wantTOC := "## Repositories\n\n- [alpha](references/alpha/) — https://example.com/acme/alpha.git\n- [zeta](references/zeta/) — https://example.com/acme/zeta.git\n"
+	wantTOC := "## Sources\n\n- [alpha](references/alpha/) — https://example.com/acme/alpha.git\n- [zeta](references/zeta/) — https://example.com/acme/zeta.git\n"
 	if skill := readFile(t, filepath.Join(skillDir, "SKILL.md")); !strings.Contains(skill, wantTOC) {
 		t.Fatalf("SKILL.md does not contain compact repository TOC %q:\n%s", wantTOC, skill)
 	}
@@ -447,7 +690,7 @@ func TestListShowsNeverForLegacyRepositoryWithoutRefreshTime(t *testing.T) {
 	if err := New(skillDir, &fakeCloner{}).List(&output); err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	want := "alpha\thttps://example.com/alpha.git\tnever\n"
+	want := "alpha\tgit\thttps://example.com/alpha.git\tnever\n"
 	if got := output.String(); got != want {
 		t.Fatalf("List() = %q, want %q", got, want)
 	}
@@ -510,11 +753,11 @@ func TestLegacyManifestWithoutVersionIsAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	repositories, err := New(skillDir, &fakeCloner{}).Repositories()
+	repositories, err := New(skillDir, &fakeCloner{}).Sources()
 	if err != nil {
 		t.Fatalf("Repositories() error = %v", err)
 	}
-	want := []Repository{{Name: "alpha", URL: "https://example.com/alpha.git"}}
+	want := []Source{{Name: "alpha", Provider: ProviderGit, URL: "https://example.com/alpha.git"}}
 	if !reflect.DeepEqual(repositories, want) {
 		t.Fatalf("Repositories() = %#v, want %#v", repositories, want)
 	}
@@ -532,7 +775,7 @@ func TestUnsupportedManifestVersionIsRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := New(skillDir, &fakeCloner{}).Repositories()
+	_, err := New(skillDir, &fakeCloner{}).Sources()
 	if err == nil || !strings.Contains(err.Error(), "unsupported version 99") {
 		t.Fatalf("Repositories() error = %v, want unsupported version", err)
 	}
@@ -552,23 +795,43 @@ type fakeCloner struct {
 	failURL  string
 	mu       sync.Mutex
 	calls    []string
+	requests []CloneRequest
 }
 
-func (f *fakeCloner) Clone(_ context.Context, url, destination string) error {
-	f.mu.Lock()
-	f.calls = append(f.calls, url)
-	f.mu.Unlock()
-	if url == f.failURL {
-		return errors.New("clone failed")
-	}
-	if err := os.MkdirAll(destination, 0o755); err != nil {
+type fakeProvider struct {
+	contents string
+	err      error
+}
+
+func (f *fakeProvider) Update(_ context.Context, request ProviderRequest, report ProviderProgressReporter) error {
+	if err := os.MkdirAll(request.DestinationDir, 0o755); err != nil {
 		return err
 	}
-	contents := url
-	if value, ok := f.contents[url]; ok {
+	if err := os.WriteFile(filepath.Join(request.DestinationDir, "index.md"), []byte(f.contents), 0o644); err != nil {
+		return err
+	}
+	if report != nil {
+		report(ProviderProgress{Phase: "scraping", Current: 2, Total: 4})
+	}
+	return f.err
+}
+
+func (f *fakeCloner) Clone(_ context.Context, request CloneRequest) error {
+	f.mu.Lock()
+	f.calls = append(f.calls, request.URL)
+	f.requests = append(f.requests, request)
+	f.mu.Unlock()
+	if request.URL == f.failURL {
+		return errors.New("clone failed")
+	}
+	if err := os.MkdirAll(request.Destination, 0o755); err != nil {
+		return err
+	}
+	contents := request.URL
+	if value, ok := f.contents[request.URL]; ok {
 		contents = value
 	}
-	return os.WriteFile(filepath.Join(destination, "README.md"), []byte(contents), 0o644)
+	return os.WriteFile(filepath.Join(request.Destination, "README.md"), []byte(contents), 0o644)
 }
 
 type blockingCloner struct {
@@ -586,7 +849,7 @@ func newBlockingCloner(repositoryCount int) *blockingCloner {
 	}
 }
 
-func (c *blockingCloner) Clone(ctx context.Context, _ string, destination string) error {
+func (c *blockingCloner) Clone(ctx context.Context, request CloneRequest) error {
 	c.mu.Lock()
 	c.active++
 	if c.active > c.maxActive {
@@ -606,7 +869,7 @@ func (c *blockingCloner) Clone(ctx context.Context, _ string, destination string
 		return ctx.Err()
 	}
 
-	return os.MkdirAll(destination, 0o755)
+	return os.MkdirAll(request.Destination, 0o755)
 }
 
 func (c *blockingCloner) maximum() int {

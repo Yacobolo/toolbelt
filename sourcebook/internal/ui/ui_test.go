@@ -78,46 +78,50 @@ func TestReportedErrorCanBeDetectedAndUnwrapped(t *testing.T) {
 	}
 }
 
-func TestRenderRepositoriesPlain(t *testing.T) {
+func TestRenderSourcesPlain(t *testing.T) {
 	t.Parallel()
 
-	repositories := []sourcebook.Repository{
-		{Name: "alpha", URL: "https://example.com/alpha", UpdatedAt: time.Date(2026, time.July, 22, 8, 30, 0, 0, time.UTC)},
-		{Name: "zeta", URL: "https://example.com/zeta", UpdatedAt: time.Date(2026, time.July, 21, 17, 5, 0, 0, time.UTC)},
+	sources := []sourcebook.Source{
+		{Name: "alpha", Provider: "git", URL: "https://example.com/alpha", UpdatedAt: time.Date(2026, time.July, 22, 8, 30, 0, 0, time.UTC)},
+		{Name: "netsuite-docs", Provider: "netsuite", URL: "https://docs.example.com/", UpdatedAt: time.Date(2026, time.July, 21, 17, 5, 0, 0, time.UTC)},
 	}
-	want := "Sourcebook\n2 repositories\n\nNAME   REPOSITORY                 LAST UPDATED\nalpha  https://example.com/alpha  2026-07-22 08:30 UTC\nzeta   https://example.com/zeta   2026-07-21 17:05 UTC\n"
-	if got := RenderRepositories(repositories, false); got != want {
-		t.Fatalf("RenderRepositories() = %q, want %q", got, want)
+	want := "Sourcebook\n2 sources\n\nNAME           TYPE      SOURCE                     LAST UPDATED\nalpha          git       https://example.com/alpha  2026-07-22 08:30 UTC\nnetsuite-docs  netsuite  https://docs.example.com/  2026-07-21 17:05 UTC\n"
+	if got := RenderSources(sources, false); got != want {
+		t.Fatalf("RenderSources() = %q, want %q", got, want)
 	}
 }
 
 func TestUpdateModelRendersRepositoryProgress(t *testing.T) {
 	t.Parallel()
 
-	repositories := []sourcebook.Repository{
-		{Name: "alpha", URL: "https://example.com/alpha"},
-		{Name: "beta", URL: "https://example.com/beta"},
+	sources := []sourcebook.Source{
+		{Name: "alpha", Provider: "git", URL: "https://example.com/alpha"},
+		{Name: "netsuite-docs", Provider: "netsuite"},
 	}
-	model := newUpdateModel(context.Background(), repositories, nil)
+	model := newUpdateModel(context.Background(), sources, nil)
 	model.started = time.Now().Add(-2 * time.Second)
 
 	updated, _ := model.Update(updateProgressMsg{event: sourcebook.UpdateEvent{
-		Repository: "alpha",
-		State:      sourcebook.UpdateCloning,
+		Source:  "netsuite-docs",
+		State:   sourcebook.UpdateRunning,
+		Phase:   "scraping",
+		Current: 42,
+		Total:   100,
 	}})
 	model = updated.(updateModel)
 	view := model.View().Content
-	if !strings.Contains(view, "0/2 repositories completed") || !strings.Contains(view, "alpha") || !strings.Contains(view, "cloning") {
-		t.Fatalf("cloning view = %q", view)
+	if !strings.Contains(view, "0/2 sources completed") || !strings.Contains(view, "netsuite-docs") ||
+		!strings.Contains(view, "scraping") || !strings.Contains(view, "42/100") {
+		t.Fatalf("scraping view = %q", view)
 	}
 
 	updated, _ = model.Update(updateProgressMsg{event: sourcebook.UpdateEvent{
-		Repository: "alpha",
-		State:      sourcebook.UpdateCompleted,
-		Duration:   1500 * time.Millisecond,
+		Source:   "netsuite-docs",
+		State:    sourcebook.UpdateCompleted,
+		Duration: 1500 * time.Millisecond,
 	}})
 	view = updated.(updateModel).View().Content
-	if !strings.Contains(view, "1/2 repositories completed") || !strings.Contains(view, "1.5s") {
+	if !strings.Contains(view, "1/2 sources completed") || !strings.Contains(view, "1.5s") {
 		t.Fatalf("completed view = %q", view)
 	}
 
@@ -131,7 +135,7 @@ func TestUpdateModelExplainsAtomicFailure(t *testing.T) {
 	t.Parallel()
 
 	wantErr := errors.New("clone failed")
-	model := newUpdateModel(context.Background(), []sourcebook.Repository{{Name: "alpha"}}, nil)
+	model := newUpdateModel(context.Background(), []sourcebook.Source{{Name: "alpha", Provider: "git"}}, nil)
 	model.started = time.Now()
 	updated, command := model.Update(updateFinishedMsg{err: wantErr})
 	if command == nil {
@@ -147,33 +151,87 @@ func TestUpdateModelExplainsAtomicFailure(t *testing.T) {
 	}
 }
 
-func TestRepositoryPickerSelectsHighlightedRepository(t *testing.T) {
+func TestSourcePickerSelectsHighlightedSource(t *testing.T) {
 	t.Parallel()
 
-	model := newRepositoryPickerModel([]sourcebook.Repository{
-		{Name: "alpha", URL: "https://example.com/alpha"},
-		{Name: "beta", URL: "https://example.com/beta"},
+	model := newSourcePickerModel([]sourcebook.Source{
+		{Name: "alpha", Provider: "git", URL: "https://example.com/alpha"},
+		{Name: "beta", Provider: "git", URL: "https://example.com/beta"},
 	})
 	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
-	updated, command := updated.(repositoryPickerModel).Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	updated, command := updated.(sourcePickerModel).Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
 	if command == nil {
 		t.Fatal("Update(enter) command = nil, want quit command")
 	}
-	selected := updated.(repositoryPickerModel)
-	if !selected.selected || selected.repository != "beta" {
-		t.Fatalf("selected repository = %q, selected = %t; want beta, true", selected.repository, selected.selected)
+	selected := updated.(sourcePickerModel)
+	if !selected.selected || selected.source != "beta" {
+		t.Fatalf("selected source = %q, selected = %t; want beta, true", selected.source, selected.selected)
 	}
 }
 
-func TestRepositoryPickerCanBeCanceled(t *testing.T) {
+func TestSourcePickerCanBeCanceled(t *testing.T) {
 	t.Parallel()
 
-	model := newRepositoryPickerModel([]sourcebook.Repository{{Name: "alpha"}})
+	model := newSourcePickerModel([]sourcebook.Source{{Name: "alpha", Provider: "git"}})
 	updated, command := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
 	if command == nil {
 		t.Fatal("Update(escape) command = nil, want quit command")
 	}
-	if updated.(repositoryPickerModel).selected {
+	if updated.(sourcePickerModel).selected {
 		t.Fatal("canceled picker selected a repository")
+	}
+}
+
+func TestPresetPickerSelectsPreset(t *testing.T) {
+	t.Parallel()
+
+	model := newPresetPickerModel([]sourcebook.CatalogEntry{
+		{ID: "netsuite-docs", DisplayName: "NetSuite documentation", Description: "Oracle NetSuite help"},
+	})
+	updated, command := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	if command == nil {
+		t.Fatal("Update(enter) command = nil, want quit command")
+	}
+	selected := updated.(presetPickerModel)
+	if !selected.selected || selected.preset != "netsuite-docs" {
+		t.Fatalf("selected preset = %q, selected = %t", selected.preset, selected.selected)
+	}
+}
+
+func TestUpdateSelectionPickerSelectsSubset(t *testing.T) {
+	t.Parallel()
+
+	model := newUpdateSelectionModel([]sourcebook.Source{
+		{Name: "alpha", Provider: "git"},
+		{Name: "beta", Provider: "git"},
+	})
+	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	updated, _ = updated.(updateSelectionModel).Update(tea.KeyPressMsg(tea.Key{Code: tea.KeySpace}))
+	updated, _ = updated.(updateSelectionModel).Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	updated, _ = updated.(updateSelectionModel).Update(tea.KeyPressMsg(tea.Key{Code: tea.KeySpace}))
+	updated, command := updated.(updateSelectionModel).Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	if command == nil {
+		t.Fatal("Update(enter) command = nil, want quit command")
+	}
+	selected := updated.(updateSelectionModel)
+	if !selected.confirmed || strings.Join(selected.names, ",") != "alpha,beta" {
+		t.Fatalf("selected names = %v, confirmed = %t", selected.names, selected.confirmed)
+	}
+}
+
+func TestUpdateSelectionPickerCanChooseAll(t *testing.T) {
+	t.Parallel()
+
+	model := newUpdateSelectionModel([]sourcebook.Source{
+		{Name: "alpha", Provider: "git"},
+		{Name: "beta", Provider: "git"},
+	})
+	updated, command := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	if command == nil {
+		t.Fatal("Update(enter) command = nil, want quit command")
+	}
+	selected := updated.(updateSelectionModel)
+	if !selected.confirmed || strings.Join(selected.names, ",") != "alpha,beta" {
+		t.Fatalf("selected names = %v, confirmed = %t", selected.names, selected.confirmed)
 	}
 }

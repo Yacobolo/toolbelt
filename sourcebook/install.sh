@@ -2,7 +2,6 @@
 
 set -eu
 
-DEFAULT_VERSION=0.1.0
 REPOSITORY=Yacobolo/toolbelt
 
 usage() {
@@ -13,9 +12,10 @@ Usage:
   install.sh [--version <version>] [--bin-dir <directory>]
 
 Environment:
-  SOURCEBOOK_VERSION                   Release version (default: 0.1.0)
+  SOURCEBOOK_VERSION                   Release version (default: latest)
   SOURCEBOOK_INSTALL_DIR               Install directory (default: ~/.local/bin)
   SOURCEBOOK_RELEASE_BASE_URL          Override release download base URL
+  SOURCEBOOK_RELEASES_API_URL          Override GitHub releases API URL
 EOF
 }
 
@@ -24,7 +24,7 @@ fail() {
 	exit 1
 }
 
-version=${SOURCEBOOK_VERSION:-$DEFAULT_VERSION}
+version=${SOURCEBOOK_VERSION:-latest}
 if [ -n "${SOURCEBOOK_INSTALL_DIR:-}" ]; then
 	bin_dir=$SOURCEBOOK_INSTALL_DIR
 elif [ -n "${HOME:-}" ]; then
@@ -55,6 +55,39 @@ while [ "$#" -gt 0 ]; do
 	esac
 done
 
+for command in curl tar awk sed mktemp; do
+	command -v "$command" >/dev/null 2>&1 || fail "required command not found: $command"
+done
+
+if [ "$version" = "latest" ]; then
+	releases_api_url=${SOURCEBOOK_RELEASES_API_URL:-https://api.github.com/repos/$REPOSITORY/releases?per_page=100}
+	version=$(
+		curl -fsSL --retry 3 --retry-delay 1 "$releases_api_url" |
+			sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"sourcebook\/v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)".*/\1/p' |
+			awk -F. '
+				NF == 3 {
+					major = $1 + 0
+					minor = $2 + 0
+					patch = $3 + 0
+					if (!found || major > best_major ||
+						(major == best_major && minor > best_minor) ||
+						(major == best_major && minor == best_minor && patch > best_patch)) {
+						best_major = major
+						best_minor = minor
+						best_patch = patch
+						found = 1
+					}
+				}
+				END {
+					if (found) {
+						printf "%d.%d.%d\n", best_major, best_minor, best_patch
+					}
+				}
+			'
+	)
+	[ -n "$version" ] || fail "could not determine the latest Sourcebook release"
+fi
+
 case "$version" in
 sourcebook/v*) version=${version#sourcebook/v} ;;
 v*) version=${version#v} ;;
@@ -63,10 +96,6 @@ case "$version" in
 "" | *[!0-9A-Za-z._-]*) fail "invalid version: $version" ;;
 esac
 [ -n "$bin_dir" ] || fail "install directory is empty; set HOME or SOURCEBOOK_INSTALL_DIR"
-
-for command in curl tar awk mktemp; do
-	command -v "$command" >/dev/null 2>&1 || fail "required command not found: $command"
-done
 
 target_os=${SOURCEBOOK_OS:-}
 if [ -z "$target_os" ]; then
