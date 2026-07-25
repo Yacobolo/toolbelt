@@ -64,10 +64,20 @@ go install ./cmd/sourcebook
 ```
 
 Run `sourcebook` with no arguments in a terminal to open the interactive
-dashboard. The dashboard shows the active skill directory and installed
-sources; press `a` to add, `u` to update, `r` to remove, `/` to search, or `?`
-for complete key help. Redirected no-argument output remains a stable command
-overview. Use `sourcebook <command> --help` for command-specific help.
+dashboard. Its action bar keeps the primary commands visible:
+
+- `a` opens the built-in source catalogue and Git URL prompt in the dashboard.
+- `u` refreshes the highlighted source, or every source selected with Space.
+- `U` refreshes all sources.
+- `r` asks for removal confirmation without leaving the source list.
+- `/` searches, Escape clears a selection, and `?` shows complete key help.
+
+Updates, additions, completion, and errors appear on their source rows while
+the operation runs. The dashboard remains navigable and searchable during
+updates. Quickly queued updates are coalesced into one batch and fetch up to
+four sources concurrently; other mutations remain queued in a safe order.
+Redirected no-argument output remains a stable command overview. Use
+`sourcebook <command> --help` for command-specific help.
 
 ## Upgrade Sourcebook
 
@@ -223,9 +233,10 @@ Sourcebook prevents overlapping add, update, and remove operations. Every
 source is staged before installation, and metadata files are written
 atomically. A failed provider or write preserves the previous usable Sourcebook.
 
-Interactive layouts adapt to narrow terminals, and update rows remain in a
-stable alphabetical order while concurrent work progresses. Bubble Tea honors
-standard terminal color settings including `NO_COLOR` and `TERM=dumb`.
+Interactive layouts adapt to narrow terminals. Dashboard actions run inline,
+selected sources remain in stable alphabetical order, and concurrent updates
+report progress on their source rows. Bubble Tea honors standard terminal color
+settings including `NO_COLOR` and `TERM=dumb`.
 
 For private repositories, use SSH or a Git credential helper. Sourcebook
 rejects credentials and tokens embedded in repository URLs so they cannot be
@@ -255,15 +266,15 @@ go vet ./...
 Inject a release version when building an artifact:
 
 ```sh
-go build -ldflags "-X main.version=v0.3.0" -o sourcebook ./cmd/sourcebook
+go build -ldflags "-X main.version=v0.4.0" -o sourcebook ./cmd/sourcebook
 ```
 
 Stable releases are automated. After the intended commit is on `main`, push a
 semantic Sourcebook tag:
 
 ```sh
-git tag sourcebook/v0.3.0
-git push origin sourcebook/v0.3.0
+git tag sourcebook/v0.4.0
+git push origin sourcebook/v0.4.0
 ```
 
 The Sourcebook release workflow runs the test suite, uses GoReleaser to build
