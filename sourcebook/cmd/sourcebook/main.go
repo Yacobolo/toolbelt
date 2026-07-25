@@ -90,37 +90,30 @@ func newRootCommand(app *sourcebook.App, stdin io.Reader, stdout, stderr io.Writ
 			if !ui.IsInteractive(command.InOrStdin(), command.OutOrStdout()) {
 				return command.Help()
 			}
-			for {
-				sources, err := app.Sources()
-				if err != nil {
-					return err
-				}
-				action, err := ui.SelectDashboardAction(
-					command.Context(),
-					command.InOrStdin(),
-					command.OutOrStdout(),
-					buildVersion,
-					app.SkillDir(),
-					sources,
-				)
-				if err != nil {
-					return err
-				}
-				var child *cobra.Command
-				switch action {
-				case ui.DashboardAdd:
-					child = newAddCommand(app)
-				case ui.DashboardUpdate:
-					child = newUpdateCommand(app)
-				case ui.DashboardRemove:
-					child = newRemoveCommand(app)
-				default:
-					return nil
-				}
-				if err := executeDashboardCommand(command, child); err != nil {
-					return err
-				}
+			sources, err := app.Sources()
+			if err != nil {
+				return err
 			}
+			return ui.RunDashboard(
+				command.Context(),
+				command.InOrStdin(),
+				command.OutOrStdout(),
+				buildVersion,
+				app.SkillDir(),
+				sources,
+				ui.DashboardActions{
+					Catalog: app.CatalogEntries(),
+					Reload:  app.Sources,
+					Update: func(ctx context.Context, names []string) error {
+						return app.UpdateSelectedWithProgress(ctx, names, nil)
+					},
+					Remove: app.Remove,
+					AddPreset: func(ctx context.Context, presetID string) error {
+						return app.AddPreset(ctx, presetID, nil)
+					},
+					AddRepository: app.Add,
+				},
+			)
 		},
 	}
 	root.SetIn(stdin)
@@ -168,16 +161,6 @@ func newRootCommand(app *sourcebook.App, stdin io.Reader, stdout, stderr io.Writ
 		newVersionCommand(buildVersion),
 	)
 	return root
-}
-
-func executeDashboardCommand(parent, child *cobra.Command) error {
-	child.SetIn(parent.InOrStdin())
-	child.SetOut(parent.OutOrStdout())
-	child.SetErr(parent.ErrOrStderr())
-	child.SetArgs([]string{})
-	child.SilenceErrors = true
-	child.SilenceUsage = true
-	return child.ExecuteContext(parent.Context())
 }
 
 func newUpgradeCommand(upgrader upgradeRunner, buildVersion string) *cobra.Command {
