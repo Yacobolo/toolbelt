@@ -22,8 +22,8 @@ type generatedOutputChange struct {
 	Remove  bool
 }
 
-func generatePartitionedServer(doc ir.Document, plan goPackagePlan) error {
-	changes, err := renderPartitionedServerDocument(doc, plan)
+func generatePartitionedServer(doc ir.Document, plan goPackagePlan, canonicalOpenAPIPath string) error {
+	changes, err := renderPartitionedServerDocument(doc, plan, canonicalOpenAPIPath)
 	if err != nil {
 		return err
 	}
@@ -34,7 +34,7 @@ func generatePartitionedServer(doc ir.Document, plan goPackagePlan) error {
 }
 
 func generatePartitionedAll(doc ir.Document, plan goPackagePlan, config commandConfig) error {
-	changes, err := renderPartitionedServerDocument(doc, plan)
+	changes, err := renderPartitionedServerDocument(doc, plan, config.CanonicalOpenAPIPath)
 	if err != nil {
 		return err
 	}
@@ -55,7 +55,11 @@ func generatePartitionedAll(doc ir.Document, plan goPackagePlan, config commandC
 	return nil
 }
 
-func renderPartitionedServerDocument(doc ir.Document, plan goPackagePlan) ([]generatedOutputChange, error) {
+func renderPartitionedServerDocument(
+	doc ir.Document,
+	plan goPackagePlan,
+	canonicalOpenAPIPath string,
+) ([]generatedOutputChange, error) {
 	partitions, err := planGoPackagePartitions(doc, plan)
 	if err != nil {
 		return nil, fmt.Errorf("plan packages: %w", err)
@@ -68,7 +72,14 @@ func renderPartitionedServerDocument(doc ir.Document, plan goPackagePlan) ([]gen
 	if err != nil {
 		return nil, err
 	}
-	aggregateChange, ok, err := renderAggregateServer(projections, plan.Aggregate)
+	embeddedOpenAPI := ""
+	if plan.Aggregate != nil {
+		embeddedOpenAPI, err = loadOpenAPIAsJSON(canonicalOpenAPIPath)
+		if err != nil {
+			return nil, fmt.Errorf("load canonical openapi for aggregate: %w", err)
+		}
+	}
+	aggregateChange, ok, err := renderAggregateServer(projections, plan.Aggregate, embeddedOpenAPI)
 	if err != nil {
 		return nil, err
 	}
@@ -131,6 +142,7 @@ func renderPartitionedServer(projections []goPackageProjection) ([]generatedOutp
 func renderAggregateServer(
 	projections []goPackageProjection,
 	output *resolvedGoPackageOutput,
+	embeddedOpenAPI string,
 ) (generatedOutputChange, bool, error) {
 	if output == nil {
 		return generatedOutputChange{}, false, nil
@@ -145,14 +157,16 @@ func renderAggregateServer(
 			Name:        aggregatePartitionName(projection.Partition),
 			ImportPath:  projection.Partition.Output.ImportPath,
 			PackageName: projection.Partition.Output.Package,
+			HasTools:    projectionHasTools(projection),
 		})
 	}
 	if len(packages) == 0 {
 		return generatedOutputChange{Path: path, Remove: true}, true, nil
 	}
 	content, err := aggregategoemit.Emit(aggregategoemit.Options{
-		PackageName: output.Package,
-		Packages:    packages,
+		PackageName:             output.Package,
+		EmbeddedOpenAPISpecJSON: embeddedOpenAPI,
+		Packages:                packages,
 	})
 	if err != nil {
 		return generatedOutputChange{}, false, fmt.Errorf("emit aggregate server: %w", err)
@@ -162,6 +176,15 @@ func renderAggregateServer(
 		return generatedOutputChange{}, false, fmt.Errorf("format aggregate server: %w", err)
 	}
 	return generatedOutputChange{Path: path, Content: formatted}, true, nil
+}
+
+func projectionHasTools(projection goPackageProjection) bool {
+	for _, endpoint := range projection.Document.Endpoints {
+		if endpoint.Tool != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func aggregatePartitionName(partition goPackagePartition) string {

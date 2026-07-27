@@ -5,6 +5,7 @@ package aggregatego
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"path"
 	"sort"
@@ -20,12 +21,15 @@ type ServerPackage struct {
 	ImportPath string
 	// PackageName is the declared Go package name of the generated server.
 	PackageName string
+	// HasTools reports whether the generated package exposes agent-tool contracts.
+	HasTools bool
 }
 
 // Options configures aggregate Go route composition.
 type Options struct {
-	PackageName string
-	Packages    []ServerPackage
+	PackageName             string
+	EmbeddedOpenAPISpecJSON string
+	Packages                []ServerPackage
 }
 
 type resolvedServerPackage struct {
@@ -52,6 +56,9 @@ func Emit(opts Options) ([]byte, error) {
 	if len(opts.Packages) == 0 {
 		return nil, fmt.Errorf("aggregate requires at least one server package")
 	}
+	if opts.EmbeddedOpenAPISpecJSON == "" || !json.Valid([]byte(opts.EmbeddedOpenAPISpecJSON)) {
+		return nil, fmt.Errorf("aggregate requires valid embedded canonical OpenAPI JSON")
+	}
 	packages, err := resolveServerPackages(opts.Packages)
 	if err != nil {
 		return nil, err
@@ -60,6 +67,8 @@ func Emit(opts Options) ([]byte, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "package %s\n\n", opts.PackageName)
 	b.WriteString("import (\n")
+	b.WriteString("\t\"encoding/json\"\n\n")
+	b.WriteString("\tapigenagenttool \"github.com/Yacobolo/toolbelt/apigen/runtime/agenttool\"\n")
 	fmt.Fprintf(&b, "\tapigenchi %q\n", chiRuntimeImportPath)
 	for _, serverPackage := range packages {
 		fmt.Fprintf(&b, "\t%s %q\n", serverPackage.Alias, serverPackage.ImportPath)
@@ -106,7 +115,87 @@ func Emit(opts Options) ([]byte, error) {
 		)
 	}
 	b.WriteString("}\n")
+	emitProtocolMetadata(&b, packages, opts.EmbeddedOpenAPISpecJSON)
 	return []byte(b.String()), nil
+}
+
+func emitProtocolMetadata(b *strings.Builder, packages []resolvedServerPackage, embeddedOpenAPI string) {
+	b.WriteString("\nconst embeddedOpenAPISpecJSON = ")
+	fmt.Fprintf(b, "%q\n\n", embeddedOpenAPI)
+	b.WriteString("// GetEmbeddedOpenAPISpec returns the canonical OpenAPI document as a generic JSON map.\n")
+	b.WriteString("func GetEmbeddedOpenAPISpec() (map[string]any, error) {\n")
+	b.WriteString("\tvar doc map[string]any\n")
+	b.WriteString("\tif err := json.Unmarshal([]byte(embeddedOpenAPISpecJSON), &doc); err != nil { return nil, err }\n")
+	b.WriteString("\treturn doc, nil\n")
+	b.WriteString("}\n\n")
+
+	b.WriteString("// GenOperationContract captures APIGen-owned contract metadata for one operation.\n")
+	b.WriteString("type GenOperationContract struct {\n")
+	b.WriteString("\tOperationID string\n\tMethod string\n\tPath string\n\tTags []string\n\tDocumentedStatusCodes []int\n")
+	b.WriteString("\tRequestBodyRequired bool\n\tAuthzMode string\n\tProtected bool\n\tManual bool\n\tExtensions map[string]any\n")
+	b.WriteString("}\n\n")
+	b.WriteString("var genOperationContracts = func() map[string]GenOperationContract {\n")
+	b.WriteString("\tout := map[string]GenOperationContract{}\n")
+	for _, serverPackage := range packages {
+		fmt.Fprintf(b, "\tfor operationID, contract := range %s.GetAPIGenOperationContracts() {\n", serverPackage.Alias)
+		b.WriteString("\t\tif _, exists := out[operationID]; exists { panic(\"duplicate aggregate APIGen operation \" + operationID) }\n")
+		b.WriteString("\t\tout[operationID] = GenOperationContract{\n")
+		b.WriteString("\t\t\tOperationID: contract.OperationID, Method: contract.Method, Path: contract.Path,\n")
+		b.WriteString("\t\t\tTags: append([]string(nil), contract.Tags...), DocumentedStatusCodes: append([]int(nil), contract.DocumentedStatusCodes...),\n")
+		b.WriteString("\t\t\tRequestBodyRequired: contract.RequestBodyRequired, AuthzMode: contract.AuthzMode,\n")
+		b.WriteString("\t\t\tProtected: contract.Protected, Manual: contract.Manual, Extensions: cloneAPIGenAnyMap(contract.Extensions),\n")
+		b.WriteString("\t\t}\n\t}\n")
+	}
+	b.WriteString("\treturn out\n}()\n\n")
+	b.WriteString("// GetAPIGenOperationContracts returns a defensive copy of the aggregate contract registry.\n")
+	b.WriteString("func GetAPIGenOperationContracts() map[string]GenOperationContract {\n")
+	b.WriteString("\tout := make(map[string]GenOperationContract, len(genOperationContracts))\n")
+	b.WriteString("\tfor operationID, contract := range genOperationContracts { out[operationID] = cloneAPIGenOperationContract(contract) }\n")
+	b.WriteString("\treturn out\n}\n\n")
+	b.WriteString("// GetAPIGenOperationContract returns aggregate contract metadata for one operation.\n")
+	b.WriteString("func GetAPIGenOperationContract(operationID string) (GenOperationContract, bool) {\n")
+	b.WriteString("\tcontract, ok := genOperationContracts[operationID]\n")
+	b.WriteString("\tif !ok { return GenOperationContract{}, false }\n")
+	b.WriteString("\treturn cloneAPIGenOperationContract(contract), true\n}\n\n")
+	b.WriteString("// APIGenOperationAllowsStatus reports whether a status is documented for an operation.\n")
+	b.WriteString("//nolint:revive // exported generated helper name matches the APIGen contract registry namespace.\n")
+	b.WriteString("func APIGenOperationAllowsStatus(operationID string, statusCode int) bool {\n")
+	b.WriteString("\tcontract, ok := genOperationContracts[operationID]\n\tif !ok { return false }\n")
+	b.WriteString("\tfor _, documented := range contract.DocumentedStatusCodes { if documented == statusCode { return true } }\n")
+	b.WriteString("\treturn false\n}\n\n")
+	b.WriteString("func cloneAPIGenOperationContract(contract GenOperationContract) GenOperationContract {\n")
+	b.WriteString("\tcontract.Tags = append([]string(nil), contract.Tags...)\n")
+	b.WriteString("\tcontract.DocumentedStatusCodes = append([]int(nil), contract.DocumentedStatusCodes...)\n")
+	b.WriteString("\tcontract.Extensions = cloneAPIGenAnyMap(contract.Extensions)\n\treturn contract\n}\n\n")
+	b.WriteString("func cloneAPIGenAnyMap(in map[string]any) map[string]any {\n")
+	b.WriteString("\tif in == nil { return nil }\n\tout := make(map[string]any, len(in))\n")
+	b.WriteString("\tfor key, value := range in { out[key] = cloneAPIGenAny(value) }\n\treturn out\n}\n\n")
+	b.WriteString("func cloneAPIGenAny(value any) any {\n\tswitch typed := value.(type) {\n")
+	b.WriteString("\tcase map[string]any:\n\t\treturn cloneAPIGenAnyMap(typed)\n")
+	b.WriteString("\tcase []any:\n\t\tout := make([]any, len(typed))\n\t\tfor i, item := range typed { out[i] = cloneAPIGenAny(item) }\n\t\treturn out\n")
+	b.WriteString("\tdefault:\n\t\treturn typed\n\t}\n}\n\n")
+
+	b.WriteString("var genAPIGenToolContracts = func() map[string]apigenagenttool.Contract {\n")
+	b.WriteString("\tout := map[string]apigenagenttool.Contract{}\n")
+	for _, serverPackage := range packages {
+		if !serverPackage.HasTools {
+			continue
+		}
+		fmt.Fprintf(b, "\tfor name, contract := range %s.GetAPIGenToolContracts() {\n", serverPackage.Alias)
+		b.WriteString("\t\tif _, exists := out[name]; exists { panic(\"duplicate aggregate APIGen tool \" + name) }\n")
+		b.WriteString("\t\tout[name] = apigenagenttool.CloneContract(contract)\n\t}\n")
+	}
+	b.WriteString("\treturn out\n}()\n\n")
+	b.WriteString("// GetAPIGenToolContracts returns defensive copies of aggregate endpoint-derived tools.\n")
+	b.WriteString("func GetAPIGenToolContracts() map[string]apigenagenttool.Contract {\n")
+	b.WriteString("\tout := make(map[string]apigenagenttool.Contract, len(genAPIGenToolContracts))\n")
+	b.WriteString("\tfor name, contract := range genAPIGenToolContracts { out[name] = apigenagenttool.CloneContract(contract) }\n")
+	b.WriteString("\treturn out\n}\n\n")
+	b.WriteString("// GetAPIGenToolContract returns one aggregate endpoint-derived tool.\n")
+	b.WriteString("func GetAPIGenToolContract(name string) (apigenagenttool.Contract, bool) {\n")
+	b.WriteString("\tcontract, ok := genAPIGenToolContracts[name]\n")
+	b.WriteString("\tif !ok { return apigenagenttool.Contract{}, false }\n")
+	b.WriteString("\treturn apigenagenttool.CloneContract(contract), true\n}\n")
 }
 
 func resolveServerPackages(authored []ServerPackage) ([]resolvedServerPackage, error) {

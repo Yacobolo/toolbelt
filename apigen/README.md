@@ -169,11 +169,14 @@ OpenAPI for only the routes it registers.
 When `go_out.aggregate` is configured, APIGen also emits a thin application
 composition package. It imports only endpoint-bearing generated packages and
 provides typed loose and strict registration inputs for each one. It does not
-contain handlers, models, business logic, or OpenAPI copies. Schema-only
-packages are excluded; if no partition owns endpoints, APIGen removes only the
-aggregate's exact configured generated server filename. Omitting
-`go_out.aggregate` emits no composition layer. The flat single-package form
-continues to support every command unchanged.
+contain handlers, models, or business logic. It embeds the canonical global
+OpenAPI document and merges capability-owned operation metadata and agent-tool
+contracts into defensive global registries for application authorization, CLI,
+documentation, and tool composition. Schema-only packages are excluded; if no
+partition owns endpoints, APIGen removes only the aggregate's exact configured
+generated server filename. Omitting `go_out.aggregate` emits no composition
+layer. The flat single-package form continues to support every command
+unchanged.
 
 ## Public Surface
 

@@ -292,7 +292,7 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 			return failf(stderr, "load ir: %v", err)
 		}
 		if config.GoPackagePlan != nil {
-			if err := generatePartitionedServer(doc, *config.GoPackagePlan); err != nil {
+			if err := generatePartitionedServer(doc, *config.GoPackagePlan, config.CanonicalOpenAPIPath); err != nil {
 				return failf(stderr, "generate partitioned server: %v", err)
 			}
 		} else if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CanonicalOpenAPIPath, config.ContractImports); err != nil {

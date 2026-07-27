@@ -66,12 +66,20 @@ func TestRunCLI_AllGeneratesCompilingPackagePlan(t *testing.T) {
 	require.NotContains(t, aggregateServerContent, `"generatedintegration/internal/shared/api/gen"`)
 	require.Contains(t, aggregateServerContent, "accessapi.RegisterAPIGenRoutes(router, servers.Access)")
 	require.Contains(t, aggregateServerContent, "dashboardapi.RegisterAPIGenStrictRoutes(router, servers.Dashboard, responders.Dashboard)")
+	require.Contains(t, aggregateServerContent, "func GetEmbeddedOpenAPISpec() (map[string]any, error)")
+	require.Contains(t, aggregateServerContent, "for operationID, contract := range accessapi.GetAPIGenOperationContracts()")
+	require.Contains(t, aggregateServerContent, "for operationID, contract := range dashboardapi.GetAPIGenOperationContracts()")
+	require.Contains(t, aggregateServerContent, "for name, contract := range accessapi.GetAPIGenToolContracts()")
+	require.NotContains(t, aggregateServerContent, "dashboardapi.GetAPIGenToolContracts()")
+	require.Contains(t, aggregateServerContent, `\"/v1/principal\"`)
+	require.Contains(t, aggregateServerContent, `\"/v1/dashboard\"`)
 	require.Contains(t, cliContent, `"getCurrentPrincipal"`)
 	require.Contains(t, cliContent, `"getDashboard"`)
 
 	writePartitionedGenerationGoModule(t, root)
 	writeGeneratedServerErrorStub(t, filepath.Dir(accessServer), "accessapi")
 	writeGeneratedServerErrorStub(t, filepath.Dir(dashboardServer), "dashboardapi")
+	writeGeneratedAggregateTest(t, filepath.Dir(aggregateServer))
 	runGeneratedGoTest(t, root)
 }
 
@@ -209,6 +217,7 @@ func partitionedGenerationDocument() ir.Document {
 				OperationID: "getCurrentPrincipal",
 				Namespace:   "ExampleAPI.Access",
 				CLI:         &ir.CLI{Command: []string{"access", "principal"}},
+				Tool:        &ir.Tool{Name: "get_current_principal", Effect: "read", Output: ir.ToolOutput{Mode: "raw"}},
 				Responses: []ir.Response{{
 					StatusCode: 200, Description: "ok", Contents: jsonContent(ir.SchemaRef{Ref: "Principal"}),
 				}},
@@ -288,6 +297,41 @@ func writeGeneratedServerErrorStub(t *testing.T, dir, packageName string) {
 type Error struct {
 	Code int32
 	Message string
+}
+`), 0o644))
+}
+
+func writeGeneratedAggregateTest(t *testing.T, dir string) {
+	t.Helper()
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "aggregate_test.go"), []byte(`package aggregate
+
+import "testing"
+
+func TestAggregateProtocolMetadata(t *testing.T) {
+	contracts := GetAPIGenOperationContracts()
+	if len(contracts) != 2 {
+		t.Fatalf("operation contracts = %d, want 2", len(contracts))
+	}
+	contract := contracts["getCurrentPrincipal"]
+	contract.Tags = append(contract.Tags, "mutated")
+	if fresh, _ := GetAPIGenOperationContract("getCurrentPrincipal"); len(fresh.Tags) == len(contract.Tags) {
+		t.Fatal("operation contract was not defensively copied")
+	}
+	if tools := GetAPIGenToolContracts(); len(tools) != 1 {
+		t.Fatalf("tool contracts = %d, want 1", len(tools))
+	}
+	if _, ok := GetAPIGenToolContract("get_current_principal"); !ok {
+		t.Fatal("aggregate tool contract is missing")
+	}
+	spec, err := GetEmbeddedOpenAPISpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, ok := spec["paths"].(map[string]any)
+	if !ok || paths["/v1/principal"] == nil || paths["/v1/dashboard"] == nil {
+		t.Fatalf("aggregate OpenAPI paths = %#v", spec["paths"])
+	}
 }
 `), 0o644))
 }
