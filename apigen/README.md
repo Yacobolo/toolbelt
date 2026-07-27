@@ -78,6 +78,10 @@ Manifest target fields:
 - `go_out.package`
 - `go_out.server_file`
 - `go_out.request_models_file`
+- `go_out.default`
+- `go_out.aggregate`
+- `go_out.packages`
+- `go_out.unmatched`
 - `cli_out.dir`
 - `cli_out.package`
 - `cli_out.file`
@@ -96,6 +100,54 @@ must have a mapping; aliases must be unique within the target.
 HTTP targets require `typespec_dir`, `ir_out`, and `openapi_out`. Contract targets require `typespec_dir`, `ir_out`, and at least one of `go_models_out`, `ts_out`, or `json_schema_out`. `openapi`, `server`, and `cli` are HTTP-target commands and fail clearly for contract targets.
 
 Direct flags support the same split with `-kind http` or `-kind contracts`.
+
+### Namespace package plans
+
+The flat `go_out` mapping above is the default and remains the right choice for
+small services. Larger services may optionally describe a deterministic package
+plan without splitting the TypeSpec service or OpenAPI document:
+
+```yaml
+targets:
+  - name: example
+    kind: http
+    typespec_dir: api/typespec
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      unmatched: error
+      aggregate:
+        dir: internal/app/api/gen
+        package: aggregate
+      packages:
+        ExampleAPI.Access:
+          dir: internal/access/api/gen
+          package: accessapi
+        ExampleAPI.Dashboard:
+          dir: internal/dashboard/api/gen
+          package: dashboardapi
+```
+
+TypeSpec namespaces provide the grouping. The manifest owns language package
+names and filesystem paths; TypeSpec must not contain repository-specific
+output paths. APIGen treats namespace names as opaque partition keys and does
+not assign architectural meaning to them.
+
+`go_out.unmatched` is required for a package plan:
+
+- `error` requires every emitted namespace to have an explicit mapping.
+- `default` routes unmatched namespaces to `go_out.default`, which is then
+  required.
+
+Multiple namespaces may map to the same directory when they declare the same Go
+package. `go_out.aggregate`, when present, must use a separate directory.
+Mappings are normalized in namespace order so YAML map ordering cannot affect
+generation.
+
+The package-plan manifest and validation are the compatibility foundation for
+partitioned server emission. Until that emitter is enabled, `server` and `all`
+reject package-plan targets rather than silently producing incomplete output.
+The flat single-package form continues to support every command.
 
 ## Public Surface
 

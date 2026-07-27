@@ -955,6 +955,253 @@ func TestResolveCommandConfig_GroupedManifestOverrides(t *testing.T) {
 	require.Equal(t, "transport", config.RequestModelsPackage)
 	require.Equal(t, filepath.Join(dir, "internal", "generated", "commands", "registry.gen.go"), config.CLIOut)
 	require.Equal(t, "cli", config.CLIPackage)
+	require.Nil(t, config.GoPackagePlan)
+}
+
+func TestResolveCommandConfig_NormalizesNamespacePackagePlan(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
+	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
+  - name: example
+    typespec_dir: api/typespec
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      unmatched: error
+      aggregate:
+        dir: internal/app/api/gen
+        package: aggregate
+      packages:
+        AcmeAPI.Dashboard:
+          dir: internal/dashboard/api/gen
+        AcmeAPI.Access:
+          dir: internal/access/api/gen
+          package: accessapi
+`), 0o644))
+
+	config, err := resolveCommandConfig("typespec-compile", manifestPath, "example", commandConfig{})
+	require.NoError(t, err)
+	require.NotNil(t, config.GoPackagePlan)
+	require.Nil(t, config.GoPackagePlan.Default)
+	require.Equal(t, unmatchedNamespaceError, config.GoPackagePlan.Unmatched)
+	require.Equal(t, resolvedGoPackageOutput{
+		Dir:               filepath.Join(dir, "internal", "app", "api", "gen"),
+		Package:           "aggregate",
+		ServerFile:        "server.apigen.gen.go",
+		RequestModelsFile: "request_models.gen.go",
+	}, *config.GoPackagePlan.Aggregate)
+	require.Equal(t, []namespaceGoPackageOutput{
+		{
+			Namespace: "AcmeAPI.Access",
+			Output: resolvedGoPackageOutput{
+				Dir:               filepath.Join(dir, "internal", "access", "api", "gen"),
+				Package:           "accessapi",
+				ServerFile:        "server.apigen.gen.go",
+				RequestModelsFile: "request_models.gen.go",
+			},
+		},
+		{
+			Namespace: "AcmeAPI.Dashboard",
+			Output: resolvedGoPackageOutput{
+				Dir:               filepath.Join(dir, "internal", "dashboard", "api", "gen"),
+				Package:           "gen",
+				ServerFile:        "server.apigen.gen.go",
+				RequestModelsFile: "request_models.gen.go",
+			},
+		},
+	}, config.GoPackagePlan.Packages)
+	require.Empty(t, config.ServerOut)
+	require.Empty(t, config.RequestModelsOut)
+}
+
+func TestResolveCommandConfig_NormalizesDefaultNamespacePackageOutput(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
+	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
+  - name: example
+    typespec_dir: api/typespec
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      unmatched: default
+      default:
+        dir: internal/api/gen
+      packages:
+        AcmeAPI.Access:
+          dir: internal/access/api/gen
+`), 0o644))
+
+	config, err := resolveCommandConfig("typespec-compile", manifestPath, "example", commandConfig{})
+	require.NoError(t, err)
+	require.NotNil(t, config.GoPackagePlan)
+	require.Equal(t, unmatchedNamespaceDefault, config.GoPackagePlan.Unmatched)
+	require.Equal(t, resolvedGoPackageOutput{
+		Dir:               filepath.Join(dir, "internal", "api", "gen"),
+		Package:           "gen",
+		ServerFile:        "server.apigen.gen.go",
+		RequestModelsFile: "request_models.gen.go",
+	}, *config.GoPackagePlan.Default)
+}
+
+func TestResolveCommandConfig_RejectsInvalidNamespacePackagePlans(t *testing.T) {
+	t.Helper()
+
+	tests := []struct {
+		name    string
+		goOut   string
+		wantErr string
+	}{
+		{
+			name: "flat and package plan forms cannot be mixed",
+			goOut: `      dir: internal/api/gen
+      unmatched: error
+      packages:
+        AcmeAPI.Access:
+          dir: internal/access/api/gen`,
+			wantErr: "go_out cannot mix dir/package/file fields with default/aggregate/packages/unmatched",
+		},
+		{
+			name: "unmatched policy is required",
+			goOut: `      packages:
+        AcmeAPI.Access:
+          dir: internal/access/api/gen`,
+			wantErr: "go_out.unmatched must be one of default or error",
+		},
+		{
+			name:    "package mapping is required",
+			goOut:   `      unmatched: error`,
+			wantErr: "go_out.packages must declare at least one namespace",
+		},
+		{
+			name: "unmatched policy is closed",
+			goOut: `      unmatched: duplicate
+      packages:
+        AcmeAPI.Access:
+          dir: internal/access/api/gen`,
+			wantErr: "go_out.unmatched must be one of default or error",
+		},
+		{
+			name: "default policy requires output",
+			goOut: `      unmatched: default
+      packages:
+        AcmeAPI.Access:
+          dir: internal/access/api/gen`,
+			wantErr: "go_out.unmatched=default requires go_out.default",
+		},
+		{
+			name: "namespace is required",
+			goOut: `      unmatched: error
+      packages:
+        "":
+          dir: internal/access/api/gen`,
+			wantErr: "go_out.packages namespace is required",
+		},
+		{
+			name: "nested package name is validated",
+			goOut: `      unmatched: error
+      packages:
+        AcmeAPI.Access:
+          dir: internal/access/api/gen
+          package: 123access`,
+			wantErr: `go_out.packages["AcmeAPI.Access"]: invalid inferred go package "123access"`,
+		},
+		{
+			name: "same directory cannot declare different packages",
+			goOut: `      unmatched: error
+      packages:
+        AcmeAPI.Access:
+          dir: internal/shared/api/gen
+          package: accessapi
+        AcmeAPI.Dashboard:
+          dir: internal/shared/api/gen
+          package: dashboardapi`,
+			wantErr: "go_out packages resolve to the same directory with different package names",
+		},
+		{
+			name: "aggregate cannot share a partition directory",
+			goOut: `      unmatched: error
+      aggregate:
+        dir: internal/shared/api/gen
+      packages:
+        AcmeAPI.Access:
+          dir: internal/shared/api/gen`,
+			wantErr: "go_out.aggregate must use a directory separate from package outputs",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			manifestPath := filepath.Join(dir, "apigen.targets.yaml")
+			manifest := `targets:
+  - name: example
+    typespec_dir: api/typespec
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+` + tt.goOut + "\n"
+			require.NoError(t, os.WriteFile(manifestPath, []byte(manifest), 0o644))
+
+			_, err := resolveCommandConfig("typespec-compile", manifestPath, "example", commandConfig{})
+			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestResolveCommandConfig_AllowsNamespacesToShareOnePackage(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
+	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
+  - name: example
+    typespec_dir: api/typespec
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      unmatched: error
+      packages:
+        AcmeAPI.Access:
+          dir: internal/identity/api/gen
+          package: identityapi
+        AcmeAPI.Sessions:
+          dir: internal/identity/api/gen
+          package: identityapi
+`), 0o644))
+
+	config, err := resolveCommandConfig("typespec-compile", manifestPath, "example", commandConfig{})
+	require.NoError(t, err)
+	require.Len(t, config.GoPackagePlan.Packages, 2)
+	require.Equal(t, config.GoPackagePlan.Packages[0].Output, config.GoPackagePlan.Packages[1].Output)
+}
+
+func TestResolveCommandConfig_RejectsPackagePlanBeforeServerEmission(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
+	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
+  - name: example
+    typespec_dir: api/typespec
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      unmatched: error
+      packages:
+        AcmeAPI.Access:
+          dir: internal/access/api/gen
+`), 0o644))
+
+	for _, command := range []string{"server", "all"} {
+		t.Run(command, func(t *testing.T) {
+			_, err := resolveCommandConfig(command, manifestPath, "example", commandConfig{})
+			require.ErrorContains(t, err, command+" command does not yet emit go_out package plans")
+		})
+	}
 }
 
 func TestResolveCommandConfig_GroupedManifestWithoutCLI(t *testing.T) {
