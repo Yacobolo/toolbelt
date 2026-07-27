@@ -12,7 +12,24 @@ var reservedPartitionImportAliases = map[string]struct{}{
 	"bytes": {}, "json": {}, "fmt": {},
 }
 
-func partitionContractImports(projection goPackageProjection) (map[string]contractImportSpec, error) {
+func partitionContractImports(
+	projection goPackageProjection,
+	configuredImports ...map[string]contractImportSpec,
+) (map[string]contractImportSpec, error) {
+	imports := map[string]contractImportSpec{}
+	usedAliases := map[string]string{}
+	if len(configuredImports) > 0 {
+		for namespace, binding := range configuredImports[0] {
+			imports[namespace] = binding
+			if binding.GoAlias == "" {
+				continue
+			}
+			if previous, exists := usedAliases[binding.GoAlias]; exists && previous != binding.GoPackage {
+				return nil, fmt.Errorf("configured imports %q and %q share Go alias %q", previous, binding.GoPackage, binding.GoAlias)
+			}
+			usedAliases[binding.GoAlias] = binding.GoPackage
+		}
+	}
 	dependenciesByImportPath := map[string]*goPackageDependency{}
 	for _, dependency := range projection.Dependencies {
 		importPath := strings.TrimSpace(dependency.Output.ImportPath)
@@ -44,26 +61,23 @@ func partitionContractImports(projection goPackageProjection) (map[string]contra
 	}
 	sort.Strings(importPaths)
 
-	usedAliases := map[string]string{}
 	aliases := make(map[string]string, len(importPaths))
 	for _, importPath := range importPaths {
 		packageName := dependenciesByImportPath[importPath].Output.Package
 		alias := packageName
 		reserved := isReservedPartitionImportAlias(alias)
-		if reserved || packageCounts[packageName] > 1 {
+		previous, aliasUsed := usedAliases[alias]
+		if reserved || packageCounts[packageName] > 1 || (aliasUsed && previous != importPath) {
 			var err error
 			alias, err = stablePartitionImportAlias(packageName, importPath, usedAliases)
 			if err != nil {
 				return nil, err
 			}
-		} else if previous, exists := usedAliases[alias]; exists && previous != importPath {
-			return nil, fmt.Errorf("dependency imports %q and %q resolve to Go alias %q", previous, importPath, alias)
 		}
 		usedAliases[alias] = importPath
 		aliases[importPath] = alias
 	}
 
-	var imports map[string]contractImportSpec
 	for _, importPath := range importPaths {
 		dependency := dependenciesByImportPath[importPath]
 		binding := contractImportSpec{
@@ -82,14 +96,14 @@ func partitionContractImports(projection goPackageProjection) (map[string]contra
 			if namespace == "" {
 				return nil, fmt.Errorf("dependency schema %q has no namespace", schema.Name)
 			}
-			if imports == nil {
-				imports = map[string]contractImportSpec{}
-			}
 			if previous, exists := imports[namespace]; exists && previous != binding {
 				return nil, fmt.Errorf("dependency namespace %q has multiple package owners", namespace)
 			}
 			imports[namespace] = binding
 		}
+	}
+	if len(imports) == 0 {
+		return nil, nil
 	}
 	return imports, nil
 }

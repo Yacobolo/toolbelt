@@ -22,8 +22,8 @@ type generatedOutputChange struct {
 	Remove  bool
 }
 
-func generatePartitionedServer(doc ir.Document, plan goPackagePlan, canonicalOpenAPIPath string) error {
-	changes, err := renderPartitionedServerDocument(doc, plan, canonicalOpenAPIPath)
+func generatePartitionedServer(doc ir.Document, plan goPackagePlan, canonicalOpenAPIPath string, configuredImports map[string]contractImportSpec) error {
+	changes, err := renderPartitionedServerDocument(doc, plan, canonicalOpenAPIPath, configuredImports)
 	if err != nil {
 		return err
 	}
@@ -34,7 +34,7 @@ func generatePartitionedServer(doc ir.Document, plan goPackagePlan, canonicalOpe
 }
 
 func generatePartitionedAll(doc ir.Document, plan goPackagePlan, config commandConfig) error {
-	changes, err := renderPartitionedServerDocument(doc, plan, config.CanonicalOpenAPIPath)
+	changes, err := renderPartitionedServerDocument(doc, plan, config.CanonicalOpenAPIPath, config.ContractImports)
 	if err != nil {
 		return err
 	}
@@ -59,16 +59,17 @@ func renderPartitionedServerDocument(
 	doc ir.Document,
 	plan goPackagePlan,
 	canonicalOpenAPIPath string,
+	configuredImports map[string]contractImportSpec,
 ) ([]generatedOutputChange, error) {
-	partitions, err := planGoPackagePartitions(doc, plan)
+	partitions, err := planGoPackagePartitions(doc, plan, configuredImports)
 	if err != nil {
 		return nil, fmt.Errorf("plan packages: %w", err)
 	}
-	projections, err := projectGoPackagePartitions(doc, partitions)
+	projections, err := projectGoPackagePartitions(doc, partitions, configuredImports)
 	if err != nil {
 		return nil, fmt.Errorf("project packages: %w", err)
 	}
-	changes, err := renderPartitionedServer(projections)
+	changes, err := renderPartitionedServer(projections, configuredImports)
 	if err != nil {
 		return nil, err
 	}
@@ -89,11 +90,11 @@ func renderPartitionedServerDocument(
 	return changes, nil
 }
 
-func renderPartitionedServer(projections []goPackageProjection) ([]generatedOutputChange, error) {
+func renderPartitionedServer(projections []goPackageProjection, configuredImports map[string]contractImportSpec) ([]generatedOutputChange, error) {
 	changes := make([]generatedOutputChange, 0, len(projections)*2)
 	for _, projection := range projections {
 		output := projection.Partition.Output
-		imports, err := partitionContractImports(projection)
+		imports, err := partitionContractImports(projection, configuredImports)
 		if err != nil {
 			return nil, fmt.Errorf("resolve imports for %s: %w", output.ImportPath, err)
 		}

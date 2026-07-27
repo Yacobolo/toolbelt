@@ -48,6 +48,7 @@ func TestRunCLI_AllGeneratesCompilingPackagePlan(t *testing.T) {
 	require.FileExists(t, aggregateServer)
 	require.FileExists(t, cliPath)
 	require.NoFileExists(t, staleSharedServer)
+	require.NoFileExists(t, filepath.Join(root, "internal", "dashboard", "visualization", "ir", "request_models.gen.go"))
 
 	accessServerContent := mustReadString(t, accessServer)
 	dashboardServerContent := mustReadString(t, dashboardServer)
@@ -60,6 +61,7 @@ func TestRunCLI_AllGeneratesCompilingPackagePlan(t *testing.T) {
 	require.Contains(t, dashboardServerContent, `OperationID: "getDashboard"`)
 	require.NotContains(t, dashboardServerContent, `OperationID: "getCurrentPrincipal"`)
 	require.Contains(t, dashboardModelsContent, `accessapi "generatedintegration/internal/access/api/gen"`)
+	require.Contains(t, dashboardModelsContent, `visualizationir "generatedintegration/internal/dashboard/visualization/ir"`)
 	require.Contains(t, sharedModelsContent, "type Shared struct")
 	require.Contains(t, aggregateServerContent, `accessapi "generatedintegration/internal/access/api/gen"`)
 	require.Contains(t, aggregateServerContent, `dashboardapi "generatedintegration/internal/dashboard/api/gen"`)
@@ -79,6 +81,7 @@ func TestRunCLI_AllGeneratesCompilingPackagePlan(t *testing.T) {
 	writePartitionedGenerationGoModule(t, root)
 	writeGeneratedServerErrorStub(t, filepath.Dir(accessServer), "accessapi")
 	writeGeneratedServerErrorStub(t, filepath.Dir(dashboardServer), "dashboardapi")
+	writeExternalVisualizationModels(t, root)
 	writeGeneratedAggregateTest(t, filepath.Dir(aggregateServer))
 	runGeneratedGoTest(t, root)
 }
@@ -155,6 +158,57 @@ func TestRunCLI_ServerRemovesStaleAggregateWithoutEndpointPartitions(t *testing.
 	require.FileExists(t, filepath.Join(root, "internal", "shared", "api", "gen", "request_models.gen.go"))
 }
 
+func TestRenderPartitionedServerDocument_RejectsExternalToLocalContractCycle(t *testing.T) {
+	t.Helper()
+
+	doc := ir.Document{
+		SchemaVersion: ir.CurrentSchemaVersion,
+		API:           ir.API{BasePath: "/"},
+		Info:          ir.Info{Title: "Cycle", Version: "1.0.0", Namespace: "ExampleAPI"},
+		Schemas: map[string]ir.Schema{
+			"Dashboard": {
+				Type:      "object",
+				Namespace: "ExampleAPI.Dashboard",
+				Properties: map[string]ir.SchemaProperty{
+					"visual": {Schema: ir.SchemaRef{Ref: "ExternalVisual"}},
+				},
+			},
+			"ExternalVisual": {
+				Type:      "object",
+				Namespace: "External.Visualization",
+				Properties: map[string]ir.SchemaProperty{
+					"dashboard": {Schema: ir.SchemaRef{Ref: "Dashboard"}},
+				},
+			},
+		},
+		Endpoints: []ir.Endpoint{
+			endpointWithResponse("getDashboard", "ExampleAPI.Dashboard", "Dashboard"),
+		},
+	}
+	plan := goPackagePlan{
+		Unmatched: unmatchedNamespaceError,
+		Packages: []namespaceGoPackageOutput{{
+			Namespace: "ExampleAPI.Dashboard",
+			Output: resolvedGoPackageOutput{
+				Dir:               t.TempDir(),
+				Package:           "dashboardapi",
+				ImportPath:        "example.com/dashboard",
+				ServerFile:        "server.apigen.gen.go",
+				RequestModelsFile: "request_models.gen.go",
+			},
+		}},
+	}
+	imports := map[string]contractImportSpec{
+		"External.Visualization": {
+			GoPackage: "example.com/visualization",
+			GoAlias:   "visualization",
+		},
+	}
+
+	_, err := renderPartitionedServerDocument(doc, plan, "", imports)
+	require.ErrorContains(t, err, `contract import cycle: external schema "ExternalVisual" references local schema "Dashboard"`)
+}
+
 func TestApplyGeneratedOutputChanges_RejectsDuplicatesBeforeReplacement(t *testing.T) {
 	t.Helper()
 
@@ -188,9 +242,10 @@ func partitionedGenerationDocument() ir.Document {
 				Type:      "object",
 				Namespace: "ExampleAPI.Dashboard",
 				Properties: map[string]ir.SchemaProperty{
-					"owner": {Schema: ir.SchemaRef{Ref: "Principal"}},
+					"owner":  {Schema: ir.SchemaRef{Ref: "Principal"}},
+					"visual": {Schema: ir.SchemaRef{Ref: "ExternalVisual"}},
 				},
-				Required: []string{"owner"},
+				Required: []string{"owner", "visual"},
 			},
 			"Principal": {
 				Type:      "object",
@@ -208,6 +263,14 @@ func partitionedGenerationDocument() ir.Document {
 					"revision": {Schema: ir.SchemaRef{Type: "integer", Format: "int64"}},
 				},
 				Required: []string{"revision"},
+			},
+			"ExternalVisual": {
+				Type:      "object",
+				Namespace: "External.Visualization",
+				Properties: map[string]ir.SchemaProperty{
+					"kind": {Schema: ir.SchemaRef{Type: "string"}},
+				},
+				Required: []string{"kind"},
 			},
 		},
 		Endpoints: []ir.Endpoint{
@@ -270,6 +333,10 @@ func writePartitionedGenerationManifest(t *testing.T, root string, withCLI bool)
           dir: internal/shared/api/gen
           package: sharedapi
           import_path: generatedintegration/internal/shared/api/gen
+    contract_imports:
+      External.Visualization:
+        go_package: generatedintegration/internal/dashboard/visualization/ir
+        go_alias: visualizationir
 ` + cli
 	path := filepath.Join(root, "apigen.targets.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
@@ -332,6 +399,19 @@ func TestAggregateProtocolMetadata(t *testing.T) {
 	if !ok || paths["/v1/principal"] == nil || paths["/v1/dashboard"] == nil {
 		t.Fatalf("aggregate OpenAPI paths = %#v", spec["paths"])
 	}
+}
+`), 0o644))
+}
+
+func writeExternalVisualizationModels(t *testing.T, root string) {
+	t.Helper()
+
+	dir := filepath.Join(root, "internal", "dashboard", "visualization", "ir")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "models.go"), []byte(`package ir
+
+type ExternalVisual struct {
+	Kind string
 }
 `), 0o644))
 }

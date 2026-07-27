@@ -155,6 +155,13 @@ import path, and generated filenames are identical. `go_out.aggregate`, when
 present, must use a separate directory. Mappings are normalized in namespace
 order so YAML map ordering cannot affect generation.
 
+Schemas owned by configured `contract_imports` remain external to the package
+plan. APIGen keeps their IR declarations available for transitive type
+resolution, imports them through the configured canonical Go binding, and never
+creates a local partition or generated output for them. A namespace cannot be
+both locally mapped under `go_out.packages` and externally owned by a
+`contract_imports` binding.
+
 `server` and `all` render one server and request-model package per planned
 output. Schema-only outputs receive request models without a fake server or
 route surface. APIGen plans, projects, renders, and formats every package before
