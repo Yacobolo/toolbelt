@@ -71,6 +71,7 @@ type goOutputSpec struct {
 type goPackageOutputSpec struct {
 	Dir               string `yaml:"dir"`
 	Package           string `yaml:"package"`
+	ImportPath        string `yaml:"import_path"`
 	ServerFile        string `yaml:"server_file"`
 	RequestModelsFile string `yaml:"request_models_file"`
 }

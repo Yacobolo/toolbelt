@@ -81,6 +81,7 @@ Manifest target fields:
 - `go_out.default`
 - `go_out.aggregate`
 - `go_out.packages`
+- `go_out.packages.*.import_path`
 - `go_out.unmatched`
 - `cli_out.dir`
 - `cli_out.package`
@@ -123,15 +124,25 @@ targets:
         ExampleAPI.Access:
           dir: internal/access/api/gen
           package: accessapi
+          import_path: github.com/acme/example/internal/access/api/gen
         ExampleAPI.Dashboard:
           dir: internal/dashboard/api/gen
           package: dashboardapi
+          import_path: github.com/acme/example/internal/dashboard/api/gen
 ```
 
 TypeSpec namespaces provide the grouping. The manifest owns language package
-names and filesystem paths; TypeSpec must not contain repository-specific
-output paths. APIGen treats namespace names as opaque partition keys and does
-not assign architectural meaning to them.
+names, import paths, and filesystem paths; TypeSpec must not contain
+repository-specific output paths. APIGen treats namespace names as opaque
+partition keys and does not assign architectural meaning to them.
+
+Every `go_out.packages` output requires an explicit canonical Go `import_path`.
+`go_out.default` also requires one when present. APIGen does not infer import
+paths from `go.mod`, the current working directory, or the output directory:
+explicit paths remain deterministic in monorepos, nested modules, and generated
+trees outside a module root. The flat `go_out` form needs no import path because
+it does not create cross-package references. `go_out.aggregate.import_path` is
+optional because generated partitions do not import the aggregate package.
 
 `go_out.unmatched` is required for a package plan:
 
@@ -139,10 +150,10 @@ not assign architectural meaning to them.
 - `default` routes unmatched namespaces to `go_out.default`, which is then
   required.
 
-Multiple namespaces may map to the same directory when they declare the same Go
-package. `go_out.aggregate`, when present, must use a separate directory.
-Mappings are normalized in namespace order so YAML map ordering cannot affect
-generation.
+Multiple namespaces may map to the same output when their directory, Go package,
+import path, and generated filenames are identical. `go_out.aggregate`, when
+present, must use a separate directory. Mappings are normalized in namespace
+order so YAML map ordering cannot affect generation.
 
 The package-plan manifest and validation are the compatibility foundation for
 partitioned server emission. Until that emitter is enabled, `server` and `all`

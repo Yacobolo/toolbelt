@@ -2,9 +2,11 @@ package main
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 type unmatchedNamespacePolicy string
@@ -17,6 +19,7 @@ const (
 type resolvedGoPackageOutput struct {
 	Dir               string
 	Package           string
+	ImportPath        string
 	ServerFile        string
 	RequestModelsFile string
 }
@@ -62,7 +65,7 @@ func normalizeGoPackagePlan(spec goOutputSpec) (*goPackagePlan, error) {
 			Package:           spec.Package,
 			ServerFile:        spec.ServerFile,
 			RequestModelsFile: spec.RequestModelsFile,
-		}); err != nil {
+		}, false); err != nil {
 			return nil, err
 		}
 		return nil, nil
@@ -86,14 +89,26 @@ func normalizeGoPackagePlan(spec goOutputSpec) (*goPackagePlan, error) {
 	}
 
 	plan := &goPackagePlan{Unmatched: policy}
-	outputPackages := map[string]string{}
+	outputPackages := map[string]resolvedGoPackageOutput{}
+	outputImportPaths := map[string]string{}
+	recordImportPath := func(output resolvedGoPackageOutput) error {
+		dir := filepath.Clean(output.Dir)
+		if previousDir, exists := outputImportPaths[output.ImportPath]; exists && previousDir != dir {
+			return fmt.Errorf("go_out import_path %q resolves to multiple directories", output.ImportPath)
+		}
+		outputImportPaths[output.ImportPath] = dir
+		return nil
+	}
 	if spec.Default != nil {
-		output, err := resolveGoPackageOutput("go_out.default", *spec.Default)
+		output, err := resolveGoPackageOutput("go_out.default", *spec.Default, true)
 		if err != nil {
 			return nil, err
 		}
+		if err := recordImportPath(output); err != nil {
+			return nil, err
+		}
 		plan.Default = &output
-		outputPackages[filepath.Clean(output.Dir)] = output.Package
+		outputPackages[filepath.Clean(output.Dir)] = output
 	}
 
 	namespaces := make([]string, 0, len(spec.Packages))
@@ -113,15 +128,23 @@ func normalizeGoPackagePlan(spec goOutputSpec) (*goPackagePlan, error) {
 
 	for _, namespace := range namespaces {
 		outputSpec := spec.Packages[normalizedNamespaces[namespace]]
-		output, err := resolveGoPackageOutput(fmt.Sprintf("go_out.packages[%q]", namespace), outputSpec)
+		output, err := resolveGoPackageOutput(fmt.Sprintf("go_out.packages[%q]", namespace), outputSpec, true)
 		if err != nil {
 			return nil, err
 		}
 		dir := filepath.Clean(output.Dir)
-		if packageName, exists := outputPackages[dir]; exists && packageName != output.Package {
-			return nil, fmt.Errorf("go_out packages resolve to the same directory with different package names")
+		if previous, exists := outputPackages[dir]; exists {
+			if previous.Package != output.Package {
+				return nil, fmt.Errorf("go_out packages resolve to the same directory with different package names")
+			}
+			if previous != output {
+				return nil, fmt.Errorf("go_out packages resolve to the same directory with inconsistent output settings")
+			}
 		}
-		outputPackages[dir] = output.Package
+		if err := recordImportPath(output); err != nil {
+			return nil, err
+		}
+		outputPackages[dir] = output
 		plan.Packages = append(plan.Packages, namespaceGoPackageOutput{
 			Namespace: namespace,
 			Output:    output,
@@ -129,7 +152,7 @@ func normalizeGoPackagePlan(spec goOutputSpec) (*goPackagePlan, error) {
 	}
 
 	if spec.Aggregate != nil {
-		output, err := resolveGoPackageOutput("go_out.aggregate", *spec.Aggregate)
+		output, err := resolveGoPackageOutput("go_out.aggregate", *spec.Aggregate, false)
 		if err != nil {
 			return nil, err
 		}
@@ -141,7 +164,7 @@ func normalizeGoPackagePlan(spec goOutputSpec) (*goPackagePlan, error) {
 	return plan, nil
 }
 
-func resolveGoPackageOutput(fieldName string, spec goPackageOutputSpec) (resolvedGoPackageOutput, error) {
+func resolveGoPackageOutput(fieldName string, spec goPackageOutputSpec, requireImportPath bool) (resolvedGoPackageOutput, error) {
 	if strings.TrimSpace(spec.Dir) == "" {
 		return resolvedGoPackageOutput{}, fmt.Errorf("%s.dir is required", fieldName)
 	}
@@ -149,10 +172,41 @@ func resolveGoPackageOutput(fieldName string, spec goPackageOutputSpec) (resolve
 	if err != nil {
 		return resolvedGoPackageOutput{}, err
 	}
+	importPath, err := resolveGoImportPath(fieldName, spec.ImportPath, requireImportPath)
+	if err != nil {
+		return resolvedGoPackageOutput{}, err
+	}
 	return resolvedGoPackageOutput{
 		Dir:               filepath.Clean(spec.Dir),
 		Package:           packageName,
+		ImportPath:        importPath,
 		ServerFile:        coalesceString(spec.ServerFile, "server.apigen.gen.go"),
 		RequestModelsFile: coalesceString(spec.RequestModelsFile, "request_models.gen.go"),
 	}, nil
+}
+
+func resolveGoImportPath(fieldName, authored string, required bool) (string, error) {
+	if authored == "" {
+		if required {
+			return "", fmt.Errorf("%s.import_path is required", fieldName)
+		}
+		return "", nil
+	}
+	if strings.TrimSpace(authored) != authored ||
+		authored == "." ||
+		authored == ".." ||
+		path.IsAbs(authored) ||
+		strings.Contains(authored, `\`) ||
+		strings.HasSuffix(authored, "/") ||
+		path.Clean(authored) != authored {
+		return "", fmt.Errorf("%s.import_path must be a canonical Go import path", fieldName)
+	}
+	for _, character := range authored {
+		if character == '/' || unicode.IsLetter(character) || unicode.IsDigit(character) ||
+			strings.ContainsRune("-._~+", character) {
+			continue
+		}
+		return "", fmt.Errorf("%s.import_path must be a canonical Go import path", fieldName)
+	}
+	return authored, nil
 }

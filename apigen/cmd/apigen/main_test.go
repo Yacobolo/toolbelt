@@ -1026,9 +1026,11 @@ func TestResolveCommandConfig_NormalizesNamespacePackagePlan(t *testing.T) {
       packages:
         AcmeAPI.Dashboard:
           dir: internal/dashboard/api/gen
+          import_path: github.com/acme/example/internal/dashboard/api/gen
         AcmeAPI.Access:
           dir: internal/access/api/gen
           package: accessapi
+          import_path: github.com/acme/example/internal/access/api/gen
 `), 0o644))
 
 	config, err := resolveCommandConfig("typespec-compile", manifestPath, "example", commandConfig{})
@@ -1048,6 +1050,7 @@ func TestResolveCommandConfig_NormalizesNamespacePackagePlan(t *testing.T) {
 			Output: resolvedGoPackageOutput{
 				Dir:               filepath.Join(dir, "internal", "access", "api", "gen"),
 				Package:           "accessapi",
+				ImportPath:        "github.com/acme/example/internal/access/api/gen",
 				ServerFile:        "server.apigen.gen.go",
 				RequestModelsFile: "request_models.gen.go",
 			},
@@ -1057,6 +1060,7 @@ func TestResolveCommandConfig_NormalizesNamespacePackagePlan(t *testing.T) {
 			Output: resolvedGoPackageOutput{
 				Dir:               filepath.Join(dir, "internal", "dashboard", "api", "gen"),
 				Package:           "gen",
+				ImportPath:        "github.com/acme/example/internal/dashboard/api/gen",
 				ServerFile:        "server.apigen.gen.go",
 				RequestModelsFile: "request_models.gen.go",
 			},
@@ -1080,9 +1084,11 @@ func TestResolveCommandConfig_NormalizesDefaultNamespacePackageOutput(t *testing
       unmatched: default
       default:
         dir: internal/api/gen
+        import_path: github.com/acme/example/internal/api/gen
       packages:
         AcmeAPI.Access:
           dir: internal/access/api/gen
+          import_path: github.com/acme/example/internal/access/api/gen
 `), 0o644))
 
 	config, err := resolveCommandConfig("typespec-compile", manifestPath, "example", commandConfig{})
@@ -1092,9 +1098,105 @@ func TestResolveCommandConfig_NormalizesDefaultNamespacePackageOutput(t *testing
 	require.Equal(t, resolvedGoPackageOutput{
 		Dir:               filepath.Join(dir, "internal", "api", "gen"),
 		Package:           "gen",
+		ImportPath:        "github.com/acme/example/internal/api/gen",
 		ServerFile:        "server.apigen.gen.go",
 		RequestModelsFile: "request_models.gen.go",
 	}, *config.GoPackagePlan.Default)
+}
+
+func TestResolveCommandConfig_ValidatesPartitionImportPaths(t *testing.T) {
+	t.Helper()
+
+	tests := []struct {
+		name       string
+		importPath string
+		wantErr    string
+	}{
+		{name: "missing", wantErr: `go_out.packages["AcmeAPI.Access"].import_path is required`},
+		{name: "absolute filesystem path", importPath: "/workspace/internal/access", wantErr: "must be a canonical Go import path"},
+		{name: "backslash", importPath: `github.com\acme\access`, wantErr: "must be a canonical Go import path"},
+		{name: "trailing slash", importPath: "github.com/acme/access/", wantErr: "must be a canonical Go import path"},
+		{name: "dot segment", importPath: "github.com/acme/./access", wantErr: "must be a canonical Go import path"},
+		{name: "parent segment", importPath: "github.com/acme/../access", wantErr: "must be a canonical Go import path"},
+		{name: "duplicate slash", importPath: "github.com/acme//access", wantErr: "must be a canonical Go import path"},
+		{name: "surrounding whitespace", importPath: " github.com/acme/access ", wantErr: "must be a canonical Go import path"},
+		{name: "current directory", importPath: ".", wantErr: "must be a canonical Go import path"},
+		{name: "parent directory", importPath: "..", wantErr: "must be a canonical Go import path"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			manifestPath := filepath.Join(dir, "apigen.targets.yaml")
+			manifest := `targets:
+  - name: example
+    typespec_dir: api/typespec
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      unmatched: error
+      packages:
+        AcmeAPI.Access:
+          dir: internal/access/api/gen
+          import_path: '` + tt.importPath + "'\n"
+			require.NoError(t, os.WriteFile(manifestPath, []byte(manifest), 0o644))
+
+			_, err := resolveCommandConfig("typespec-compile", manifestPath, "example", commandConfig{})
+			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestResolveCommandConfig_RejectsConflictingCoalescedPackageOutputs(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
+	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
+  - name: example
+    typespec_dir: api/typespec
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      unmatched: error
+      packages:
+        AcmeAPI.Access:
+          dir: internal/identity/api/gen
+          package: identityapi
+          import_path: github.com/acme/example/internal/access/api/gen
+        AcmeAPI.Sessions:
+          dir: internal/identity/api/gen
+          package: identityapi
+          import_path: github.com/acme/example/internal/sessions/api/gen
+`), 0o644))
+
+	_, err := resolveCommandConfig("typespec-compile", manifestPath, "example", commandConfig{})
+	require.ErrorContains(t, err, "go_out packages resolve to the same directory with inconsistent output settings")
+}
+
+func TestResolveCommandConfig_RejectsDuplicateImportPathsForDifferentOutputs(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "apigen.targets.yaml")
+	require.NoError(t, os.WriteFile(manifestPath, []byte(`targets:
+  - name: example
+    typespec_dir: api/typespec
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      unmatched: error
+      packages:
+        AcmeAPI.Access:
+          dir: internal/access/api/gen
+          import_path: github.com/acme/example/internal/shared/api/gen
+        AcmeAPI.Dashboard:
+          dir: internal/dashboard/api/gen
+          import_path: github.com/acme/example/internal/shared/api/gen
+`), 0o644))
+
+	_, err := resolveCommandConfig("typespec-compile", manifestPath, "example", commandConfig{})
+	require.ErrorContains(t, err, `go_out import_path "github.com/acme/example/internal/shared/api/gen" resolves to multiple directories`)
 }
 
 func TestResolveCommandConfig_RejectsInvalidNamespacePackagePlans(t *testing.T) {
@@ -1143,6 +1245,17 @@ func TestResolveCommandConfig_RejectsInvalidNamespacePackagePlans(t *testing.T) 
 			wantErr: "go_out.unmatched=default requires go_out.default",
 		},
 		{
+			name: "default output requires import path",
+			goOut: `      unmatched: default
+      default:
+        dir: internal/api/gen
+      packages:
+        AcmeAPI.Access:
+          dir: internal/access/api/gen
+          import_path: github.com/acme/example/internal/access/api/gen`,
+			wantErr: "go_out.default.import_path is required",
+		},
+		{
 			name: "namespace is required",
 			goOut: `      unmatched: error
       packages:
@@ -1166,9 +1279,11 @@ func TestResolveCommandConfig_RejectsInvalidNamespacePackagePlans(t *testing.T) 
         AcmeAPI.Access:
           dir: internal/shared/api/gen
           package: accessapi
+          import_path: github.com/acme/example/internal/shared/api/gen
         AcmeAPI.Dashboard:
           dir: internal/shared/api/gen
-          package: dashboardapi`,
+          package: dashboardapi
+          import_path: github.com/acme/example/internal/shared/api/gen`,
 			wantErr: "go_out packages resolve to the same directory with different package names",
 		},
 		{
@@ -1178,8 +1293,21 @@ func TestResolveCommandConfig_RejectsInvalidNamespacePackagePlans(t *testing.T) 
         dir: internal/shared/api/gen
       packages:
         AcmeAPI.Access:
-          dir: internal/shared/api/gen`,
+          dir: internal/shared/api/gen
+          import_path: github.com/acme/example/internal/shared/api/gen`,
 			wantErr: "go_out.aggregate must use a directory separate from package outputs",
+		},
+		{
+			name: "authored aggregate import path must be canonical",
+			goOut: `      unmatched: error
+      aggregate:
+        dir: internal/app/api/gen
+        import_path: /workspace/internal/app/api/gen
+      packages:
+        AcmeAPI.Access:
+          dir: internal/access/api/gen
+          import_path: github.com/acme/example/internal/access/api/gen`,
+			wantErr: "go_out.aggregate.import_path must be a canonical Go import path",
 		},
 	}
 
@@ -1218,9 +1346,11 @@ func TestResolveCommandConfig_AllowsNamespacesToShareOnePackage(t *testing.T) {
         AcmeAPI.Access:
           dir: internal/identity/api/gen
           package: identityapi
+          import_path: github.com/acme/example/internal/identity/api/gen
         AcmeAPI.Sessions:
           dir: internal/identity/api/gen
           package: identityapi
+          import_path: github.com/acme/example/internal/identity/api/gen
 `), 0o644))
 
 	config, err := resolveCommandConfig("typespec-compile", manifestPath, "example", commandConfig{})
@@ -1244,6 +1374,7 @@ func TestResolveCommandConfig_RejectsPackagePlanBeforeServerEmission(t *testing.
       packages:
         AcmeAPI.Access:
           dir: internal/access/api/gen
+          import_path: github.com/acme/example/internal/access/api/gen
 `), 0o644))
 
 	for _, command := range []string{"server", "all"} {
