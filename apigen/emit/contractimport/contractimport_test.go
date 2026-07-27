@@ -77,3 +77,18 @@ func TestValidateRejectsInconsistentBindingsForOneGoPackage(t *testing.T) {
 
 	require.ErrorContains(t, imports.Validate(doc), `share Go package "example.com/identity" with inconsistent bindings`)
 }
+
+func TestResolveSupportsExactNamespaceBindingsForPackagePlans(t *testing.T) {
+	binding := Binding{
+		GoPackage: "example.com/root", GoAlias: "rootapi", ExactNamespace: true,
+	}
+	imports := Bindings{"ExampleAPI": binding}
+
+	namespace, got, ok := imports.Resolve("ExampleAPI")
+	require.True(t, ok)
+	require.Equal(t, "ExampleAPI", namespace)
+	require.Equal(t, binding, got)
+
+	_, _, ok = imports.Resolve("ExampleAPI.Agent")
+	require.False(t, ok)
+}

@@ -86,6 +86,7 @@ type contractImportSpec struct {
 	GoPackage        string `yaml:"go_package"`
 	GoAlias          string `yaml:"go_alias"`
 	TypeScriptModule string `yaml:"typescript_module"`
+	ExactNamespace   bool   `yaml:"-"`
 }
 
 type targetSpec struct {
@@ -625,7 +626,10 @@ func validateTargetSpec(target targetSpec) error {
 func emitterContractImports(values map[string]contractImportSpec) contractimport.Bindings {
 	out := make(contractimport.Bindings, len(values))
 	for namespace, value := range values {
-		out[namespace] = contractimport.Binding{GoPackage: value.GoPackage, GoAlias: value.GoAlias, TypeScriptModule: value.TypeScriptModule}
+		out[namespace] = contractimport.Binding{
+			GoPackage: value.GoPackage, GoAlias: value.GoAlias,
+			TypeScriptModule: value.TypeScriptModule, ExactNamespace: value.ExactNamespace,
+		}
 	}
 	return out
 }
