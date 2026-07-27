@@ -14,6 +14,10 @@ type Binding struct {
 	GoPackage        string
 	GoAlias          string
 	TypeScriptModule string
+	// ExactNamespace prevents a package-plan dependency on a root namespace
+	// from claiming schemas in capability child namespaces. Authored external
+	// contract imports retain prefix matching.
+	ExactNamespace bool
 }
 
 // Bindings maps fully-qualified TypeSpec namespaces to language imports.
@@ -26,7 +30,8 @@ func (bindings Bindings) Resolve(namespace string) (string, Binding, bool) {
 	var resolved Binding
 	for candidate, binding := range bindings {
 		candidate = strings.TrimSpace(candidate)
-		if candidate == "" || (namespace != candidate && !strings.HasPrefix(namespace, candidate+".")) {
+		if candidate == "" ||
+			(namespace != candidate && (binding.ExactNamespace || !strings.HasPrefix(namespace, candidate+"."))) {
 			continue
 		}
 		if len(candidate) > len(best) {

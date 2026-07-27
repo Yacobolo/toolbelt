@@ -81,8 +81,9 @@ func partitionContractImports(
 	for _, importPath := range importPaths {
 		dependency := dependenciesByImportPath[importPath]
 		binding := contractImportSpec{
-			GoPackage: importPath,
-			GoAlias:   aliases[importPath],
+			GoPackage:      importPath,
+			GoAlias:        aliases[importPath],
+			ExactNamespace: true,
 		}
 		schemas := append([]goPackageDependencySchema(nil), dependency.Schemas...)
 		sort.Slice(schemas, func(left, right int) bool {
