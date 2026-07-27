@@ -66,6 +66,8 @@ Endpoint routes are unique by `lower(method) + " " + path`.
 `operation_id` values are unique across the document.
 Each endpoint may contain at most one response entry per `status_code`; multiple media variants for the same status belong in that response's ordered `contents`.
 
+An endpoint may define `namespace` as optional ownership metadata. The TypeSpec emitter uses the operation's fully qualified declaring namespace. Consumers must continue to accept v4 documents without endpoint namespaces. Operations coalesced into one shared route must have the same namespace.
+
 Endpoint-level `extensions` preserve operation vendor metadata. Generic extensions must use OpenAPI-style `x-*` keys and JSON-compatible values.
 
 Endpoint parameters support `path`, `query`, and `header` locations. Other locations, including `cookie`, are rejected by IR validation until all generated surfaces support them consistently.

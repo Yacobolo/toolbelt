@@ -570,6 +570,7 @@ function endpoint(program, builder, group, operationsAuth, defaultSecurity) {
         method: operation.verb,
         path: operation.path,
         operation_id: getOperationId(program, operation.operation) ?? resolveOperationId(program, operation.operation),
+        namespace: namespaceName(operation.operation.namespace),
         summary: getSummary(program, operation.operation),
         description: getDoc(program, operation.operation),
         tags: getAllTags(program, operation.operation),
@@ -586,12 +587,16 @@ function endpoint(program, builder, group, operationsAuth, defaultSecurity) {
     return output;
 }
 function validateSharedRouteMetadata(program, builder, operations, canonical) {
+    const canonicalNamespace = namespaceName(canonical.operation.namespace);
     const canonicalCLI = stableJSONString(cliMetadata(program, canonical));
     const canonicalTool = stableJSONString(toolMetadata(program, canonical));
     const canonicalAuthz = stableJSONString(getAuthz({ program }, canonical.operation));
     const canonicalManual = isManual({ program }, canonical.operation);
     const canonicalExtensions = stableJSONString(operationVendorExtensions(program, builder, canonical.operation));
     for (const operation of operations) {
+        if (namespaceName(operation.operation.namespace) !== canonicalNamespace) {
+            builder.unsupportedSharedRoute(operation.operation, "incompatible namespace");
+        }
         if (stableJSONString(cliMetadata(program, operation)) !== canonicalCLI) {
             builder.unsupportedSharedRoute(operation.operation, "incompatible cli metadata");
         }

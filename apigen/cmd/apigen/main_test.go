@@ -269,6 +269,56 @@ func TestCompileTypeSpec_GeneratesIRAndOpenAPI(t *testing.T) {
 	require.FileExists(t, openAPIPath)
 }
 
+func TestCompileTypeSpec_PreservesEndpointNamespaces(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	setupManagedTypeSpecCache(t)
+	typeSpecDir := filepath.Join(dir, "typespec")
+	require.NoError(t, os.MkdirAll(typeSpecDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(typeSpecDir, "main.tsp"), []byte(`import "@typespec/http";
+import "@typespec/openapi";
+import "@yacobolo/apigen";
+
+using Http;
+using TypeSpec.OpenAPI;
+
+@service(#{ title: "Partitioned API" })
+@info(#{ version: "1.0.0" })
+namespace PartitionedAPI;
+
+namespace Access {
+  @route("/principal")
+  @get
+  op getCurrentPrincipal(): string;
+}
+
+namespace Analytics {
+  namespace Reports {
+    @route("/reports")
+    @get
+    op listReports(): string[];
+  }
+}
+`), 0o644))
+	irPath := filepath.Join(dir, "json-ir.json")
+	openAPIPath := filepath.Join(dir, "openapi.yaml")
+
+	require.NoError(t, compileTypeSpec(typeSpecDir, irPath, openAPIPath))
+
+	doc, err := loadDocument(irPath)
+	require.NoError(t, err)
+	namespaces := make(map[string]string, len(doc.Endpoints))
+	for _, endpoint := range doc.Endpoints {
+		namespaces[endpoint.OperationID] = endpoint.Namespace
+	}
+	require.Equal(t, map[string]string{
+		"Access_getCurrentPrincipal": "PartitionedAPI.Access",
+		"Reports_listReports":        "PartitionedAPI.Analytics.Reports",
+	}, namespaces)
+	require.FileExists(t, openAPIPath)
+}
+
 func TestCompileTypeSpec_SupportsConventionalPackageImports(t *testing.T) {
 	t.Helper()
 
