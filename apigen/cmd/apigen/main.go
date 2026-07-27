@@ -50,6 +50,7 @@ type commandConfig struct {
 	TSOut                string
 	JSONSchemaOut        string
 	ContractImports      map[string]contractImportSpec
+	GoPackagePlan        *goPackagePlan
 }
 
 type targetManifest struct {
@@ -57,8 +58,20 @@ type targetManifest struct {
 }
 
 type goOutputSpec struct {
+	Dir               string                         `yaml:"dir"`
+	Package           string                         `yaml:"package"`
+	ServerFile        string                         `yaml:"server_file"`
+	RequestModelsFile string                         `yaml:"request_models_file"`
+	Default           *goPackageOutputSpec           `yaml:"default"`
+	Aggregate         *goPackageOutputSpec           `yaml:"aggregate"`
+	Packages          map[string]goPackageOutputSpec `yaml:"packages"`
+	Unmatched         string                         `yaml:"unmatched"`
+}
+
+type goPackageOutputSpec struct {
 	Dir               string `yaml:"dir"`
 	Package           string `yaml:"package"`
+	ImportPath        string `yaml:"import_path"`
 	ServerFile        string `yaml:"server_file"`
 	RequestModelsFile string `yaml:"request_models_file"`
 }
@@ -101,6 +114,13 @@ type targetSpec struct {
 }
 
 var goPackagePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
+var goKeywords = map[string]struct{}{
+	"break": {}, "default": {}, "func": {}, "interface": {}, "select": {},
+	"case": {}, "defer": {}, "go": {}, "map": {}, "struct": {},
+	"chan": {}, "else": {}, "goto": {}, "package": {}, "switch": {},
+	"const": {}, "fallthrough": {}, "if": {}, "range": {}, "type": {},
+	"continue": {}, "for": {}, "import": {}, "return": {}, "var": {},
+}
 
 const typeSpecPackageDirEnv = "APIGEN_TYPESPEC_PACKAGE_DIR"
 
@@ -271,7 +291,11 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 		if err != nil {
 			return failf(stderr, "load ir: %v", err)
 		}
-		if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CanonicalOpenAPIPath, config.ContractImports); err != nil {
+		if config.GoPackagePlan != nil {
+			if err := generatePartitionedServer(doc, *config.GoPackagePlan, config.CanonicalOpenAPIPath); err != nil {
+				return failf(stderr, "generate partitioned server: %v", err)
+			}
+		} else if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CanonicalOpenAPIPath, config.ContractImports); err != nil {
 			return failf(stderr, "generate server: %v", err)
 		}
 	case "cli":
@@ -296,12 +320,18 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 			}
 			return 0
 		}
-		if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CanonicalOpenAPIPath, config.ContractImports); err != nil {
-			return failf(stderr, "generate server: %v", err)
-		}
-		if config.GenerateCLI {
-			if err := generateCLI(doc, config.CLIOut, config.CLIPackage); err != nil {
-				return failf(stderr, "generate cli: %v", err)
+		if config.GoPackagePlan != nil {
+			if err := generatePartitionedAll(doc, *config.GoPackagePlan, config); err != nil {
+				return failf(stderr, "generate partitioned artifacts: %v", err)
+			}
+		} else {
+			if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CanonicalOpenAPIPath, config.ContractImports); err != nil {
+				return failf(stderr, "generate server: %v", err)
+			}
+			if config.GenerateCLI {
+				if err := generateCLI(doc, config.CLIOut, config.CLIPackage); err != nil {
+					return failf(stderr, "generate cli: %v", err)
+				}
 			}
 		}
 	default:
@@ -334,7 +364,7 @@ func resolveCommandConfig(command string, manifestPath string, targetName string
 	config.TSOut = target.TSOut
 	config.JSONSchemaOut = target.JSONSchemaOut
 	config.ContractImports = target.ContractImports
-	if config.Kind == "http" && target.usesGroupedGoOut() {
+	if config.Kind == "http" && target.GoOut.usesSinglePackageForm() {
 		config.ServerOut = filepath.Join(target.GoOut.Dir, coalesceString(target.GoOut.ServerFile, "server.apigen.gen.go"))
 		config.ServerPackage, err = inferOrValidateManifestPackage("go_out", target.GoOut.Package, target.GoOut.Dir)
 		if err != nil {
@@ -342,6 +372,11 @@ func resolveCommandConfig(command string, manifestPath string, targetName string
 		}
 		config.RequestModelsOut = filepath.Join(target.GoOut.Dir, coalesceString(target.GoOut.RequestModelsFile, "request_models.gen.go"))
 		config.RequestModelsPackage = config.ServerPackage
+	} else if config.Kind == "http" && target.GoOut.usesPackagePlanForm() {
+		config.GoPackagePlan, err = normalizeGoPackagePlan(*target.GoOut)
+		if err != nil {
+			return commandConfig{}, err
+		}
 	} else if config.Kind == "http" {
 		return commandConfig{}, fmt.Errorf("target %q must declare go_out", target.Name)
 	}
@@ -397,6 +432,16 @@ func loadTargetSpec(manifestPath string, targetName string) (targetSpec, error) 
 func resolveTargetPaths(target targetSpec, baseDir string) targetSpec {
 	if target.GoOut != nil {
 		target.GoOut.Dir = resolveManifestPath(baseDir, target.GoOut.Dir)
+		if target.GoOut.Default != nil {
+			target.GoOut.Default.Dir = resolveManifestPath(baseDir, target.GoOut.Default.Dir)
+		}
+		if target.GoOut.Aggregate != nil {
+			target.GoOut.Aggregate.Dir = resolveManifestPath(baseDir, target.GoOut.Aggregate.Dir)
+		}
+		for namespace, output := range target.GoOut.Packages {
+			output.Dir = resolveManifestPath(baseDir, output.Dir)
+			target.GoOut.Packages[namespace] = output
+		}
 	}
 	if target.CLIOutGroup != nil {
 		target.CLIOutGroup.Dir = resolveManifestPath(baseDir, target.CLIOutGroup.Dir)
@@ -451,7 +496,8 @@ func validateCommandConfig(command string, config commandConfig) error {
 		if config.Kind != "http" {
 			return fmt.Errorf("server command requires an http target")
 		}
-		if config.IRPath == "" || config.OpenAPIOut == "" || config.ServerOut == "" || config.RequestModelsOut == "" {
+		if config.IRPath == "" || config.OpenAPIOut == "" ||
+			(config.GoPackagePlan == nil && (config.ServerOut == "" || config.RequestModelsOut == "")) {
 			return fmt.Errorf("manifest target must declare ir_out, openapi_out, server_out, and request_models_out")
 		}
 	case "cli":
@@ -471,7 +517,8 @@ func validateCommandConfig(command string, config commandConfig) error {
 			}
 			return nil
 		}
-		if config.IRPath == "" || config.OpenAPIOut == "" || config.ServerOut == "" || config.RequestModelsOut == "" {
+		if config.IRPath == "" || config.OpenAPIOut == "" ||
+			(config.GoPackagePlan == nil && (config.ServerOut == "" || config.RequestModelsOut == "")) {
 			return fmt.Errorf("manifest target must declare ir_out, openapi_out, server_out, and request_models_out")
 		}
 		if config.GenerateCLI && config.CLIOut == "" {
@@ -566,8 +613,8 @@ func validateTargetSpec(target targetSpec) error {
 	if !target.usesGroupedGoOut() {
 		return fmt.Errorf("target %q must declare go_out", target.Name)
 	}
-	if target.usesGroupedGoOut() && strings.TrimSpace(target.GoOut.Dir) == "" {
-		return fmt.Errorf("target %q go_out.dir is required", target.Name)
+	if _, err := normalizeGoPackagePlan(*target.GoOut); err != nil {
+		return fmt.Errorf("target %q %w", target.Name, err)
 	}
 	if target.usesGroupedCLIOut() && strings.TrimSpace(target.CLIOutGroup.Dir) == "" {
 		return fmt.Errorf("target %q cli_out.dir is required", target.Name)
@@ -588,7 +635,7 @@ func inferOrValidateManifestPackage(fieldName string, explicit string, dir strin
 	if packageName == "" {
 		packageName = filepath.Base(filepath.Clean(dir))
 	}
-	if !goPackagePattern.MatchString(packageName) {
+	if _, keyword := goKeywords[packageName]; !goPackagePattern.MatchString(packageName) || keyword {
 		return "", fmt.Errorf("%s: invalid inferred go package %q", fieldName, packageName)
 	}
 	return packageName, nil

@@ -78,6 +78,11 @@ Manifest target fields:
 - `go_out.package`
 - `go_out.server_file`
 - `go_out.request_models_file`
+- `go_out.default`
+- `go_out.aggregate`
+- `go_out.packages`
+- `go_out.packages.*.import_path`
+- `go_out.unmatched`
 - `cli_out.dir`
 - `cli_out.package`
 - `cli_out.file`
@@ -97,12 +102,89 @@ HTTP targets require `typespec_dir`, `ir_out`, and `openapi_out`. Contract targe
 
 Direct flags support the same split with `-kind http` or `-kind contracts`.
 
+### Namespace package plans
+
+The flat `go_out` mapping above is the default and remains the right choice for
+small services. Larger services may optionally describe a deterministic package
+plan without splitting the TypeSpec service or OpenAPI document:
+
+```yaml
+targets:
+  - name: example
+    kind: http
+    typespec_dir: api/typespec
+    ir_out: api/gen/json-ir.json
+    openapi_out: api/gen/openapi.yaml
+    go_out:
+      unmatched: error
+      aggregate:
+        dir: internal/app/api/gen
+        package: aggregate
+      packages:
+        ExampleAPI.Access:
+          dir: internal/access/api/gen
+          package: accessapi
+          import_path: github.com/acme/example/internal/access/api/gen
+        ExampleAPI.Dashboard:
+          dir: internal/dashboard/api/gen
+          package: dashboardapi
+          import_path: github.com/acme/example/internal/dashboard/api/gen
+```
+
+TypeSpec namespaces provide the grouping. The manifest owns language package
+names, import paths, and filesystem paths; TypeSpec must not contain
+repository-specific output paths. APIGen treats namespace names as opaque
+partition keys and does not assign architectural meaning to them.
+
+Every `go_out.packages` output requires an explicit canonical Go `import_path`.
+`go_out.default` also requires one when present. APIGen does not infer import
+paths from `go.mod`, the current working directory, or the output directory:
+explicit paths remain deterministic in monorepos, nested modules, and generated
+trees outside a module root. The flat `go_out` form needs no import path because
+it does not create cross-package references. `go_out.aggregate.import_path` is
+optional because generated partitions do not import the aggregate package.
+
+`go_out.unmatched` is required for a package plan:
+
+- `error` requires every emitted namespace to have an explicit mapping.
+- `default` routes unmatched namespaces to `go_out.default`, which is then
+  required.
+
+Multiple namespaces may map to the same output when their directory, Go package,
+import path, and generated filenames are identical. `go_out.aggregate`, when
+present, must use a separate directory. Mappings are normalized in namespace
+order so YAML map ordering cannot affect generation.
+
+`server` and `all` render one server and request-model package per planned
+output. Schema-only outputs receive request models without a fake server or
+route surface. APIGen plans, projects, renders, and formats every package before
+staging generated files, so an ownership or emitter failure cannot leave a
+partially rendered package set. If an output becomes schema-only, APIGen removes
+only its exact configured generated server filename.
+
+OpenAPI remains one service-wide artifact, and CLI generation remains global
+over the complete operation set. Each capability server embeds the projected
+OpenAPI for only the routes it registers.
+
+When `go_out.aggregate` is configured, APIGen also emits a thin application
+composition package. It imports only endpoint-bearing generated packages and
+provides typed loose and strict registration inputs for each one. It does not
+contain handlers, models, or business logic. It embeds the canonical global
+OpenAPI document and merges capability-owned operation metadata and agent-tool
+contracts into defensive global registries for application authorization, CLI,
+documentation, and tool composition. Schema-only packages are excluded; if no
+partition owns endpoints, APIGen removes only the aggregate's exact configured
+generated server filename. Omitting `go_out.aggregate` emits no composition
+layer. The flat single-package form continues to support every command
+unchanged.
+
 ## Public Surface
 
 Supported packages:
 
 - `github.com/Yacobolo/toolbelt/apigen/ir`
 - `github.com/Yacobolo/toolbelt/apigen/emit/openapi`
+- `github.com/Yacobolo/toolbelt/apigen/emit/aggregatego`
 - `github.com/Yacobolo/toolbelt/apigen/emit/requestmodelgo`
 - `github.com/Yacobolo/toolbelt/apigen/emit/servergo`
 - `github.com/Yacobolo/toolbelt/apigen/emit/cligo`

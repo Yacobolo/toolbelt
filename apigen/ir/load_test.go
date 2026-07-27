@@ -29,6 +29,29 @@ func TestLoad_Valid(t *testing.T) {
 	require.Equal(t, "getHealth", doc.Endpoints[0].OperationID)
 }
 
+func TestLoad_PreservesOptionalEndpointNamespace(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ir.json")
+
+	require.NoError(t, os.WriteFile(path, []byte(`{
+  "schema_version": "v4",
+  "api": {"base_path": "/v1"},
+  "info": {"title": "Duck", "version": "0.1.0", "namespace": "DuckAPI"},
+  "endpoints": [
+    {"method": "get", "path": "/v1/reports", "operation_id": "listReports", "namespace": "DuckAPI.Analytics.Reports", "responses": [{"status_code": 200, "description": "ok"}]},
+    {"method": "get", "path": "/healthz", "operation_id": "getHealth", "responses": [{"status_code": 200, "description": "ok"}]}
+  ]
+}`), 0o644))
+
+	doc, err := Load(path)
+	require.NoError(t, err)
+	require.Equal(t, "getHealth", doc.Endpoints[0].OperationID)
+	require.Empty(t, doc.Endpoints[0].Namespace)
+	require.Equal(t, "listReports", doc.Endpoints[1].OperationID)
+	require.Equal(t, "DuckAPI.Analytics.Reports", doc.Endpoints[1].Namespace)
+}
+
 func TestLoad_RejectsV2HTTPIR(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()

@@ -37,6 +37,37 @@ describe("APIGen TypeSpec emitter", () => {
     expect(doc.openapi.security).toEqual([{ BearerAuth: [] }, { ApiKeyAuth: [] }]);
   });
 
+  it("preserves fully qualified declaring namespaces on endpoints", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Partitioned API" })
+      namespace PartitionedAPI;
+
+      namespace Access {
+        @route("/me")
+        @get
+        op getCurrentPrincipal(): string;
+      }
+
+      namespace Analytics {
+        namespace Reports {
+          @route("/reports")
+          @get
+          op listReports(): string;
+        }
+      }
+    `);
+
+    expect(doc.endpoints.map((endpoint: any) => ({
+      operation_id: endpoint.operation_id,
+      namespace: endpoint.namespace,
+    }))).toEqual([
+      { operation_id: "Access_getCurrentPrincipal", namespace: "PartitionedAPI.Access" },
+      { operation_id: "Reports_listReports", namespace: "PartitionedAPI.Analytics.Reports" },
+    ]);
+  });
+
   it("fails when a request body cannot map to a named IR schema", async () => {
     const outDir = await mkdtemp(join(tmpdir(), "apigen-typespec-"));
     const irPath = join(outDir, "json-ir.json");
@@ -577,6 +608,32 @@ describe("APIGen TypeSpec emitter", () => {
         op getWidgetBinary(@header accept: "application/octet-stream"): bytes;
       `,
       "incompatible cli metadata",
+    );
+  });
+
+  it("fails without writing IR when shared-route operations have different namespaces", async () => {
+    await expectCompileFails(
+      `
+        using Http;
+
+        @service(#{ title: "Shared Namespace API" })
+        namespace SharedNamespaceAPI;
+
+        namespace Access {
+          @route("/widgets")
+          @sharedRoute
+          @get
+          op getWidgetJson(@header accept: "application/json"): string;
+        }
+
+        namespace Analytics {
+          @route("/widgets")
+          @sharedRoute
+          @get
+          op getWidgetBinary(@header accept: "application/octet-stream"): bytes;
+        }
+      `,
+      "incompatible namespace",
     );
   });
 
