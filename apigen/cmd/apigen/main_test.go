@@ -1319,6 +1319,27 @@ func TestResolveCommandConfig_RejectsInvalidNamespacePackagePlans(t *testing.T) 
           import_path: github.com/acme/example/internal/access/api/gen`,
 			wantErr: "go_out.aggregate.import_path must be a canonical Go import path",
 		},
+		{
+			name: "generated filenames cannot escape their output directory",
+			goOut: `      unmatched: error
+      packages:
+        AcmeAPI.Access:
+          dir: internal/access/api/gen
+          import_path: github.com/acme/example/internal/access/api/gen
+          server_file: ../server.apigen.gen.go`,
+			wantErr: `go_out.packages["AcmeAPI.Access"].server_file must be a filename within its output directory`,
+		},
+		{
+			name: "generated filenames must be distinct",
+			goOut: `      unmatched: error
+      packages:
+        AcmeAPI.Access:
+          dir: internal/access/api/gen
+          import_path: github.com/acme/example/internal/access/api/gen
+          server_file: generated.go
+          request_models_file: generated.go`,
+			wantErr: `go_out.packages["AcmeAPI.Access"] server_file and request_models_file must be different`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1369,7 +1390,7 @@ func TestResolveCommandConfig_AllowsNamespacesToShareOnePackage(t *testing.T) {
 	require.Equal(t, config.GoPackagePlan.Packages[0].Output, config.GoPackagePlan.Packages[1].Output)
 }
 
-func TestResolveCommandConfig_RejectsPackagePlanBeforeServerEmission(t *testing.T) {
+func TestResolveCommandConfig_AllowsPackagePlanServerEmission(t *testing.T) {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -1389,8 +1410,11 @@ func TestResolveCommandConfig_RejectsPackagePlanBeforeServerEmission(t *testing.
 
 	for _, command := range []string{"server", "all"} {
 		t.Run(command, func(t *testing.T) {
-			_, err := resolveCommandConfig(command, manifestPath, "example", commandConfig{})
-			require.ErrorContains(t, err, command+" command does not yet emit go_out package plans")
+			config, err := resolveCommandConfig(command, manifestPath, "example", commandConfig{})
+			require.NoError(t, err)
+			require.NotNil(t, config.GoPackagePlan)
+			require.Empty(t, config.ServerOut)
+			require.Empty(t, config.RequestModelsOut)
 		})
 	}
 }

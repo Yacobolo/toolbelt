@@ -155,10 +155,18 @@ import path, and generated filenames are identical. `go_out.aggregate`, when
 present, must use a separate directory. Mappings are normalized in namespace
 order so YAML map ordering cannot affect generation.
 
-The package-plan manifest and validation are the compatibility foundation for
-partitioned server emission. Until that emitter is enabled, `server` and `all`
-reject package-plan targets rather than silently producing incomplete output.
-The flat single-package form continues to support every command.
+`server` and `all` render one server and request-model package per planned
+output. Schema-only outputs receive request models without a fake server or
+route surface. APIGen plans, projects, renders, and formats every package before
+staging generated files, so an ownership or emitter failure cannot leave a
+partially rendered package set. If an output becomes schema-only, APIGen removes
+only its exact configured generated server filename.
+
+OpenAPI remains one service-wide artifact, and CLI generation remains global
+over the complete operation set. Each capability server embeds the projected
+OpenAPI for only the routes it registers. Aggregate application/router
+composition is a separate optional layer and is not emitted yet. The flat
+single-package form continues to support every command unchanged.
 
 ## Public Surface
 

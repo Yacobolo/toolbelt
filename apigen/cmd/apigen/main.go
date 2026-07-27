@@ -291,7 +291,11 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 		if err != nil {
 			return failf(stderr, "load ir: %v", err)
 		}
-		if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CanonicalOpenAPIPath, config.ContractImports); err != nil {
+		if config.GoPackagePlan != nil {
+			if err := generatePartitionedServer(doc, *config.GoPackagePlan); err != nil {
+				return failf(stderr, "generate partitioned server: %v", err)
+			}
+		} else if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CanonicalOpenAPIPath, config.ContractImports); err != nil {
 			return failf(stderr, "generate server: %v", err)
 		}
 	case "cli":
@@ -316,12 +320,18 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 			}
 			return 0
 		}
-		if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CanonicalOpenAPIPath, config.ContractImports); err != nil {
-			return failf(stderr, "generate server: %v", err)
-		}
-		if config.GenerateCLI {
-			if err := generateCLI(doc, config.CLIOut, config.CLIPackage); err != nil {
-				return failf(stderr, "generate cli: %v", err)
+		if config.GoPackagePlan != nil {
+			if err := generatePartitionedAll(doc, *config.GoPackagePlan, config); err != nil {
+				return failf(stderr, "generate partitioned artifacts: %v", err)
+			}
+		} else {
+			if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CanonicalOpenAPIPath, config.ContractImports); err != nil {
+				return failf(stderr, "generate server: %v", err)
+			}
+			if config.GenerateCLI {
+				if err := generateCLI(doc, config.CLIOut, config.CLIPackage); err != nil {
+					return failf(stderr, "generate cli: %v", err)
+				}
 			}
 		}
 	default:
@@ -366,9 +376,6 @@ func resolveCommandConfig(command string, manifestPath string, targetName string
 		config.GoPackagePlan, err = normalizeGoPackagePlan(*target.GoOut)
 		if err != nil {
 			return commandConfig{}, err
-		}
-		if command == "server" || command == "all" {
-			return commandConfig{}, fmt.Errorf("%s command does not yet emit go_out package plans", command)
 		}
 	} else if config.Kind == "http" {
 		return commandConfig{}, fmt.Errorf("target %q must declare go_out", target.Name)
@@ -489,7 +496,8 @@ func validateCommandConfig(command string, config commandConfig) error {
 		if config.Kind != "http" {
 			return fmt.Errorf("server command requires an http target")
 		}
-		if config.IRPath == "" || config.OpenAPIOut == "" || config.ServerOut == "" || config.RequestModelsOut == "" {
+		if config.IRPath == "" || config.OpenAPIOut == "" ||
+			(config.GoPackagePlan == nil && (config.ServerOut == "" || config.RequestModelsOut == "")) {
 			return fmt.Errorf("manifest target must declare ir_out, openapi_out, server_out, and request_models_out")
 		}
 	case "cli":
@@ -509,7 +517,8 @@ func validateCommandConfig(command string, config commandConfig) error {
 			}
 			return nil
 		}
-		if config.IRPath == "" || config.OpenAPIOut == "" || config.ServerOut == "" || config.RequestModelsOut == "" {
+		if config.IRPath == "" || config.OpenAPIOut == "" ||
+			(config.GoPackagePlan == nil && (config.ServerOut == "" || config.RequestModelsOut == "")) {
 			return fmt.Errorf("manifest target must declare ir_out, openapi_out, server_out, and request_models_out")
 		}
 		if config.GenerateCLI && config.CLIOut == "" {

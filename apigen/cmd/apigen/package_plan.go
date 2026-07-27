@@ -176,13 +176,32 @@ func resolveGoPackageOutput(fieldName string, spec goPackageOutputSpec, requireI
 	if err != nil {
 		return resolvedGoPackageOutput{}, err
 	}
+	serverFile, err := resolveGeneratedFileName(fieldName+".server_file", spec.ServerFile, "server.apigen.gen.go")
+	if err != nil {
+		return resolvedGoPackageOutput{}, err
+	}
+	requestModelsFile, err := resolveGeneratedFileName(fieldName+".request_models_file", spec.RequestModelsFile, "request_models.gen.go")
+	if err != nil {
+		return resolvedGoPackageOutput{}, err
+	}
+	if serverFile == requestModelsFile {
+		return resolvedGoPackageOutput{}, fmt.Errorf("%s server_file and request_models_file must be different", fieldName)
+	}
 	return resolvedGoPackageOutput{
 		Dir:               filepath.Clean(spec.Dir),
 		Package:           packageName,
 		ImportPath:        importPath,
-		ServerFile:        coalesceString(spec.ServerFile, "server.apigen.gen.go"),
-		RequestModelsFile: coalesceString(spec.RequestModelsFile, "request_models.gen.go"),
+		ServerFile:        serverFile,
+		RequestModelsFile: requestModelsFile,
 	}, nil
+}
+
+func resolveGeneratedFileName(fieldName, authored, fallback string) (string, error) {
+	name := coalesceString(authored, fallback)
+	if filepath.IsAbs(name) || filepath.Clean(name) != name || filepath.Base(name) != name || name == "." || name == ".." {
+		return "", fmt.Errorf("%s must be a filename within its output directory", fieldName)
+	}
+	return name, nil
 }
 
 func resolveGoImportPath(fieldName, authored string, required bool) (string, error) {
