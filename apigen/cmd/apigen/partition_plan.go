@@ -21,7 +21,16 @@ type goPackagePartitionAccumulator struct {
 	dependencyRoot map[string]struct{}
 }
 
-func planGoPackagePartitions(doc ir.Document, plan goPackagePlan) ([]goPackagePartition, error) {
+func planGoPackagePartitions(
+	doc ir.Document,
+	plan goPackagePlan,
+	configuredImports ...map[string]contractImportSpec,
+) ([]goPackagePartition, error) {
+	var imports map[string]contractImportSpec
+	if len(configuredImports) > 0 {
+		imports = configuredImports[0]
+	}
+	externalBindings := emitterContractImports(imports)
 	byOutput := make(map[string]*goPackagePartitionAccumulator, len(plan.Packages)+1)
 	byNamespace := make(map[string]*goPackagePartitionAccumulator, len(plan.Packages))
 
@@ -50,6 +59,13 @@ func planGoPackagePartitions(doc ir.Document, plan goPackagePlan) ([]goPackagePa
 		}
 	}
 	for _, configured := range plan.Packages {
+		if importedNamespace, _, external := externalBindings.Resolve(configured.Namespace); external {
+			return nil, fmt.Errorf(
+				"go_out package namespace %q conflicts with external contract import %q",
+				configured.Namespace,
+				importedNamespace,
+			)
+		}
 		partition, err := addOutput(configured.Output)
 		if err != nil {
 			return nil, err
@@ -79,6 +95,14 @@ func planGoPackagePartitions(doc ir.Document, plan goPackagePlan) ([]goPackagePa
 		return endpoints[left].Path < endpoints[right].Path
 	})
 	for _, endpoint := range endpoints {
+		if importedNamespace, _, external := externalBindings.Resolve(endpoint.Namespace); external {
+			return nil, fmt.Errorf(
+				"endpoint %q namespace %q conflicts with external contract import %q",
+				endpoint.OperationID,
+				endpoint.Namespace,
+				importedNamespace,
+			)
+		}
 		partition, err := resolveOwner("endpoint", endpoint.OperationID, endpoint.Namespace)
 		if err != nil {
 			return nil, err
@@ -91,6 +115,9 @@ func planGoPackagePartitions(doc ir.Document, plan goPackagePlan) ([]goPackagePa
 	schemaNames := sortedSchemaNames(doc.Schemas)
 	for _, name := range schemaNames {
 		schema := doc.Schemas[name]
+		if _, _, external := externalBindings.Resolve(schema.Namespace); external {
+			continue
+		}
 		partition, err := resolveOwner("schema", name, schema.Namespace)
 		if err != nil {
 			return nil, err

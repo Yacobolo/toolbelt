@@ -23,7 +23,16 @@ type goPackageDependencySchema struct {
 	Namespace string
 }
 
-func projectGoPackagePartitions(doc ir.Document, partitions []goPackagePartition) ([]goPackageProjection, error) {
+func projectGoPackagePartitions(
+	doc ir.Document,
+	partitions []goPackagePartition,
+	configuredImports ...map[string]contractImportSpec,
+) ([]goPackageProjection, error) {
+	var imports map[string]contractImportSpec
+	if len(configuredImports) > 0 {
+		imports = configuredImports[0]
+	}
+	externalBindings := emitterContractImports(imports)
 	endpoints := make(map[string]ir.Endpoint, len(doc.Endpoints))
 	for _, endpoint := range doc.Endpoints {
 		if _, exists := endpoints[endpoint.OperationID]; exists {
@@ -77,6 +86,10 @@ func projectGoPackagePartitions(doc ir.Document, partitions []goPackagePartition
 			}
 			ownerIndex, exists := schemaOwners[name]
 			if !exists {
+				if _, _, external := externalBindings.Resolve(schema.Namespace); external {
+					schemaSet[name] = struct{}{}
+					continue
+				}
 				return nil, fmt.Errorf("dependency schema %q has no package owner", name)
 			}
 			schemaSet[name] = struct{}{}

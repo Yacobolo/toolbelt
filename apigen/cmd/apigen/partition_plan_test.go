@@ -93,6 +93,101 @@ func TestPlanGoPackagePartitions_RequiresExactNamespaceMatches(t *testing.T) {
 	require.ErrorContains(t, err, `endpoint "listReports" namespace "ExampleAPI.Analytics.Reports" has no package mapping`)
 }
 
+func TestPlanGoPackagePartitions_ExcludesExternalContractSchemas(t *testing.T) {
+	t.Helper()
+
+	doc := ir.Document{
+		Schemas: map[string]ir.Schema{
+			"Dashboard": {
+				Type:      "object",
+				Namespace: "ExampleAPI.Dashboard",
+				Properties: map[string]ir.SchemaProperty{
+					"visual": {Schema: ir.SchemaRef{Ref: "ExternalVisual"}},
+				},
+			},
+			"ExternalVisual": {
+				Type:      "object",
+				Namespace: "External.Visualization",
+			},
+		},
+		Endpoints: []ir.Endpoint{
+			endpointWithResponse("getDashboard", "ExampleAPI.Dashboard", "Dashboard"),
+		},
+	}
+	output := resolvedGoPackageOutput{Dir: "dashboard", Package: "dashboardapi"}
+	plan := goPackagePlan{
+		Unmatched: unmatchedNamespaceError,
+		Packages: []namespaceGoPackageOutput{{
+			Namespace: "ExampleAPI.Dashboard",
+			Output:    output,
+		}},
+	}
+	imports := map[string]contractImportSpec{
+		"External.Visualization": {
+			GoPackage: "example.com/visualization",
+			GoAlias:   "visualization",
+		},
+	}
+
+	partitions, err := planGoPackagePartitions(doc, plan, imports)
+	require.NoError(t, err)
+	require.Equal(t, []goPackagePartition{{
+		Output:                output,
+		Namespaces:            []string{"ExampleAPI.Dashboard"},
+		EndpointOperationIDs:  []string{"getDashboard"},
+		OwnedSchemaNames:      []string{"Dashboard"},
+		DependencySchemaNames: []string{"ExternalVisual"},
+	}}, partitions)
+}
+
+func TestPlanGoPackagePartitions_RejectsLocalMappingInsideExternalContract(t *testing.T) {
+	t.Helper()
+
+	plan := goPackagePlan{
+		Unmatched: unmatchedNamespaceError,
+		Packages: []namespaceGoPackageOutput{{
+			Namespace: "External.Visualization.Chart",
+			Output:    resolvedGoPackageOutput{Dir: "chart", Package: "chart"},
+		}},
+	}
+	imports := map[string]contractImportSpec{
+		"External.Visualization": {
+			GoPackage: "example.com/visualization",
+			GoAlias:   "visualization",
+		},
+	}
+
+	_, err := planGoPackagePartitions(ir.Document{}, plan, imports)
+	require.ErrorContains(t, err, `package namespace "External.Visualization.Chart" conflicts with external contract import "External.Visualization"`)
+}
+
+func TestPlanGoPackagePartitions_RejectsEndpointInsideExternalContract(t *testing.T) {
+	t.Helper()
+
+	doc := ir.Document{
+		Endpoints: []ir.Endpoint{{
+			OperationID: "getExternalVisual",
+			Namespace:   "External.Visualization",
+		}},
+	}
+	plan := goPackagePlan{
+		Unmatched: unmatchedNamespaceDefault,
+		Default: &resolvedGoPackageOutput{
+			Dir:     "default",
+			Package: "defaultapi",
+		},
+	}
+	imports := map[string]contractImportSpec{
+		"External.Visualization": {
+			GoPackage: "example.com/visualization",
+			GoAlias:   "visualization",
+		},
+	}
+
+	_, err := planGoPackagePartitions(doc, plan, imports)
+	require.ErrorContains(t, err, `endpoint "getExternalVisual" namespace "External.Visualization" conflicts with external contract import "External.Visualization"`)
+}
+
 func TestPlanGoPackagePartitions_AssignsUnmatchedDeclarationsToDefault(t *testing.T) {
 	t.Helper()
 
