@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
+	aggregategoemit "github.com/Yacobolo/toolbelt/apigen/emit/aggregatego"
 	cligoemit "github.com/Yacobolo/toolbelt/apigen/emit/cligo"
 	requestmodelgoemit "github.com/Yacobolo/toolbelt/apigen/emit/requestmodelgo"
 	servergoemit "github.com/Yacobolo/toolbelt/apigen/emit/servergo"
@@ -66,6 +68,13 @@ func renderPartitionedServerDocument(doc ir.Document, plan goPackagePlan) ([]gen
 	if err != nil {
 		return nil, err
 	}
+	aggregateChange, ok, err := renderAggregateServer(projections, plan.Aggregate)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		changes = append(changes, aggregateChange)
+	}
 	return changes, nil
 }
 
@@ -117,6 +126,52 @@ func renderPartitionedServer(projections []goPackageProjection) ([]generatedOutp
 		})
 	}
 	return changes, nil
+}
+
+func renderAggregateServer(
+	projections []goPackageProjection,
+	output *resolvedGoPackageOutput,
+) (generatedOutputChange, bool, error) {
+	if output == nil {
+		return generatedOutputChange{}, false, nil
+	}
+	path := filepath.Join(output.Dir, output.ServerFile)
+	packages := make([]aggregategoemit.ServerPackage, 0, len(projections))
+	for _, projection := range projections {
+		if len(projection.Document.Endpoints) == 0 {
+			continue
+		}
+		packages = append(packages, aggregategoemit.ServerPackage{
+			Name:        aggregatePartitionName(projection.Partition),
+			ImportPath:  projection.Partition.Output.ImportPath,
+			PackageName: projection.Partition.Output.Package,
+		})
+	}
+	if len(packages) == 0 {
+		return generatedOutputChange{Path: path, Remove: true}, true, nil
+	}
+	content, err := aggregategoemit.Emit(aggregategoemit.Options{
+		PackageName: output.Package,
+		Packages:    packages,
+	})
+	if err != nil {
+		return generatedOutputChange{}, false, fmt.Errorf("emit aggregate server: %w", err)
+	}
+	formatted, err := format.Source(content)
+	if err != nil {
+		return generatedOutputChange{}, false, fmt.Errorf("format aggregate server: %w", err)
+	}
+	return generatedOutputChange{Path: path, Content: formatted}, true, nil
+}
+
+func aggregatePartitionName(partition goPackagePartition) string {
+	if len(partition.Namespaces) == 1 {
+		parts := strings.Split(partition.Namespaces[0], ".")
+		if name := strings.TrimSpace(parts[len(parts)-1]); name != "" {
+			return name
+		}
+	}
+	return partition.Output.Package
 }
 
 func applyGeneratedOutputChanges(changes []generatedOutputChange) error {

@@ -164,9 +164,16 @@ only its exact configured generated server filename.
 
 OpenAPI remains one service-wide artifact, and CLI generation remains global
 over the complete operation set. Each capability server embeds the projected
-OpenAPI for only the routes it registers. Aggregate application/router
-composition is a separate optional layer and is not emitted yet. The flat
-single-package form continues to support every command unchanged.
+OpenAPI for only the routes it registers.
+
+When `go_out.aggregate` is configured, APIGen also emits a thin application
+composition package. It imports only endpoint-bearing generated packages and
+provides typed loose and strict registration inputs for each one. It does not
+contain handlers, models, business logic, or OpenAPI copies. Schema-only
+packages are excluded; if no partition owns endpoints, APIGen removes only the
+aggregate's exact configured generated server filename. Omitting
+`go_out.aggregate` emits no composition layer. The flat single-package form
+continues to support every command unchanged.
 
 ## Public Surface
 
@@ -174,6 +181,7 @@ Supported packages:
 
 - `github.com/Yacobolo/toolbelt/apigen/ir`
 - `github.com/Yacobolo/toolbelt/apigen/emit/openapi`
+- `github.com/Yacobolo/toolbelt/apigen/emit/aggregatego`
 - `github.com/Yacobolo/toolbelt/apigen/emit/requestmodelgo`
 - `github.com/Yacobolo/toolbelt/apigen/emit/servergo`
 - `github.com/Yacobolo/toolbelt/apigen/emit/cligo`

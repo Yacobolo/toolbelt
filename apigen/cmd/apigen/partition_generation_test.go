@@ -38,12 +38,14 @@ func TestRunCLI_AllGeneratesCompilingPackagePlan(t *testing.T) {
 	dashboardServer := filepath.Join(root, "internal", "dashboard", "api", "gen", "server.apigen.gen.go")
 	dashboardModels := filepath.Join(root, "internal", "dashboard", "api", "gen", "request_models.gen.go")
 	sharedModels := filepath.Join(root, "internal", "shared", "api", "gen", "request_models.gen.go")
+	aggregateServer := filepath.Join(root, "internal", "app", "api", "gen", "server.apigen.gen.go")
 	cliPath := filepath.Join(root, "cmd", "cli", "gen", "apigen_registry.gen.go")
 	require.FileExists(t, accessServer)
 	require.FileExists(t, accessModels)
 	require.FileExists(t, dashboardServer)
 	require.FileExists(t, dashboardModels)
 	require.FileExists(t, sharedModels)
+	require.FileExists(t, aggregateServer)
 	require.FileExists(t, cliPath)
 	require.NoFileExists(t, staleSharedServer)
 
@@ -51,6 +53,7 @@ func TestRunCLI_AllGeneratesCompilingPackagePlan(t *testing.T) {
 	dashboardServerContent := mustReadString(t, dashboardServer)
 	dashboardModelsContent := mustReadString(t, dashboardModels)
 	sharedModelsContent := mustReadString(t, sharedModels)
+	aggregateServerContent := mustReadString(t, aggregateServer)
 	cliContent := mustReadString(t, cliPath)
 	require.Contains(t, accessServerContent, `OperationID: "getCurrentPrincipal"`)
 	require.NotContains(t, accessServerContent, `OperationID: "getDashboard"`)
@@ -58,6 +61,11 @@ func TestRunCLI_AllGeneratesCompilingPackagePlan(t *testing.T) {
 	require.NotContains(t, dashboardServerContent, `OperationID: "getCurrentPrincipal"`)
 	require.Contains(t, dashboardModelsContent, `accessapi "generatedintegration/internal/access/api/gen"`)
 	require.Contains(t, sharedModelsContent, "type Shared struct")
+	require.Contains(t, aggregateServerContent, `accessapi "generatedintegration/internal/access/api/gen"`)
+	require.Contains(t, aggregateServerContent, `dashboardapi "generatedintegration/internal/dashboard/api/gen"`)
+	require.NotContains(t, aggregateServerContent, `"generatedintegration/internal/shared/api/gen"`)
+	require.Contains(t, aggregateServerContent, "accessapi.RegisterAPIGenRoutes(router, servers.Access)")
+	require.Contains(t, aggregateServerContent, "dashboardapi.RegisterAPIGenStrictRoutes(router, servers.Dashboard, responders.Dashboard)")
 	require.Contains(t, cliContent, `"getCurrentPrincipal"`)
 	require.Contains(t, cliContent, `"getDashboard"`)
 
@@ -92,6 +100,7 @@ func TestRunCLI_ServerPackagePlanPreflightPreservesExistingOutputs(t *testing.T)
 		filepath.Join(root, "internal", "dashboard", "api", "gen", "server.apigen.gen.go"),
 		filepath.Join(root, "internal", "dashboard", "api", "gen", "request_models.gen.go"),
 		filepath.Join(root, "internal", "shared", "api", "gen", "request_models.gen.go"),
+		filepath.Join(root, "internal", "app", "api", "gen", "server.apigen.gen.go"),
 	}
 	for _, output := range outputs {
 		require.NoError(t, os.MkdirAll(filepath.Dir(output), 0o755))
@@ -106,6 +115,36 @@ func TestRunCLI_ServerPackagePlanPreflightPreservesExistingOutputs(t *testing.T)
 	for _, output := range outputs {
 		require.Equal(t, "existing output", mustReadString(t, output))
 	}
+}
+
+func TestRunCLI_ServerRemovesStaleAggregateWithoutEndpointPartitions(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	doc := partitionedGenerationDocument()
+	doc.Endpoints = nil
+	doc.Contracts = []ir.Contract{{
+		Name:   "Shared",
+		Schema: ir.SchemaRef{Ref: "Shared"},
+	}}
+	irPath := filepath.Join(root, "api", "gen", "json-ir.json")
+	openAPIPath := filepath.Join(root, "api", "gen", "openapi.yaml")
+	require.NoError(t, writeJSONDocument(irPath, doc))
+	require.NoError(t, generateOpenAPI(doc, openAPIPath))
+	manifestPath := writePartitionedGenerationManifest(t, root, false)
+
+	staleAggregate := filepath.Join(root, "internal", "app", "api", "gen", "server.apigen.gen.go")
+	require.NoError(t, os.MkdirAll(filepath.Dir(staleAggregate), 0o755))
+	require.NoError(t, os.WriteFile(staleAggregate, []byte("stale aggregate\n"), 0o600))
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runCLI([]string{"server", "-manifest", manifestPath, "-target", "partitioned"}, &stdout, &stderr)
+	require.Equal(t, 0, code, stderr.String())
+	require.NoFileExists(t, staleAggregate)
+	require.FileExists(t, filepath.Join(root, "internal", "access", "api", "gen", "request_models.gen.go"))
+	require.FileExists(t, filepath.Join(root, "internal", "dashboard", "api", "gen", "request_models.gen.go"))
+	require.FileExists(t, filepath.Join(root, "internal", "shared", "api", "gen", "request_models.gen.go"))
 }
 
 func TestApplyGeneratedOutputChanges_RejectsDuplicatesBeforeReplacement(t *testing.T) {
@@ -206,6 +245,9 @@ func writePartitionedGenerationManifest(t *testing.T, root string, withCLI bool)
     openapi_out: api/gen/openapi.yaml
     go_out:
       unmatched: error
+      aggregate:
+        dir: internal/app/api/gen
+        package: aggregate
       packages:
         ExampleAPI.Access:
           dir: internal/access/api/gen
@@ -241,7 +283,7 @@ replace github.com/Yacobolo/toolbelt/apigen => `+apigenModuleRoot(t)+`
 func writeGeneratedServerErrorStub(t *testing.T, dir, packageName string) {
 	t.Helper()
 
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "app_types_test.go"), []byte("package "+packageName+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "app_types.go"), []byte("package "+packageName+`
 
 type Error struct {
 	Code int32
