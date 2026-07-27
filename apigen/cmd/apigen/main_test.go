@@ -1273,6 +1273,16 @@ func TestResolveCommandConfig_RejectsInvalidNamespacePackagePlans(t *testing.T) 
 			wantErr: `go_out.packages["AcmeAPI.Access"]: invalid inferred go package "123access"`,
 		},
 		{
+			name: "Go keyword package name is rejected",
+			goOut: `      unmatched: error
+      packages:
+        AcmeAPI.Access:
+          dir: internal/access/api/gen
+          package: type
+          import_path: github.com/acme/example/internal/access/api/gen`,
+			wantErr: `go_out.packages["AcmeAPI.Access"]: invalid inferred go package "type"`,
+		},
+		{
 			name: "same directory cannot declare different packages",
 			goOut: `      unmatched: error
       packages:

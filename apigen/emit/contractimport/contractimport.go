@@ -48,8 +48,12 @@ func (bindings Bindings) Schema(doc ir.Document, name string) (string, Binding, 
 // Validate requires every non-local named namespace to have one unambiguous
 // import and validates language-specific aliases.
 func (bindings Bindings) Validate(doc ir.Document) error {
-	aliases := map[string]string{}
-	packages := map[string]string{}
+	type bindingOwner struct {
+		namespace string
+		binding   Binding
+	}
+	aliases := map[string]bindingOwner{}
+	packages := map[string]bindingOwner{}
 	for namespace, binding := range bindings {
 		if strings.TrimSpace(namespace) == "" {
 			return fmt.Errorf("contract import namespace is required")
@@ -57,20 +61,22 @@ func (bindings Bindings) Validate(doc ir.Document) error {
 		if binding.GoPackage != "" && binding.GoAlias == "" {
 			return fmt.Errorf("contract import %q requires go_alias when go_package is set", namespace)
 		}
-		if previous, exists := aliases[binding.GoAlias]; binding.GoAlias != "" && exists && previous != namespace {
-			return fmt.Errorf("contract imports %q and %q share Go alias %q", previous, namespace, binding.GoAlias)
+		if previous, exists := aliases[binding.GoAlias]; binding.GoAlias != "" && exists &&
+			previous.binding.GoPackage != binding.GoPackage {
+			return fmt.Errorf("contract imports %q and %q share Go alias %q", previous.namespace, namespace, binding.GoAlias)
 		}
 		if binding.GoAlias != "" {
 			if binding.GoAlias == "bytes" || binding.GoAlias == "json" || binding.GoAlias == "fmt" {
 				return fmt.Errorf("contract import %q uses reserved Go alias %q", namespace, binding.GoAlias)
 			}
-			aliases[binding.GoAlias] = namespace
+			aliases[binding.GoAlias] = bindingOwner{namespace: namespace, binding: binding}
 		}
-		if previous, exists := packages[binding.GoPackage]; binding.GoPackage != "" && exists && previous != namespace {
-			return fmt.Errorf("contract imports %q and %q share Go package %q", previous, namespace, binding.GoPackage)
+		if previous, exists := packages[binding.GoPackage]; binding.GoPackage != "" && exists &&
+			previous.binding != binding {
+			return fmt.Errorf("contract imports %q and %q share Go package %q with inconsistent bindings", previous.namespace, namespace, binding.GoPackage)
 		}
 		if binding.GoPackage != "" {
-			packages[binding.GoPackage] = namespace
+			packages[binding.GoPackage] = bindingOwner{namespace: namespace, binding: binding}
 		}
 	}
 	local := strings.TrimSpace(doc.Info.Namespace)

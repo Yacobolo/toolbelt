@@ -114,6 +114,13 @@ type targetSpec struct {
 }
 
 var goPackagePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
+var goKeywords = map[string]struct{}{
+	"break": {}, "default": {}, "func": {}, "interface": {}, "select": {},
+	"case": {}, "defer": {}, "go": {}, "map": {}, "struct": {},
+	"chan": {}, "else": {}, "goto": {}, "package": {}, "switch": {},
+	"const": {}, "fallthrough": {}, "if": {}, "range": {}, "type": {},
+	"continue": {}, "for": {}, "import": {}, "return": {}, "var": {},
+}
 
 const typeSpecPackageDirEnv = "APIGEN_TYPESPEC_PACKAGE_DIR"
 
@@ -619,7 +626,7 @@ func inferOrValidateManifestPackage(fieldName string, explicit string, dir strin
 	if packageName == "" {
 		packageName = filepath.Base(filepath.Clean(dir))
 	}
-	if !goPackagePattern.MatchString(packageName) {
+	if _, keyword := goKeywords[packageName]; !goPackagePattern.MatchString(packageName) || keyword {
 		return "", fmt.Errorf("%s: invalid inferred go package %q", fieldName, packageName)
 	}
 	return packageName, nil

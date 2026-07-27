@@ -1,0 +1,118 @@
+package main
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"sort"
+	"strings"
+)
+
+var reservedPartitionImportAliases = map[string]struct{}{
+	"bytes": {}, "json": {}, "fmt": {},
+}
+
+func partitionContractImports(projection goPackageProjection) (map[string]contractImportSpec, error) {
+	dependenciesByImportPath := map[string]*goPackageDependency{}
+	for _, dependency := range projection.Dependencies {
+		importPath := strings.TrimSpace(dependency.Output.ImportPath)
+		if importPath == "" {
+			return nil, fmt.Errorf("dependency package %q has no import path", dependency.Output.Package)
+		}
+		packageName := strings.TrimSpace(dependency.Output.Package)
+		if !goPackagePattern.MatchString(packageName) {
+			return nil, fmt.Errorf("dependency import path %q has invalid Go package %q", importPath, dependency.Output.Package)
+		}
+		existing := dependenciesByImportPath[importPath]
+		if existing == nil {
+			copy := dependency
+			copy.Schemas = append([]goPackageDependencySchema(nil), dependency.Schemas...)
+			dependenciesByImportPath[importPath] = &copy
+			continue
+		}
+		if existing.Output != dependency.Output {
+			return nil, fmt.Errorf("dependency import path %q has inconsistent output identity", importPath)
+		}
+		existing.Schemas = append(existing.Schemas, dependency.Schemas...)
+	}
+
+	importPaths := make([]string, 0, len(dependenciesByImportPath))
+	packageCounts := map[string]int{}
+	for importPath, dependency := range dependenciesByImportPath {
+		importPaths = append(importPaths, importPath)
+		packageCounts[dependency.Output.Package]++
+	}
+	sort.Strings(importPaths)
+
+	usedAliases := map[string]string{}
+	aliases := make(map[string]string, len(importPaths))
+	for _, importPath := range importPaths {
+		packageName := dependenciesByImportPath[importPath].Output.Package
+		alias := packageName
+		reserved := isReservedPartitionImportAlias(alias)
+		if reserved || packageCounts[packageName] > 1 {
+			var err error
+			alias, err = stablePartitionImportAlias(packageName, importPath, usedAliases)
+			if err != nil {
+				return nil, err
+			}
+		} else if previous, exists := usedAliases[alias]; exists && previous != importPath {
+			return nil, fmt.Errorf("dependency imports %q and %q resolve to Go alias %q", previous, importPath, alias)
+		}
+		usedAliases[alias] = importPath
+		aliases[importPath] = alias
+	}
+
+	var imports map[string]contractImportSpec
+	for _, importPath := range importPaths {
+		dependency := dependenciesByImportPath[importPath]
+		binding := contractImportSpec{
+			GoPackage: importPath,
+			GoAlias:   aliases[importPath],
+		}
+		schemas := append([]goPackageDependencySchema(nil), dependency.Schemas...)
+		sort.Slice(schemas, func(left, right int) bool {
+			if schemas[left].Namespace != schemas[right].Namespace {
+				return schemas[left].Namespace < schemas[right].Namespace
+			}
+			return schemas[left].Name < schemas[right].Name
+		})
+		for _, schema := range schemas {
+			namespace := strings.TrimSpace(schema.Namespace)
+			if namespace == "" {
+				return nil, fmt.Errorf("dependency schema %q has no namespace", schema.Name)
+			}
+			if imports == nil {
+				imports = map[string]contractImportSpec{}
+			}
+			if previous, exists := imports[namespace]; exists && previous != binding {
+				return nil, fmt.Errorf("dependency namespace %q has multiple package owners", namespace)
+			}
+			imports[namespace] = binding
+		}
+	}
+	return imports, nil
+}
+
+func stablePartitionImportAlias(packageName, importPath string, used map[string]string) (string, error) {
+	sum := sha256.Sum256([]byte(importPath))
+	digest := hex.EncodeToString(sum[:])
+	for length := 8; length <= len(digest); length += 2 {
+		alias := packageName + "_" + digest[:length]
+		if isReservedPartitionImportAlias(alias) {
+			continue
+		}
+		if previous, exists := used[alias]; !exists || previous == importPath {
+			return alias, nil
+		}
+	}
+	return "", fmt.Errorf("cannot allocate a unique Go import alias for %q", importPath)
+}
+
+func isReservedPartitionImportAlias(alias string) bool {
+	if _, keyword := goKeywords[alias]; keyword {
+		return true
+	}
+	_, reserved := reservedPartitionImportAliases[alias]
+	return reserved
+}
