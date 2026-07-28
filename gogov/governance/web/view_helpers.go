@@ -33,6 +33,22 @@ func repoFilesHref(repoID string) string {
 	return repoBaseHref(repoID) + "/files"
 }
 
+func directoryHref(repoID string, path string) string {
+	trimmed := strings.Trim(strings.TrimSpace(path), "/")
+	if trimmed == "" {
+		return repoFilesHref(repoID)
+	}
+	return repoFilesHref(repoID) + "/" + escapePathSegments(trimmed)
+}
+
+func repoTestsHref(repoID string) string {
+	return repoBaseHref(repoID) + "/tests"
+}
+
+func testsTabHref(repoID string, tab string) string {
+	return detailTabHref(repoTestsHref(repoID), tab)
+}
+
 func repoPackagesHref(repoID string) string {
 	return repoBaseHref(repoID) + "/packages"
 }
@@ -42,7 +58,7 @@ func repoRefreshHref(repoID string) string {
 }
 
 func fileHref(repoID string, path string) string {
-	return repoFilesHref(repoID) + "/" + escapePathSegments(path)
+	return directoryHref(repoID, path)
 }
 
 func packageHref(repoID string, packagePath string, meta *model.SnapshotMeta) string {
@@ -53,6 +69,46 @@ func detailTabHref(base string, tab string) string {
 	values := url.Values{}
 	values.Set("tab", tab)
 	return base + "?" + values.Encode()
+}
+
+func fileBreadcrumbs(repoID string, repoName string, filePath string) []breadcrumbItem {
+	items := filePathBreadcrumbs(repoID, repoName, filePath)
+	if len(items) > 0 {
+		items[len(items)-1].Href = ""
+	}
+	return items
+}
+
+func directoryBreadcrumbs(repoID string, repoName string, dirPath string) []breadcrumbItem {
+	items := filePathBreadcrumbs(repoID, repoName, dirPath)
+	if len(items) > 0 {
+		items[len(items)-1].Href = ""
+	}
+	return items
+}
+
+func filePathBreadcrumbs(repoID string, repoName string, value string) []breadcrumbItem {
+	items := []breadcrumbItem{
+		{Label: "Catalog", Href: "/"},
+		{Label: repoName, Href: repoBaseHref(repoID)},
+		{Label: "Files", Href: repoFilesHref(repoID)},
+	}
+
+	trimmed := strings.Trim(strings.TrimSpace(value), "/")
+	if trimmed == "" {
+		return items
+	}
+
+	parts := strings.Split(trimmed, "/")
+	accumulated := make([]string, 0, len(parts))
+	for _, part := range parts {
+		accumulated = append(accumulated, part)
+		items = append(items, breadcrumbItem{
+			Label: part,
+			Href:  directoryHref(repoID, strings.Join(accumulated, "/")),
+		})
+	}
+	return items
 }
 
 func pathEscape(value string) string {

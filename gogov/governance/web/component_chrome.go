@@ -87,6 +87,8 @@ func uiIcon(name string, className string) g.Node {
 		return lucide.ScrollText(iconClass)
 	case "files":
 		return lucide.FolderSearch(iconClass)
+	case "tests":
+		return lucide.BookOpen(iconClass)
 	case "packages", "repo":
 		return lucide.Package(iconClass)
 	case "lineage", "neighborhood":

@@ -308,7 +308,12 @@ func walkRepositoryGoFiles(repoRoot string, ignorePaths []string) ([]string, err
 
 func isGeneratedGoFile(relPath string, src []byte) bool {
 	base := strings.ToLower(filepath.Base(relPath))
-	if strings.HasSuffix(base, ".gen.go") || strings.HasSuffix(base, ".generated.go") || strings.HasPrefix(base, "zz_generated.") {
+	if strings.HasSuffix(base, ".gen.go") ||
+		strings.HasSuffix(base, "_gen.go") ||
+		strings.HasSuffix(base, ".generated.go") ||
+		strings.HasSuffix(base, "_generated.go") ||
+		strings.HasSuffix(base, ".sql.go") ||
+		strings.HasPrefix(base, "zz_generated.") {
 		return true
 	}
 
