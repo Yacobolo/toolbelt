@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	aggregategoemit "github.com/Yacobolo/toolbelt/apigen/emit/aggregatego"
+	clientgoemit "github.com/Yacobolo/toolbelt/apigen/emit/clientgo"
 	cligoemit "github.com/Yacobolo/toolbelt/apigen/emit/cligo"
 	requestmodelgoemit "github.com/Yacobolo/toolbelt/apigen/emit/requestmodelgo"
 	servergoemit "github.com/Yacobolo/toolbelt/apigen/emit/servergo"
@@ -91,7 +92,7 @@ func renderPartitionedServerDocument(
 }
 
 func renderPartitionedServer(projections []goPackageProjection, configuredImports map[string]contractImportSpec) ([]generatedOutputChange, error) {
-	changes := make([]generatedOutputChange, 0, len(projections)*2)
+	changes := make([]generatedOutputChange, 0, len(projections)*3)
 	for _, projection := range projections {
 		output := projection.Partition.Output
 		imports, err := partitionContractImports(projection, configuredImports)
@@ -117,6 +118,12 @@ func renderPartitionedServer(projections []goPackageProjection, configuredImport
 		serverPath := filepath.Join(output.Dir, output.ServerFile)
 		if len(projection.Document.Endpoints) == 0 {
 			changes = append(changes, generatedOutputChange{Path: serverPath, Remove: true})
+			if output.ClientFile != "" {
+				changes = append(changes, generatedOutputChange{
+					Path:   filepath.Join(output.Dir, output.ClientFile),
+					Remove: true,
+				})
+			}
 			continue
 		}
 		if err := servergoemit.ValidateOperationIDs(projection.Document); err != nil {
@@ -136,6 +143,22 @@ func renderPartitionedServer(projections []goPackageProjection, configuredImport
 			Path:    serverPath,
 			Content: formattedServer,
 		})
+		if output.ClientFile != "" {
+			client, err := clientgoemit.Emit(projection.Document, clientgoemit.Options{
+				PackageName: output.Package,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("emit client for %s: %w", output.ImportPath, err)
+			}
+			formattedClient, err := format.Source(client)
+			if err != nil {
+				return nil, fmt.Errorf("format client for %s: %w", output.ImportPath, err)
+			}
+			changes = append(changes, generatedOutputChange{
+				Path:    filepath.Join(output.Dir, output.ClientFile),
+				Content: formattedClient,
+			})
+		}
 	}
 	return changes, nil
 }

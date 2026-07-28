@@ -1,0 +1,34 @@
+name: Test APIGen
+
+on:
+  pull_request:
+    paths:
+      - "apigen/**"
+      - ".github/workflows/apigen-ci.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "apigen/**"
+      - ".github/workflows/apigen-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Go
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: apigen/go.mod
+          cache-dependency-path: apigen/go.sum
+
+      - name: Test
+        working-directory: apigen
+        run: go test ./...

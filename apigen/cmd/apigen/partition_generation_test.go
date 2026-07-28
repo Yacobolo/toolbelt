@@ -35,15 +35,19 @@ func TestRunCLI_AllGeneratesCompilingPackagePlan(t *testing.T) {
 
 	accessServer := filepath.Join(root, "internal", "access", "api", "gen", "server.apigen.gen.go")
 	accessModels := filepath.Join(root, "internal", "access", "api", "gen", "request_models.gen.go")
+	accessClient := filepath.Join(root, "internal", "access", "api", "gen", "client.apigen.gen.go")
 	dashboardServer := filepath.Join(root, "internal", "dashboard", "api", "gen", "server.apigen.gen.go")
 	dashboardModels := filepath.Join(root, "internal", "dashboard", "api", "gen", "request_models.gen.go")
+	dashboardClient := filepath.Join(root, "internal", "dashboard", "api", "gen", "client.apigen.gen.go")
 	sharedModels := filepath.Join(root, "internal", "shared", "api", "gen", "request_models.gen.go")
 	aggregateServer := filepath.Join(root, "internal", "app", "api", "gen", "server.apigen.gen.go")
 	cliPath := filepath.Join(root, "cmd", "cli", "gen", "apigen_registry.gen.go")
 	require.FileExists(t, accessServer)
 	require.FileExists(t, accessModels)
+	require.FileExists(t, accessClient)
 	require.FileExists(t, dashboardServer)
 	require.FileExists(t, dashboardModels)
+	require.FileExists(t, dashboardClient)
 	require.FileExists(t, sharedModels)
 	require.FileExists(t, aggregateServer)
 	require.FileExists(t, cliPath)
@@ -51,14 +55,19 @@ func TestRunCLI_AllGeneratesCompilingPackagePlan(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(root, "internal", "dashboard", "visualization", "ir", "request_models.gen.go"))
 
 	accessServerContent := mustReadString(t, accessServer)
+	accessClientContent := mustReadString(t, accessClient)
 	dashboardServerContent := mustReadString(t, dashboardServer)
+	dashboardClientContent := mustReadString(t, dashboardClient)
 	dashboardModelsContent := mustReadString(t, dashboardModels)
 	sharedModelsContent := mustReadString(t, sharedModels)
 	aggregateServerContent := mustReadString(t, aggregateServer)
 	cliContent := mustReadString(t, cliPath)
 	require.Contains(t, accessServerContent, `OperationID: "getCurrentPrincipal"`)
+	require.Contains(t, accessClientContent, `GenOperationGetCurrentPrincipal = "getCurrentPrincipal"`)
+	require.Contains(t, accessClientContent, "func (client *GenClient) GetCurrentPrincipal(")
 	require.NotContains(t, accessServerContent, `OperationID: "getDashboard"`)
 	require.Contains(t, dashboardServerContent, `OperationID: "getDashboard"`)
+	require.Contains(t, dashboardClientContent, `GenOperationGetDashboard = "getDashboard"`)
 	require.NotContains(t, dashboardServerContent, `OperationID: "getCurrentPrincipal"`)
 	require.Contains(t, dashboardModelsContent, `accessapi "generatedintegration/internal/access/api/gen"`)
 	require.Contains(t, dashboardModelsContent, `visualizationir "generatedintegration/internal/dashboard/visualization/ir"`)
@@ -325,10 +334,12 @@ func writePartitionedGenerationManifest(t *testing.T, root string, withCLI bool)
           dir: internal/access/api/gen
           package: accessapi
           import_path: generatedintegration/internal/access/api/gen
+          client_file: client.apigen.gen.go
         ExampleAPI.Dashboard:
           dir: internal/dashboard/api/gen
           package: dashboardapi
           import_path: generatedintegration/internal/dashboard/api/gen
+          client_file: client.apigen.gen.go
         ExampleAPI.Shared:
           dir: internal/shared/api/gen
           package: sharedapi

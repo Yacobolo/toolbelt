@@ -22,6 +22,7 @@ type resolvedGoPackageOutput struct {
 	ImportPath        string
 	ServerFile        string
 	RequestModelsFile string
+	ClientFile        string
 }
 
 type namespaceGoPackageOutput struct {
@@ -40,7 +41,8 @@ func (spec *goOutputSpec) usesSinglePackageForm() bool {
 	return spec != nil && (strings.TrimSpace(spec.Dir) != "" ||
 		strings.TrimSpace(spec.Package) != "" ||
 		strings.TrimSpace(spec.ServerFile) != "" ||
-		strings.TrimSpace(spec.RequestModelsFile) != "")
+		strings.TrimSpace(spec.RequestModelsFile) != "" ||
+		strings.TrimSpace(spec.ClientFile) != "")
 }
 
 func (spec *goOutputSpec) usesPackagePlanForm() bool {
@@ -65,6 +67,7 @@ func normalizeGoPackagePlan(spec goOutputSpec) (*goPackagePlan, error) {
 			Package:           spec.Package,
 			ServerFile:        spec.ServerFile,
 			RequestModelsFile: spec.RequestModelsFile,
+			ClientFile:        spec.ClientFile,
 		}, false); err != nil {
 			return nil, err
 		}
@@ -156,6 +159,9 @@ func normalizeGoPackagePlan(spec goOutputSpec) (*goPackagePlan, error) {
 		if err != nil {
 			return nil, err
 		}
+		if output.ClientFile != "" {
+			return nil, fmt.Errorf("go_out.aggregate.client_file is not supported; configure typed clients on package outputs")
+		}
 		if _, exists := outputPackages[filepath.Clean(output.Dir)]; exists {
 			return nil, fmt.Errorf("go_out.aggregate must use a directory separate from package outputs")
 		}
@@ -184,8 +190,21 @@ func resolveGoPackageOutput(fieldName string, spec goPackageOutputSpec, requireI
 	if err != nil {
 		return resolvedGoPackageOutput{}, err
 	}
+	clientFile := ""
+	if spec.ClientFile != "" {
+		clientFile, err = resolveGeneratedFileName(fieldName+".client_file", spec.ClientFile, "")
+		if err != nil {
+			return resolvedGoPackageOutput{}, err
+		}
+	}
 	if serverFile == requestModelsFile {
 		return resolvedGoPackageOutput{}, fmt.Errorf("%s server_file and request_models_file must be different", fieldName)
+	}
+	if clientFile != "" && serverFile == clientFile {
+		return resolvedGoPackageOutput{}, fmt.Errorf("%s server_file and client_file must be different", fieldName)
+	}
+	if clientFile != "" && requestModelsFile == clientFile {
+		return resolvedGoPackageOutput{}, fmt.Errorf("%s request_models_file and client_file must be different", fieldName)
 	}
 	return resolvedGoPackageOutput{
 		Dir:               filepath.Clean(spec.Dir),
@@ -193,6 +212,7 @@ func resolveGoPackageOutput(fieldName string, spec goPackageOutputSpec, requireI
 		ImportPath:        importPath,
 		ServerFile:        serverFile,
 		RequestModelsFile: requestModelsFile,
+		ClientFile:        clientFile,
 	}, nil
 }
 
