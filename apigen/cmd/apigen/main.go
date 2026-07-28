@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strings"
 
+	clientgoemit "github.com/Yacobolo/toolbelt/apigen/emit/clientgo"
 	cligoemit "github.com/Yacobolo/toolbelt/apigen/emit/cligo"
 	"github.com/Yacobolo/toolbelt/apigen/emit/contractimport"
 	jsonschemaemit "github.com/Yacobolo/toolbelt/apigen/emit/jsonschema"
@@ -42,6 +43,7 @@ type commandConfig struct {
 	ServerPackage        string
 	RequestModelsOut     string
 	RequestModelsPackage string
+	ClientOut            string
 	CLIOut               string
 	CLIPackage           string
 	GenerateCLI          bool
@@ -62,6 +64,7 @@ type goOutputSpec struct {
 	Package           string                         `yaml:"package"`
 	ServerFile        string                         `yaml:"server_file"`
 	RequestModelsFile string                         `yaml:"request_models_file"`
+	ClientFile        string                         `yaml:"client_file"`
 	Default           *goPackageOutputSpec           `yaml:"default"`
 	Aggregate         *goPackageOutputSpec           `yaml:"aggregate"`
 	Packages          map[string]goPackageOutputSpec `yaml:"packages"`
@@ -74,6 +77,7 @@ type goPackageOutputSpec struct {
 	ImportPath        string `yaml:"import_path"`
 	ServerFile        string `yaml:"server_file"`
 	RequestModelsFile string `yaml:"request_models_file"`
+	ClientFile        string `yaml:"client_file"`
 }
 
 type cliOutputSpec struct {
@@ -296,7 +300,7 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 			if err := generatePartitionedServer(doc, *config.GoPackagePlan, config.CanonicalOpenAPIPath, config.ContractImports); err != nil {
 				return failf(stderr, "generate partitioned server: %v", err)
 			}
-		} else if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CanonicalOpenAPIPath, config.ContractImports); err != nil {
+		} else if err := generateHTTPPackage(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.ClientOut, config.CanonicalOpenAPIPath, config.ContractImports); err != nil {
 			return failf(stderr, "generate server: %v", err)
 		}
 	case "cli":
@@ -326,7 +330,7 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 				return failf(stderr, "generate partitioned artifacts: %v", err)
 			}
 		} else {
-			if err := generateServer(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.CanonicalOpenAPIPath, config.ContractImports); err != nil {
+			if err := generateHTTPPackage(doc, config.ServerOut, config.ServerPackage, config.RequestModelsOut, config.RequestModelsPackage, config.ClientOut, config.CanonicalOpenAPIPath, config.ContractImports); err != nil {
 				return failf(stderr, "generate server: %v", err)
 			}
 			if config.GenerateCLI {
@@ -373,6 +377,9 @@ func resolveCommandConfig(command string, manifestPath string, targetName string
 		}
 		config.RequestModelsOut = filepath.Join(target.GoOut.Dir, coalesceString(target.GoOut.RequestModelsFile, "request_models.gen.go"))
 		config.RequestModelsPackage = config.ServerPackage
+		if strings.TrimSpace(target.GoOut.ClientFile) != "" {
+			config.ClientOut = filepath.Join(target.GoOut.Dir, target.GoOut.ClientFile)
+		}
 	} else if config.Kind == "http" && target.GoOut.usesPackagePlanForm() {
 		config.GoPackagePlan, err = normalizeGoPackagePlan(*target.GoOut)
 		if err != nil {
@@ -994,6 +1001,23 @@ func generateOpenAPI(doc ir.Document, outPath string) error {
 }
 
 func generateServer(doc ir.Document, outPath string, serverPackage string, requestModelsOutPath string, requestModelsPackage string, canonicalOpenAPIPath string, configuredImports ...map[string]contractImportSpec) error {
+	var imports map[string]contractImportSpec
+	if len(configuredImports) > 0 {
+		imports = configuredImports[0]
+	}
+	return generateHTTPPackage(doc, outPath, serverPackage, requestModelsOutPath, requestModelsPackage, "", canonicalOpenAPIPath, imports)
+}
+
+func generateHTTPPackage(
+	doc ir.Document,
+	serverOutPath string,
+	serverPackage string,
+	requestModelsOutPath string,
+	requestModelsPackage string,
+	clientOutPath string,
+	canonicalOpenAPIPath string,
+	configuredImports map[string]contractImportSpec,
+) error {
 	if err := servergoemit.ValidateOperationIDs(doc); err != nil {
 		return fmt.Errorf("validate operation ids: %w", err)
 	}
@@ -1012,15 +1036,8 @@ func generateServer(doc ir.Document, outPath string, serverPackage string, reque
 	if err != nil {
 		return fmt.Errorf("format server go output: %w", err)
 	}
-	if err := writeFile(outPath, formatted); err != nil {
-		return err
-	}
-	var imports map[string]contractImportSpec
-	if len(configuredImports) > 0 {
-		imports = configuredImports[0]
-	}
 	requestModels, err := requestmodelgoemit.Emit(doc, requestmodelgoemit.Options{
-		PackageName: requestModelsPackage, ContractImports: emitterContractImports(imports),
+		PackageName: requestModelsPackage, ContractImports: emitterContractImports(configuredImports),
 	})
 	if err != nil {
 		return fmt.Errorf("emit request models go: %w", err)
@@ -1029,8 +1046,23 @@ func generateServer(doc ir.Document, outPath string, serverPackage string, reque
 	if err != nil {
 		return fmt.Errorf("format request models go output: %w", err)
 	}
-	if err := writeFile(requestModelsOutPath, formattedRequestModels); err != nil {
-		return err
+	changes := []generatedOutputChange{
+		{Path: serverOutPath, Content: formatted},
+		{Path: requestModelsOutPath, Content: formattedRequestModels},
+	}
+	if clientOutPath != "" {
+		client, err := clientgoemit.Emit(doc, clientgoemit.Options{PackageName: serverPackage})
+		if err != nil {
+			return fmt.Errorf("emit client go: %w", err)
+		}
+		formattedClient, err := format.Source(client)
+		if err != nil {
+			return fmt.Errorf("format client go output: %w", err)
+		}
+		changes = append(changes, generatedOutputChange{Path: clientOutPath, Content: formattedClient})
+	}
+	if err := applyGeneratedOutputChanges(changes); err != nil {
+		return fmt.Errorf("apply generated outputs: %w", err)
 	}
 	return nil
 }

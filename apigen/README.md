@@ -1,6 +1,6 @@
 # apigen
 
-`apigen` compiles authored API and data contracts into versioned JSON IR, canonical OpenAPI, generated Go server code, generated request-model types, generated Cobra CLI registries, and generated model artifacts.
+`apigen` compiles authored API and data contracts into versioned JSON IR, canonical OpenAPI, generated Go server code, optional typed Go clients, generated request-model types, generated Cobra CLI registries, and generated model artifacts.
 
 Module path: `github.com/Yacobolo/toolbelt/apigen`
 
@@ -18,7 +18,7 @@ Canonical OpenAPI is the published API artifact for HTTP targets. JSON IR is the
 Install the CLI:
 
 ```bash
-go install github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.6.4
+go install github.com/Yacobolo/toolbelt/apigen/cmd/apigen@v0.7.2
 ```
 
 Or run from this module during local development:
@@ -49,6 +49,7 @@ targets:
     openapi_out: api/gen/openapi.yaml
     go_out:
       dir: internal/api/gen
+      client_file: client.apigen.gen.go
     cli_out:
       dir: cmd/cli/gen
     contract_imports:
@@ -78,6 +79,7 @@ Manifest target fields:
 - `go_out.package`
 - `go_out.server_file`
 - `go_out.request_models_file`
+- `go_out.client_file` (optional; enables typed client generation)
 - `go_out.default`
 - `go_out.aggregate`
 - `go_out.packages`
@@ -102,6 +104,36 @@ HTTP targets require `typespec_dir`, `ir_out`, and `openapi_out`. Contract targe
 
 Direct flags support the same split with `-kind http` or `-kind contracts`.
 
+### Typed clients
+
+Set `client_file` on a flat `go_out` package or an individual
+`go_out.packages` output to generate a typed client in that package:
+
+```yaml
+go_out:
+  dir: internal/api/gen
+  package: api
+  client_file: client.apigen.gen.go
+```
+
+Client generation is opt-in. It derives solely from the target's IR and output
+metadata, so the same setting works for a one-package service and a namespace
+package plan. Generated methods expose operation constants, concrete parameter
+and body types, and concrete successful response wrappers. The wrappers retain
+status, headers, and content type alongside a typed body.
+
+Generated clients depend only on the small
+`github.com/Yacobolo/toolbelt/apigen/runtime/client.Transport` interface.
+Applications inject a transport that owns base-URL resolution, authentication,
+HTTP execution, error decoding, and retries. The generic `any` values needed for
+JSON encoding and decoding remain confined to that transport boundary; callers
+use the generated concrete method signatures.
+
+JSON is selected when a success response also offers streaming or binary
+representations. Pure text and binary successes use `string` and `[]byte`.
+Generation rejects incompatible success bodies instead of weakening the public
+method to an untyped result.
+
 ### Namespace package plans
 
 The flat `go_out` mapping above is the default and remains the right choice for
@@ -125,10 +157,12 @@ targets:
           dir: internal/access/api/gen
           package: accessapi
           import_path: github.com/acme/example/internal/access/api/gen
+          client_file: client.apigen.gen.go
         ExampleAPI.Dashboard:
           dir: internal/dashboard/api/gen
           package: dashboardapi
           import_path: github.com/acme/example/internal/dashboard/api/gen
+          client_file: client.apigen.gen.go
 ```
 
 TypeSpec namespaces provide the grouping. The manifest owns language package
@@ -163,11 +197,13 @@ both locally mapped under `go_out.packages` and externally owned by a
 `contract_imports` binding.
 
 `server` and `all` render one server and request-model package per planned
-output. Schema-only outputs receive request models without a fake server or
-route surface. APIGen plans, projects, renders, and formats every package before
-staging generated files, so an ownership or emitter failure cannot leave a
-partially rendered package set. If an output becomes schema-only, APIGen removes
-only its exact configured generated server filename.
+output, plus a typed client wherever `client_file` is configured. Schema-only
+outputs receive request models without fake server, client, or route surfaces.
+The aggregate package is composition-only and does not accept `client_file`.
+APIGen plans, projects, renders, and formats every package before staging
+generated files, so an ownership or emitter failure cannot leave a partially
+rendered package set. If an output becomes schema-only, APIGen removes only its
+exact configured generated server and client filenames.
 
 OpenAPI remains one service-wide artifact, and CLI generation remains global
 over the complete operation set. Each capability server embeds the projected
