@@ -54,6 +54,78 @@ func TestAddCreatesSourcebookSkill(t *testing.T) {
 	assertFileContents(t, filepath.Join(skillDir, "SKILL.md"), wantSkill)
 }
 
+func TestAddGitHubTreeURLCreatesRootedGitSource(t *testing.T) {
+	t.Parallel()
+
+	const (
+		treeURL       = "https://github.com/Infisical/infisical/tree/main/docs"
+		repositoryURL = "https://github.com/Infisical/infisical.git"
+	)
+	skillDir := filepath.Join(t.TempDir(), "sourcebook")
+	cloner := &fakeCloner{contents: map[string]string{
+		repositoryURL: "Infisical documentation",
+	}}
+	app := New(skillDir, cloner)
+
+	if err := app.Add(context.Background(), treeURL); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	if got, want := len(cloner.requests), 1; got != want {
+		t.Fatalf("clone requests = %d, want %d", got, want)
+	}
+	if got, want := cloner.requests, []CloneRequest{{
+		URL:         repositoryURL,
+		Ref:         "main",
+		Root:        "docs",
+		Destination: cloner.requests[0].Destination,
+	}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("clone requests = %#v, want %#v", got, want)
+	}
+	manifest := readFile(t, filepath.Join(skillDir, "sources.json"))
+	for _, expected := range []string{
+		`"name": "infisical"`,
+		`"url": "https://github.com/Infisical/infisical.git"`,
+		`"git_ref": "main"`,
+		`"git_root": "docs"`,
+	} {
+		if !strings.Contains(manifest, expected) {
+			t.Errorf("sources.json does not contain %q:\n%s", expected, manifest)
+		}
+	}
+
+	cloner.requests = nil
+	if err := app.Update(context.Background()); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if got, want := len(cloner.requests), 1; got != want {
+		t.Fatalf("update clone requests = %d, want %d", got, want)
+	}
+	if got, want := cloner.requests[0].URL, repositoryURL; got != want {
+		t.Errorf("updated repository URL = %q, want %q", got, want)
+	}
+	if got, want := cloner.requests[0].Ref, "main"; got != want {
+		t.Errorf("updated Git ref = %q, want %q", got, want)
+	}
+	if got, want := cloner.requests[0].Root, "docs"; got != want {
+		t.Errorf("updated Git root = %q, want %q", got, want)
+	}
+}
+
+func TestAddRejectsGitHubTreeURLWithoutFolder(t *testing.T) {
+	t.Parallel()
+
+	cloner := &fakeCloner{}
+	app := New(filepath.Join(t.TempDir(), "sourcebook"), cloner)
+	err := app.Add(context.Background(), "https://github.com/acme/widgets/tree/main")
+	if err == nil || !strings.Contains(err.Error(), "folder") {
+		t.Fatalf("Add() error = %v, want missing folder error", err)
+	}
+	if len(cloner.calls) != 0 {
+		t.Fatalf("clone calls = %v, want none", cloner.calls)
+	}
+}
+
 func TestAddPresetMigratesLegacyRepositoriesToSources(t *testing.T) {
 	t.Parallel()
 
