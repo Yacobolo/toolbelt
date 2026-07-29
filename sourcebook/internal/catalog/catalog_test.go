@@ -51,7 +51,7 @@ type recordingCloner struct {
 	textOnly bool
 }
 
-func (c *recordingCloner) Clone(_ context.Context, request sourcebook.CloneRequest) error {
+func (c *recordingCloner) Clone(_ context.Context, request sourcebook.CloneRequest, _ sourcebook.CloneProgressReporter) error {
 	c.url = request.URL
 	c.ref = request.Ref
 	c.root = request.Root

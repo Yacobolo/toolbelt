@@ -81,11 +81,13 @@ func TestReportedErrorCanBeDetectedAndUnwrapped(t *testing.T) {
 func TestRenderSourcesPlain(t *testing.T) {
 	t.Parallel()
 
+	alphaSize := int64(1536)
+	netsuiteSize := int64(2 * 1024 * 1024)
 	sources := []sourcebook.Source{
-		{Name: "alpha", Provider: "git", URL: "https://example.com/alpha", UpdatedAt: time.Date(2026, time.July, 22, 8, 30, 0, 0, time.UTC)},
-		{Name: "netsuite-docs", Provider: "netsuite", URL: "https://docs.example.com/", UpdatedAt: time.Date(2026, time.July, 21, 17, 5, 0, 0, time.UTC)},
+		{Name: "alpha", Provider: "git", URL: "https://example.com/alpha", SizeBytes: &alphaSize, UpdatedAt: time.Date(2026, time.July, 22, 8, 30, 0, 0, time.UTC)},
+		{Name: "netsuite-docs", Provider: "netsuite", URL: "https://docs.example.com/", SizeBytes: &netsuiteSize, UpdatedAt: time.Date(2026, time.July, 21, 17, 5, 0, 0, time.UTC)},
 	}
-	want := "Sourcebook\n2 sources\n\nNAME           TYPE      SOURCE                     LAST UPDATED\nalpha          git       https://example.com/alpha  2026-07-22 08:30 UTC\nnetsuite-docs  netsuite  https://docs.example.com/  2026-07-21 17:05 UTC\n"
+	want := "Sourcebook\n2 sources\n\nNAME           TYPE      SIZE     SOURCE                     LAST UPDATED\nalpha          git       1.5 KiB  https://example.com/alpha  2026-07-22 08:30 UTC\nnetsuite-docs  netsuite  2 MiB    https://docs.example.com/  2026-07-21 17:05 UTC\n"
 	if got := RenderSources(sources, false, 120); got != want {
 		t.Fatalf("RenderSources() = %q, want %q", got, want)
 	}

@@ -16,7 +16,7 @@ type GitCloner struct {
 	Stdin io.Reader
 }
 
-func (g GitCloner) Clone(ctx context.Context, request CloneRequest) error {
+func (g GitCloner) Clone(ctx context.Context, request CloneRequest, report CloneProgressReporter) error {
 	if request.Destination == "" {
 		return errors.New("clone destination is required")
 	}
@@ -45,6 +45,7 @@ func (g GitCloner) Clone(ctx context.Context, request CloneRequest) error {
 	if err := g.runClone(ctx, request, repository, true); err != nil {
 		return err
 	}
+	emitCloneProgress(report, "selecting repository folder")
 	var sparseErr error
 	if request.TextOnly {
 		patterns := documentationTextPatterns(root)
@@ -58,6 +59,10 @@ func (g GitCloner) Clone(ctx context.Context, request CloneRequest) error {
 	}
 	if sparseErr != nil {
 		return fmt.Errorf("select documentation root %q: %w", root, sparseErr)
+	}
+	emitCloneProgress(report, "checking out files")
+	if err := runGitCommand(ctx, nil, "-C", repository, "checkout", "--quiet"); err != nil {
+		return fmt.Errorf("check out documentation root %q: %w", root, err)
 	}
 
 	selected := filepath.Join(repository, filepath.FromSlash(root))
@@ -75,6 +80,12 @@ func (g GitCloner) Clone(ctx context.Context, request CloneRequest) error {
 		return fmt.Errorf("flatten documentation root %q: %w", root, err)
 	}
 	return nil
+}
+
+func emitCloneProgress(report CloneProgressReporter, phase string) {
+	if report != nil {
+		report(phase)
+	}
 }
 
 func documentationTextPatterns(root string) []string {
@@ -100,7 +111,7 @@ func (g GitCloner) runClone(ctx context.Context, request CloneRequest, destinati
 		args = append(args, "--branch", request.Ref)
 	}
 	if sparse {
-		args = append(args, "--filter=blob:none", "--sparse")
+		args = append(args, "--filter=blob:none", "--no-checkout")
 	}
 	args = append(args, "--", request.URL, destination)
 	if err := runGitCommand(ctx, g.Stdin, args...); err != nil {

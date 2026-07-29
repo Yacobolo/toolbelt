@@ -398,7 +398,7 @@ func (r *commandUpgradeRunner) Notice(context.Context, string) (string, error) {
 
 type commandTestCloner struct{}
 
-func (commandTestCloner) Clone(_ context.Context, request sourcebook.CloneRequest) error {
+func (commandTestCloner) Clone(_ context.Context, request sourcebook.CloneRequest, _ sourcebook.CloneProgressReporter) error {
 	return os.MkdirAll(request.Destination, 0o755)
 }
 
@@ -415,7 +415,7 @@ type commandRecordingCloner struct {
 	urls []string
 }
 
-func (c *commandRecordingCloner) Clone(_ context.Context, request sourcebook.CloneRequest) error {
+func (c *commandRecordingCloner) Clone(_ context.Context, request sourcebook.CloneRequest, _ sourcebook.CloneProgressReporter) error {
 	c.urls = append(c.urls, request.URL)
 	if err := os.MkdirAll(request.Destination, 0o755); err != nil {
 		return err
