@@ -274,11 +274,11 @@ func (a *App) Add(ctx context.Context, repositoryURL string) (returnErr error) {
 		return err
 	}
 
-	repositoryURL, err = ValidateRepositoryURL(repositoryURL)
+	selection, err := resolveGitSourceURL(repositoryURL)
 	if err != nil {
 		return err
 	}
-	name, err := repositoryName(repositoryURL)
+	name, err := repositoryName(selection.URL)
 	if err != nil {
 		return err
 	}
@@ -291,7 +291,9 @@ func (a *App) Add(ctx context.Context, repositoryURL string) (returnErr error) {
 	source := Source{
 		Name:      name,
 		Provider:  ProviderGit,
-		URL:       repositoryURL,
+		URL:       selection.URL,
+		GitRef:    selection.Ref,
+		GitRoot:   selection.Root,
 		UpdatedAt: a.now().UTC(),
 	}
 	return a.addSource(ctx, sources, source, nil)

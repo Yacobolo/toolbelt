@@ -119,6 +119,17 @@ Add a repository:
 sourcebook add https://github.com/example/project.git
 ```
 
+To add only one folder from a GitHub repository, pass its GitHub tree URL:
+
+```sh
+sourcebook add https://github.com/Infisical/infisical/tree/main/docs
+```
+
+Sourcebook stores the repository URL, Git ref, and folder separately, then uses
+a shallow, blob-filtered sparse checkout to publish only that folder. The
+folder is flattened directly into the source reference directory. GitHub tree
+URLs currently require a single-segment branch or tag name such as `main`.
+
 The repository name is derived from the URL. Sourcebook creates this layout on
 the first successful add:
 
@@ -189,15 +200,15 @@ sourcebook update dbt-docs powerbi-docs
 sourcebook update --all
 ```
 
-Selected updates run up to four source providers concurrently. Ad-hoc Git
-sources receive new depth-one clones; rooted Git presets receive new depth-one
-sparse checkouts. Datastar is rebuilt from the current official Markdown
-source. NetSuite is rebuilt from its current table of contents with bounded,
-rate-limited requests and retries. A selected set is installed only after every
-source in that set succeeds, so a failed update leaves all existing references
-unchanged. Unselected sources and their last-updated timestamps are untouched.
-Successful updates also regenerate `SKILL.md` so existing installations adopt
-the current metadata and table-of-contents format.
+Selected updates run up to four source providers concurrently. Whole-repository
+Git sources receive new depth-one clones; rooted Git sources receive new
+depth-one sparse checkouts. Datastar is rebuilt from the current official
+Markdown source. NetSuite is rebuilt from its current table of contents with
+bounded, rate-limited requests and retries. A selected set is installed only
+after every source in that set succeeds, so a failed update leaves all existing
+references unchanged. Unselected sources and their last-updated timestamps are
+untouched. Successful updates also regenerate `SKILL.md` so existing
+installations adopt the current metadata and table-of-contents format.
 
 During an interactive update, Sourcebook shows every source as queued, updating,
 completed, failed, or canceled. Scraped sources include page counts and the
@@ -266,15 +277,15 @@ go vet ./...
 Inject a release version when building an artifact:
 
 ```sh
-go build -ldflags "-X main.version=v0.4.0" -o sourcebook ./cmd/sourcebook
+go build -ldflags "-X main.version=v0.5.0" -o sourcebook ./cmd/sourcebook
 ```
 
 Stable releases are automated. After the intended commit is on `main`, push a
 semantic Sourcebook tag:
 
 ```sh
-git tag sourcebook/v0.4.0
-git push origin sourcebook/v0.4.0
+git tag sourcebook/v0.5.0
+git push origin sourcebook/v0.5.0
 ```
 
 The Sourcebook release workflow runs the test suite, uses GoReleaser to build
