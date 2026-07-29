@@ -19,7 +19,7 @@ type dashboardItem struct {
 }
 
 func (item dashboardItem) FilterValue() string {
-	return item.source.Name + " " + item.source.Provider + " " + item.source.URL
+	return item.source.Name + " " + item.source.Provider + " " + item.source.DisplayURL()
 }
 
 type dashboardDelegate struct {

@@ -77,3 +77,66 @@ func TestResolveGitSourceURLRejectsMalformedGitHubTreeURL(t *testing.T) {
 		})
 	}
 }
+
+func TestSourceDisplayURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		source Source
+		want   string
+	}{
+		{
+			name: "GitHub folder selection",
+			source: Source{
+				URL:     "https://github.com/Infisical/infisical.git",
+				GitRef:  "main",
+				GitRoot: "docs",
+			},
+			want: "https://github.com/Infisical/infisical/tree/main/docs",
+		},
+		{
+			name: "nested GitHub folder",
+			source: Source{
+				URL:     "https://github.com/acme/widgets.git",
+				GitRef:  "v2",
+				GitRoot: "website/docs",
+			},
+			want: "https://github.com/acme/widgets/tree/v2/website/docs",
+		},
+		{
+			name: "whole GitHub repository",
+			source: Source{
+				URL: "https://github.com/acme/widgets.git",
+			},
+			want: "https://github.com/acme/widgets.git",
+		},
+		{
+			name: "non-GitHub rooted source",
+			source: Source{
+				URL:     "https://git.example.com/acme/widgets.git",
+				GitRef:  "main",
+				GitRoot: "docs",
+			},
+			want: "https://git.example.com/acme/widgets.git",
+		},
+		{
+			name: "GitHub SSH source",
+			source: Source{
+				URL:     "git@github.com:acme/widgets.git",
+				GitRef:  "main",
+				GitRoot: "docs",
+			},
+			want: "git@github.com:acme/widgets.git",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := test.source.DisplayURL(); got != test.want {
+				t.Fatalf("DisplayURL() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}

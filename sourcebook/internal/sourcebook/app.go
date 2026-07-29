@@ -746,7 +746,7 @@ func (a *App) List(output io.Writer) error {
 			"%s\t%s\t%s\t%s\t%s\n",
 			source.Name,
 			source.Provider,
-			source.URL,
+			source.DisplayURL(),
 			updatedAt,
 			sizeBytes,
 		); err != nil {
@@ -1021,10 +1021,11 @@ func renderSkill(sources []Source) []byte {
 	}
 	for _, source := range sortedSources(sources) {
 		detail := source.Title
+		displayURL := source.DisplayURL()
 		if detail == "" {
-			detail = source.URL
-		} else if source.URL != "" {
-			detail += " — " + source.URL
+			detail = displayURL
+		} else if displayURL != "" {
+			detail += " — " + displayURL
 		}
 		if detail == "" {
 			fmt.Fprintf(&skill, "- [%s](references/%s/)\n", source.Name, source.Name)
