@@ -132,6 +132,17 @@ func TestAddGitHubTreeURLCreatesRootedGitSource(t *testing.T) {
 			t.Errorf("sources.json does not contain %q:\n%s", expected, manifest)
 		}
 	}
+	var listed bytes.Buffer
+	if err := app.List(&listed); err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if !strings.Contains(listed.String(), "\t"+treeURL+"\t") {
+		t.Errorf("List() does not display tree URL %q:\n%s", treeURL, listed.String())
+	}
+	skill := readFile(t, filepath.Join(skillDir, "SKILL.md"))
+	if !strings.Contains(skill, treeURL) {
+		t.Errorf("SKILL.md does not display tree URL %q:\n%s", treeURL, skill)
+	}
 
 	cloner.requests = nil
 	if err := app.Update(context.Background()); err != nil {

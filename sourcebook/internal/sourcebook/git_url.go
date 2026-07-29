@@ -13,6 +13,32 @@ type gitSourceSelection struct {
 	Root string
 }
 
+// DisplayURL returns a selected GitHub folder URL when it can be reconstructed
+// from persisted clone metadata.
+func (source Source) DisplayURL() string {
+	if source.GitRef == "" || source.GitRoot == "" {
+		return source.URL
+	}
+	parsed, err := url.Parse(source.URL)
+	if err != nil ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") ||
+		!strings.EqualFold(parsed.Hostname(), "github.com") {
+		return source.URL
+	}
+	segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(segments) != 2 {
+		return source.URL
+	}
+	repository := strings.TrimSuffix(segments[1], ".git")
+	if segments[0] == "" || repository == "" {
+		return source.URL
+	}
+	parsed.Path = "/" + segments[0] + "/" + repository +
+		"/tree/" + source.GitRef + "/" + source.GitRoot
+	parsed.RawPath = ""
+	return parsed.String()
+}
+
 // ResolveGitSource converts a repository or GitHub tree URL into the Git source
 // metadata that Sourcebook will persist.
 func ResolveGitSource(repositoryURL string) (Source, error) {

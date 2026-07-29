@@ -93,6 +93,25 @@ func TestRenderSourcesPlain(t *testing.T) {
 	}
 }
 
+func TestRenderSourcesDisplaysGitHubTreeURL(t *testing.T) {
+	t.Parallel()
+
+	source := sourcebook.Source{
+		Name:     "infisical",
+		Provider: "git",
+		URL:      "https://github.com/Infisical/infisical.git",
+		GitRef:   "main",
+		GitRoot:  "docs",
+	}
+	view := RenderSources([]sourcebook.Source{source}, false, 140)
+	if !strings.Contains(view, source.DisplayURL()) {
+		t.Fatalf("RenderSources() does not display tree URL %q:\n%s", source.DisplayURL(), view)
+	}
+	if strings.Contains(view, source.URL) {
+		t.Fatalf("RenderSources() displays canonical clone URL %q:\n%s", source.URL, view)
+	}
+}
+
 func TestRenderSourcesFitsNarrowTerminal(t *testing.T) {
 	t.Parallel()
 
@@ -193,6 +212,23 @@ func TestSourcePickerSelectsHighlightedSource(t *testing.T) {
 	selected := updated.(sourcePickerModel)
 	if !selected.selected || selected.source != "beta" {
 		t.Fatalf("selected source = %q, selected = %t; want beta, true", selected.source, selected.selected)
+	}
+}
+
+func TestSourcePickerDisplaysGitHubTreeURL(t *testing.T) {
+	t.Parallel()
+
+	source := sourcebook.Source{
+		Name:     "infisical",
+		Provider: "git",
+		URL:      "https://github.com/Infisical/infisical.git",
+		GitRef:   "main",
+		GitRoot:  "docs",
+	}
+	model := newSourcePickerModel([]sourcebook.Source{source})
+	view := model.View().Content
+	if !strings.Contains(view, source.DisplayURL()) {
+		t.Fatalf("source picker does not display tree URL %q:\n%s", source.DisplayURL(), view)
 	}
 }
 
@@ -398,5 +434,20 @@ func TestRemoveConfirmationRequiresExplicitYes(t *testing.T) {
 	updated, command = model.Update(tea.KeyPressMsg(tea.Key{Code: 'y', Text: "y"}))
 	if command == nil || !updated.(removeConfirmationModel).confirmed {
 		t.Fatal("y should explicitly confirm removal")
+	}
+}
+
+func TestRemoveConfirmationDisplaysGitHubTreeURL(t *testing.T) {
+	t.Parallel()
+
+	source := sourcebook.Source{
+		Name:    "infisical",
+		URL:     "https://github.com/Infisical/infisical.git",
+		GitRef:  "main",
+		GitRoot: "docs",
+	}
+	view := newRemoveConfirmationModel(source).View().Content
+	if !strings.Contains(view, source.DisplayURL()) {
+		t.Fatalf("remove confirmation does not display tree URL %q:\n%s", source.DisplayURL(), view)
 	}
 }

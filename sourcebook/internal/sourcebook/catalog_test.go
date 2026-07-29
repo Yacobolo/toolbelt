@@ -83,6 +83,7 @@ func TestAddPresetRoutesPowerBIDocsThroughGitProvider(t *testing.T) {
 	t.Parallel()
 
 	const repositoryURL = "https://github.com/MicrosoftDocs/powerbi-docs.git"
+	const selectionURL = "https://github.com/MicrosoftDocs/powerbi-docs/tree/main/powerbi-docs"
 	skillDir := t.TempDir()
 	cloner := &fakeCloner{contents: map[string]string{repositoryURL: "Power BI docs"}}
 	app := New(skillDir, cloner)
@@ -124,7 +125,7 @@ func TestAddPresetRoutesPowerBIDocsThroughGitProvider(t *testing.T) {
 	for _, want := range []string{
 		"[powerbi-docs](references/powerbi-docs/)",
 		"Power BI documentation",
-		repositoryURL,
+		selectionURL,
 	} {
 		if !strings.Contains(skill, want) {
 			t.Errorf("SKILL.md does not contain %q:\n%s", want, skill)

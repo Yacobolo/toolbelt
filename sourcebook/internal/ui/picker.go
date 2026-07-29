@@ -34,8 +34,8 @@ func newSourcePickerModel(sources []sourcebook.Source) sourcePickerModel {
 	items := make([]list.Item, len(sources))
 	for index, source := range sources {
 		description := source.Provider
-		if source.URL != "" {
-			description += " · " + source.URL
+		if displayURL := source.DisplayURL(); displayURL != "" {
+			description += " · " + displayURL
 		}
 		items[index] = sourceItem{name: source.Name, description: description}
 	}
@@ -131,8 +131,8 @@ func (m removeConfirmationModel) View() tea.View {
 	view.WriteString("This removes ")
 	view.WriteString(name.Render(m.source.Name))
 	view.WriteString(" from the local Sourcebook skill.\n")
-	if m.source.URL != "" {
-		view.WriteString(muted.Render(m.source.URL))
+	if displayURL := m.source.DisplayURL(); displayURL != "" {
+		view.WriteString(muted.Render(displayURL))
 		view.WriteString("\n")
 	}
 	view.WriteString(muted.Render("The upstream source is unaffected."))

@@ -224,8 +224,8 @@ func RenderSources(sources []sourcebook.Source, color bool, width int) string {
 	if showURL {
 		maxURLWidth := len("SOURCE")
 		for _, source := range sources {
-			if len(source.URL) > maxURLWidth {
-				maxURLWidth = len(source.URL)
+			if len(source.DisplayURL()) > maxURLWidth {
+				maxURLWidth = len(source.DisplayURL())
 			}
 		}
 		urlWidth = min(urlWidth, maxURLWidth)
@@ -257,11 +257,12 @@ func RenderSources(sources []sourcebook.Source, color bool, width int) string {
 		header.Render("LAST UPDATED"),
 	)
 	for _, source := range sources {
+		displayURL := source.DisplayURL()
 		fmt.Fprintf(&view, "%s  %s  %s  %s  %s\n",
 			name.Render(fmt.Sprintf("%-*s", nameWidth, source.Name)),
 			hint.Render(fmt.Sprintf("%-*s", providerWidth, source.Provider)),
 			hint.Render(fmt.Sprintf("%-*s", sizeWidth, formatSizeBytes(source.SizeBytes))),
-			url.Render(fmt.Sprintf("%-*s", urlWidth, truncate(source.URL, urlWidth))),
+			url.Render(fmt.Sprintf("%-*s", urlWidth, truncate(displayURL, urlWidth))),
 			hint.Render(formatUpdatedAt(source.UpdatedAt)),
 		)
 	}
