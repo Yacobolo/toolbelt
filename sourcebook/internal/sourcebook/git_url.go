@@ -13,6 +13,27 @@ type gitSourceSelection struct {
 	Root string
 }
 
+// ResolveGitSource converts a repository or GitHub tree URL into the Git source
+// metadata that Sourcebook will persist.
+func ResolveGitSource(repositoryURL string) (Source, error) {
+	selection, err := resolveGitSourceURL(repositoryURL)
+	if err != nil {
+		return Source{}, err
+	}
+	name, err := repositoryName(selection.URL)
+	if err != nil {
+		return Source{}, err
+	}
+	return Source{
+		Name:        name,
+		Provider:    ProviderGit,
+		URL:         selection.URL,
+		GitRef:      selection.Ref,
+		GitRoot:     selection.Root,
+		GitTextOnly: selection.Root != "",
+	}, nil
+}
+
 func resolveGitSourceURL(repositoryURL string) (gitSourceSelection, error) {
 	validatedURL, err := ValidateRepositoryURL(repositoryURL)
 	if err != nil {

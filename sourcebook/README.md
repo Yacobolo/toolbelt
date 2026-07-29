@@ -126,9 +126,15 @@ sourcebook add https://github.com/Infisical/infisical/tree/main/docs
 ```
 
 Sourcebook stores the repository URL, Git ref, and folder separately, then uses
-a shallow, blob-filtered sparse checkout to publish only that folder. The
-folder is flattened directly into the source reference directory. GitHub tree
-URLs currently require a single-segment branch or tag name such as `main`.
+a shallow, blob-filtered clone without an initial checkout. It configures the
+sparse selection before checking out files, so unrelated top-level blobs are
+not materialized. The folder is flattened directly into the source reference
+directory. GitHub tree URLs currently require a single-segment branch or tag
+name such as `main`. Text, documentation, configuration, and source-code files
+are retained; media and other binary assets are excluded.
+
+Interactive adds show distinct cloning, folder-selection, and checkout phases
+so a large selected folder does not appear stalled.
 
 The repository name is derived from the URL. Sourcebook creates this layout on
 the first successful add:
@@ -214,10 +220,13 @@ During an interactive update, Sourcebook shows every source as queued, updating,
 completed, failed, or canceled. Scraped sources include page counts and the
 current phase.
 
-`sourcebook list` includes the provider and last successful update time for each
-source.
+`sourcebook list` includes the provider, installed reference size, and last
+successful update time for each source. Sizes are persisted after successful
+adds and updates. Existing installations without stored sizes are measured from
+their current reference directories and cached the first time they are listed.
 Interactive tables use `YYYY-MM-DD HH:MM UTC`; redirected tab-separated output
-uses RFC 3339 timestamps for scripts.
+uses the fields `name`, `provider`, `URL`, RFC 3339 update time, and exact byte
+size. A missing update time is `never`; an unavailable size is `unknown`.
 
 List sources or open the interactive removal picker:
 
@@ -277,15 +286,15 @@ go vet ./...
 Inject a release version when building an artifact:
 
 ```sh
-go build -ldflags "-X main.version=v0.5.0" -o sourcebook ./cmd/sourcebook
+go build -ldflags "-X main.version=v0.6.0" -o sourcebook ./cmd/sourcebook
 ```
 
 Stable releases are automated. After the intended commit is on `main`, push a
 semantic Sourcebook tag:
 
 ```sh
-git tag sourcebook/v0.5.0
-git push origin sourcebook/v0.5.0
+git tag sourcebook/v0.6.0
+git push origin sourcebook/v0.6.0
 ```
 
 The Sourcebook release workflow runs the test suite, uses GoReleaser to build

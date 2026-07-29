@@ -33,7 +33,7 @@ func TestGitClonerCreatesShallowClone(t *testing.T) {
 	if err := (GitCloner{}).Clone(context.Background(), CloneRequest{
 		URL:         "file://" + source,
 		Destination: destination,
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("Clone() error = %v", err)
 	}
 	if output := strings.TrimSpace(runGit(t, destination, "rev-list", "--count", "HEAD")); output != "1" {
@@ -73,7 +73,7 @@ func TestGitClonerSparseChecksOutRefAndFlattensRoot(t *testing.T) {
 		Root:        "website/docs",
 		TextOnly:    true,
 		Destination: destination,
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("Clone() error = %v", err)
 	}
 	contents, err := os.ReadFile(filepath.Join(destination, "index.md"))
@@ -86,6 +86,53 @@ func TestGitClonerSparseChecksOutRefAndFlattensRoot(t *testing.T) {
 	for _, excluded := range []string{".git", "website", "outside.txt", "media"} {
 		if _, err := os.Stat(filepath.Join(destination, excluded)); !os.IsNotExist(err) {
 			t.Fatalf("%s exists in flattened destination; error = %v", excluded, err)
+		}
+	}
+}
+
+func TestGitClonerSparseCloneSkipsInitialCheckout(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	runGit(t, root, "init", "-b", "main", source)
+	runGit(t, source, "config", "user.name", "Sourcebook Test")
+	runGit(t, source, "config", "user.email", "sourcebook@example.com")
+	writeGitFixture(t, source, "docs/index.md", "documentation")
+	writeGitFixture(t, source, "README.md", "top-level file")
+	runGit(t, source, "add", ".")
+	runGit(t, source, "commit", "-m", "fixture")
+
+	traceFile := filepath.Join(root, "trace.json")
+	t.Setenv("GIT_TRACE2_EVENT", traceFile)
+	var phases []string
+	if err := (GitCloner{}).Clone(context.Background(), CloneRequest{
+		URL:         "file://" + source,
+		Root:        "docs",
+		Destination: filepath.Join(root, "clone"),
+	}, func(phase string) {
+		phases = append(phases, phase)
+	}); err != nil {
+		t.Fatalf("Clone() error = %v", err)
+	}
+
+	wantPhases := []string{"selecting repository folder", "checking out files"}
+	if strings.Join(phases, ",") != strings.Join(wantPhases, ",") {
+		t.Errorf("clone phases = %q, want %q", phases, wantPhases)
+	}
+	trace, err := os.ReadFile(traceFile)
+	if err != nil {
+		t.Fatalf("read Git trace: %v", err)
+	}
+	for _, expected := range []string{
+		`"--no-checkout"`,
+		`"sparse-checkout","set"`,
+		`"checkout","--quiet"`,
+	} {
+		if !strings.Contains(string(trace), expected) {
+			t.Errorf("Git trace does not contain %q:\n%s", expected, trace)
 		}
 	}
 }
@@ -110,7 +157,7 @@ func TestGitClonerSparseRootMustExist(t *testing.T) {
 		URL:         "file://" + source,
 		Root:        "missing",
 		Destination: destination,
-	})
+	}, nil)
 	if err == nil || !strings.Contains(err.Error(), `documentation root "missing"`) {
 		t.Fatalf("Clone() error = %v, want missing documentation root", err)
 	}

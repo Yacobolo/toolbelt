@@ -189,12 +189,16 @@ func RenderSources(sources []sourcebook.Source, color bool, width int) string {
 
 	nameWidth := len("NAME")
 	providerWidth := len("TYPE")
+	sizeWidth := len("SIZE")
 	for _, source := range sources {
 		if len(source.Name) > nameWidth {
 			nameWidth = len(source.Name)
 		}
 		if len(source.Provider) > providerWidth {
 			providerWidth = len(source.Provider)
+		}
+		if size := formatSizeBytes(source.SizeBytes); len(size) > sizeWidth {
+			sizeWidth = len(size)
 		}
 	}
 
@@ -204,8 +208,9 @@ func RenderSources(sources []sourcebook.Source, color bool, width int) string {
 			view.WriteString("\n")
 			fmt.Fprintf(
 				&view,
-				"  %s · %s\n",
+				"  %s · %s · %s\n",
 				hint.Render(source.Provider),
+				hint.Render(formatSizeBytes(source.SizeBytes)),
 				hint.Render(formatUpdatedAtCompact(source.UpdatedAt)),
 			)
 		}
@@ -213,7 +218,7 @@ func RenderSources(sources []sourcebook.Source, color bool, width int) string {
 	}
 
 	const updatedWidth = len("2006-01-02 15:04 UTC")
-	fixedWidth := nameWidth + 2 + providerWidth + 2 + updatedWidth
+	fixedWidth := nameWidth + 2 + providerWidth + 2 + sizeWidth + 2 + updatedWidth
 	urlWidth := width - fixedWidth - 2
 	showURL := urlWidth >= len("SOURCE")
 	if showURL {
@@ -227,31 +232,35 @@ func RenderSources(sources []sourcebook.Source, color bool, width int) string {
 	}
 
 	if !showURL {
-		fmt.Fprintf(&view, "%s  %s  %s\n",
+		fmt.Fprintf(&view, "%s  %s  %s  %s\n",
 			header.Render(fmt.Sprintf("%-*s", nameWidth, "NAME")),
 			header.Render(fmt.Sprintf("%-*s", providerWidth, "TYPE")),
+			header.Render(fmt.Sprintf("%-*s", sizeWidth, "SIZE")),
 			header.Render("LAST UPDATED"),
 		)
 		for _, source := range sources {
-			fmt.Fprintf(&view, "%s  %s  %s\n",
+			fmt.Fprintf(&view, "%s  %s  %s  %s\n",
 				name.Render(fmt.Sprintf("%-*s", nameWidth, source.Name)),
 				hint.Render(fmt.Sprintf("%-*s", providerWidth, source.Provider)),
+				hint.Render(fmt.Sprintf("%-*s", sizeWidth, formatSizeBytes(source.SizeBytes))),
 				hint.Render(formatUpdatedAt(source.UpdatedAt)),
 			)
 		}
 		return view.String()
 	}
 
-	fmt.Fprintf(&view, "%s  %s  %s  %s\n",
+	fmt.Fprintf(&view, "%s  %s  %s  %s  %s\n",
 		header.Render(fmt.Sprintf("%-*s", nameWidth, "NAME")),
 		header.Render(fmt.Sprintf("%-*s", providerWidth, "TYPE")),
+		header.Render(fmt.Sprintf("%-*s", sizeWidth, "SIZE")),
 		header.Render(fmt.Sprintf("%-*s", urlWidth, "SOURCE")),
 		header.Render("LAST UPDATED"),
 	)
 	for _, source := range sources {
-		fmt.Fprintf(&view, "%s  %s  %s  %s\n",
+		fmt.Fprintf(&view, "%s  %s  %s  %s  %s\n",
 			name.Render(fmt.Sprintf("%-*s", nameWidth, source.Name)),
 			hint.Render(fmt.Sprintf("%-*s", providerWidth, source.Provider)),
+			hint.Render(fmt.Sprintf("%-*s", sizeWidth, formatSizeBytes(source.SizeBytes))),
 			url.Render(fmt.Sprintf("%-*s", urlWidth, truncate(source.URL, urlWidth))),
 			hint.Render(formatUpdatedAt(source.UpdatedAt)),
 		)
@@ -285,6 +294,27 @@ func formatUpdatedAtCompact(updatedAt time.Time) string {
 		return "never"
 	}
 	return updatedAt.UTC().Format("2006-01-02")
+}
+
+func formatSizeBytes(sizeBytes *int64) string {
+	if sizeBytes == nil {
+		return "—"
+	}
+	if *sizeBytes < 1024 {
+		return fmt.Sprintf("%d B", *sizeBytes)
+	}
+	units := []string{"KiB", "MiB", "GiB", "TiB", "PiB", "EiB"}
+	value := float64(*sizeBytes)
+	unit := "B"
+	for _, candidate := range units {
+		value /= 1024
+		unit = candidate
+		if value < 1024 {
+			break
+		}
+	}
+	formatted := strings.TrimSuffix(fmt.Sprintf("%.1f", value), ".0")
+	return formatted + " " + unit
 }
 
 func RenderHelp(color bool) string {

@@ -32,8 +32,10 @@ const (
 var ErrMutationLocked = errors.New("another sourcebook command is already running")
 
 type Cloner interface {
-	Clone(context.Context, CloneRequest) error
+	Clone(context.Context, CloneRequest, CloneProgressReporter) error
 }
+
+type CloneProgressReporter func(string)
 
 type CloneRequest struct {
 	URL         string
@@ -52,6 +54,7 @@ type Source struct {
 	GitRef      string    `json:"git_ref,omitempty"`
 	GitRoot     string    `json:"git_root,omitempty"`
 	GitTextOnly bool      `json:"git_text_only,omitempty"`
+	SizeBytes   *int64    `json:"size_bytes,omitempty"`
 	UpdatedAt   time.Time `json:"updated_at,omitzero"`
 }
 
@@ -161,7 +164,7 @@ type gitProvider struct {
 
 func (p gitProvider) Update(ctx context.Context, request ProviderRequest, report ProviderProgressReporter) error {
 	if report != nil {
-		report(ProviderProgress{Phase: "cloning"})
+		report(ProviderProgress{Phase: "cloning repository"})
 	}
 	return p.app.cloner.Clone(ctx, CloneRequest{
 		URL:         request.Source.URL,
@@ -169,6 +172,10 @@ func (p gitProvider) Update(ctx context.Context, request ProviderRequest, report
 		Root:        request.Source.GitRoot,
 		TextOnly:    request.Source.GitTextOnly,
 		Destination: request.DestinationDir,
+	}, func(phase string) {
+		if report != nil {
+			report(ProviderProgress{Phase: phase})
+		}
 	})
 }
 
@@ -259,6 +266,14 @@ func (a *App) SkillDir() string {
 }
 
 func (a *App) Add(ctx context.Context, repositoryURL string) (returnErr error) {
+	return a.AddWithProgress(ctx, repositoryURL, nil)
+}
+
+func (a *App) AddWithProgress(
+	ctx context.Context,
+	repositoryURL string,
+	report UpdateReporter,
+) (returnErr error) {
 	release, err := a.acquireMutationLock()
 	if err != nil {
 		return err
@@ -274,29 +289,60 @@ func (a *App) Add(ctx context.Context, repositoryURL string) (returnErr error) {
 		return err
 	}
 
-	selection, err := resolveGitSourceURL(repositoryURL)
-	if err != nil {
-		return err
-	}
-	name, err := repositoryName(selection.URL)
+	newSource, err := ResolveGitSource(repositoryURL)
 	if err != nil {
 		return err
 	}
 	for _, source := range sources {
-		if source.Name == name {
-			return fmt.Errorf("source %q already exists", name)
+		if source.Name == newSource.Name {
+			return fmt.Errorf("source %q already exists", newSource.Name)
 		}
 	}
 
-	source := Source{
-		Name:      name,
-		Provider:  ProviderGit,
-		URL:       selection.URL,
-		GitRef:    selection.Ref,
-		GitRoot:   selection.Root,
-		UpdatedAt: a.now().UTC(),
+	newSource.UpdatedAt = a.now().UTC()
+	return a.addSourceWithProgress(ctx, sources, newSource, report)
+}
+
+func (a *App) addSourceWithProgress(
+	ctx context.Context,
+	sources []Source,
+	source Source,
+	report UpdateReporter,
+) error {
+	started := time.Now()
+	providerReport := func(progress ProviderProgress) {
+		emitUpdate(report, UpdateEvent{
+			Source:   source.Name,
+			Provider: source.Provider,
+			State:    UpdateRunning,
+			Phase:    progress.Phase,
+			Current:  progress.Current,
+			Total:    progress.Total,
+			Duration: time.Since(started),
+		})
 	}
-	return a.addSource(ctx, sources, source, nil)
+	err := a.addSource(ctx, sources, source, providerReport)
+	if err != nil {
+		state := UpdateFailed
+		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+			state = UpdateCanceled
+		}
+		emitUpdate(report, UpdateEvent{
+			Source:   source.Name,
+			Provider: source.Provider,
+			State:    state,
+			Duration: time.Since(started),
+			Err:      err,
+		})
+		return err
+	}
+	emitUpdate(report, UpdateEvent{
+		Source:   source.Name,
+		Provider: source.Provider,
+		State:    UpdateCompleted,
+		Duration: time.Since(started),
+	})
+	return nil
 }
 
 func (a *App) AddPreset(ctx context.Context, presetID string, report UpdateReporter) (returnErr error) {
@@ -334,40 +380,7 @@ func (a *App) AddPreset(ctx context.Context, presetID string, report UpdateRepor
 		GitTextOnly: entry.GitTextOnly,
 		UpdatedAt:   a.now().UTC(),
 	}
-	started := time.Now()
-	providerReport := func(progress ProviderProgress) {
-		emitUpdate(report, UpdateEvent{
-			Source:   source.Name,
-			Provider: source.Provider,
-			State:    UpdateRunning,
-			Phase:    progress.Phase,
-			Current:  progress.Current,
-			Total:    progress.Total,
-			Duration: time.Since(started),
-		})
-	}
-	err = a.addSource(ctx, sources, source, providerReport)
-	if err != nil {
-		state := UpdateFailed
-		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
-			state = UpdateCanceled
-		}
-		emitUpdate(report, UpdateEvent{
-			Source:   source.Name,
-			Provider: source.Provider,
-			State:    state,
-			Duration: time.Since(started),
-			Err:      err,
-		})
-		return err
-	}
-	emitUpdate(report, UpdateEvent{
-		Source:   source.Name,
-		Provider: source.Provider,
-		State:    UpdateCompleted,
-		Duration: time.Since(started),
-	})
-	return nil
+	return a.addSourceWithProgress(ctx, sources, source, report)
 }
 
 func (a *App) addSource(ctx context.Context, sources []Source, source Source, report ProviderProgressReporter) error {
@@ -389,6 +402,11 @@ func (a *App) addSource(ctx context.Context, sources []Source, source Source, re
 	if err := definition.Provider.Update(ctx, request, report); err != nil {
 		return fmt.Errorf("update source %q: %w", source.Name, err)
 	}
+	sizeBytes, err := directorySize(stagedSource)
+	if err != nil {
+		return fmt.Errorf("measure source %q: %w", source.Name, err)
+	}
+	source.SizeBytes = &sizeBytes
 
 	referencesDir := filepath.Join(a.skillDir, "references")
 	if err := os.MkdirAll(referencesDir, 0o755); err != nil {
@@ -455,10 +473,20 @@ func (a *App) updateWithProgress(ctx context.Context, names []string, all bool, 
 	if err := a.updateSources(ctx, selected, stagedReferences, report); err != nil {
 		return err
 	}
+	selectedSizes := make(map[string]int64, len(selected))
+	for _, source := range selected {
+		sizeBytes, err := directorySize(filepath.Join(stagedReferences, source.Name))
+		if err != nil {
+			return fmt.Errorf("measure source %q: %w", source.Name, err)
+		}
+		selectedSizes[source.Name] = sizeBytes
+	}
 	emitUpdate(report, UpdateEvent{State: UpdateInstalling})
 	updatedAt := a.now().UTC()
 	for index := range sources {
 		if _, exists := selectedNames[sources[index].Name]; exists {
+			sizeBytes := selectedSizes[sources[index].Name]
+			sources[index].SizeBytes = &sizeBytes
 			sources[index].UpdatedAt = updatedAt
 		}
 	}
@@ -700,7 +728,7 @@ func (a *App) Remove(name string) (returnErr error) {
 }
 
 func (a *App) List(output io.Writer) error {
-	sources, err := a.Sources()
+	sources, err := a.SourcesWithSizes()
 	if err != nil {
 		return err
 	}
@@ -709,7 +737,19 @@ func (a *App) List(output io.Writer) error {
 		if !source.UpdatedAt.IsZero() {
 			updatedAt = source.UpdatedAt.UTC().Format(time.RFC3339)
 		}
-		if _, err := fmt.Fprintf(output, "%s\t%s\t%s\t%s\n", source.Name, source.Provider, source.URL, updatedAt); err != nil {
+		sizeBytes := "unknown"
+		if source.SizeBytes != nil {
+			sizeBytes = fmt.Sprintf("%d", *source.SizeBytes)
+		}
+		if _, err := fmt.Fprintf(
+			output,
+			"%s\t%s\t%s\t%s\t%s\n",
+			source.Name,
+			source.Provider,
+			source.URL,
+			updatedAt,
+			sizeBytes,
+		); err != nil {
 			return fmt.Errorf("write source list: %w", err)
 		}
 	}
@@ -722,6 +762,36 @@ func (a *App) Sources() ([]Source, error) {
 		return nil, err
 	}
 	return sortedSources(sources), nil
+}
+
+func (a *App) SourcesWithSizes() ([]Source, error) {
+	sources, err := a.Sources()
+	if err != nil {
+		return nil, err
+	}
+	measured := make(map[string]measuredSourceSize)
+	for index := range sources {
+		if sources[index].SizeBytes != nil {
+			continue
+		}
+		sizeBytes, err := directorySize(filepath.Join(a.skillDir, "references", sources[index].Name))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("measure source %q: %w", sources[index].Name, err)
+		}
+		sources[index].SizeBytes = &sizeBytes
+		measured[sources[index].Name] = measuredSourceSize{
+			Provider: sources[index].Provider,
+			URL:      sources[index].URL,
+			Bytes:    sizeBytes,
+		}
+	}
+	if err := a.cacheMeasuredSizes(measured); err != nil {
+		return nil, err
+	}
+	return sources, nil
 }
 
 func (a *App) newStageDir() (string, error) {
@@ -831,6 +901,9 @@ func (a *App) validateSources(sources []Source, filename string) error {
 		} else if source.GitRef != "" || source.GitRoot != "" || source.GitTextOnly {
 			return fmt.Errorf("parse %s: source %q has Git options but uses provider %q", filename, source.Name, source.Provider)
 		}
+		if source.SizeBytes != nil && *source.SizeBytes < 0 {
+			return fmt.Errorf("parse %s: source %q has a negative installed size", filename, source.Name)
+		}
 		if source.Preset != "" {
 			if err := validateRepositoryName(source.Preset); err != nil {
 				return fmt.Errorf("parse %s: source %q preset: %w", filename, source.Name, err)
@@ -861,6 +934,10 @@ func (a *App) resolveCatalogSources(sources []Source) []Source {
 			}
 		}
 		if !exists {
+			if source.Provider == ProviderGit && source.Preset == "" && source.GitRoot != "" {
+				source.GitTextOnly = true
+				resolved[index] = source
+			}
 			continue
 		}
 		source.Provider = entry.Provider

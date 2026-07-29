@@ -234,13 +234,20 @@ func newAddCommand(app *sourcebook.App) *cobra.Command {
 				return errors.New("repository URL and --preset cannot be used together")
 			}
 			if len(args) == 1 {
-				return ui.RunAction(command.Context(), command.InOrStdin(), command.OutOrStdout(), interactive, ui.Action{
-					Working: "Cloning repository",
-					Success: "Git repository added to Sourcebook",
-					Run: func(ctx context.Context) error {
-						return app.Add(ctx, args[0])
+				source, err := sourcebook.ResolveGitSource(args[0])
+				if err != nil {
+					return err
+				}
+				return ui.RunSourceAdd(
+					command.Context(),
+					command.InOrStdin(),
+					command.OutOrStdout(),
+					interactive,
+					source,
+					func(ctx context.Context, report sourcebook.UpdateReporter) error {
+						return app.AddWithProgress(ctx, args[0], report)
 					},
-				})
+				)
 			}
 			if presetID == "" {
 				if !interactive {
@@ -277,17 +284,18 @@ func newAddCommand(app *sourcebook.App) *cobra.Command {
 					if !submitted {
 						return nil
 					}
-					return ui.RunAction(
+					source, err := sourcebook.ResolveGitSource(repositoryURL)
+					if err != nil {
+						return err
+					}
+					return ui.RunSourceAdd(
 						command.Context(),
 						command.InOrStdin(),
 						command.OutOrStdout(),
 						interactive,
-						ui.Action{
-							Working: "Cloning repository",
-							Success: "Git repository added to Sourcebook",
-							Run: func(ctx context.Context) error {
-								return app.Add(ctx, repositoryURL)
-							},
+						source,
+						func(ctx context.Context, report sourcebook.UpdateReporter) error {
+							return app.AddWithProgress(ctx, repositoryURL, report)
 						},
 					)
 				}
@@ -494,7 +502,7 @@ func newListCommand(app *sourcebook.App) *cobra.Command {
 			if !ui.IsTerminal(output) {
 				return app.List(output)
 			}
-			sources, err := app.Sources()
+			sources, err := app.SourcesWithSizes()
 			if err != nil {
 				return err
 			}

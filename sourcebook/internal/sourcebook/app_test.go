@@ -48,10 +48,47 @@ func TestAddCreatesSourcebookSkill(t *testing.T) {
 	}
 
 	assertFileContents(t, filepath.Join(skillDir, "references", "widgets", "README.md"), "widgets version one")
-	wantManifest := "{\n  \"version\": 2,\n  \"sources\": [\n    {\n      \"name\": \"widgets\",\n      \"provider\": \"git\",\n      \"url\": \"https://example.com/acme/widgets.git\",\n      \"updated_at\": \"2026-07-22T08:30:00Z\"\n    }\n  ]\n}\n"
+	wantManifest := "{\n  \"version\": 2,\n  \"sources\": [\n    {\n      \"name\": \"widgets\",\n      \"provider\": \"git\",\n      \"url\": \"https://example.com/acme/widgets.git\",\n      \"size_bytes\": 19,\n      \"updated_at\": \"2026-07-22T08:30:00Z\"\n    }\n  ]\n}\n"
 	assertFileContents(t, filepath.Join(skillDir, "sources.json"), wantManifest)
 	wantSkill := "---\nname: sourcebook\ndescription: Source code and documentation for widgets. Use when a task involves widgets or related technologies.\n---\n\n# Sourcebook\n\n## Sources\n\n- [widgets](references/widgets/) — https://example.com/acme/widgets.git\n"
 	assertFileContents(t, filepath.Join(skillDir, "SKILL.md"), wantSkill)
+}
+
+func TestAddAndUpdatePersistInstalledSize(t *testing.T) {
+	t.Parallel()
+
+	const repositoryURL = "https://example.com/acme/widgets.git"
+	skillDir := filepath.Join(t.TempDir(), "sourcebook")
+	cloner := &fakeCloner{contents: map[string]string{
+		repositoryURL: "first",
+	}}
+	app := New(skillDir, cloner)
+
+	if err := app.Add(context.Background(), repositoryURL); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	sources, err := app.Sources()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := sources[0].SizeBytes, int64Pointer(5); !reflect.DeepEqual(got, want) {
+		t.Fatalf("size after add = %v, want %v", got, want)
+	}
+
+	cloner.contents[repositoryURL] = "second version"
+	if err := app.Update(context.Background()); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	sources, err = app.Sources()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := sources[0].SizeBytes, int64Pointer(14); !reflect.DeepEqual(got, want) {
+		t.Fatalf("size after update = %v, want %v", got, want)
+	}
+	if manifest := readFile(t, filepath.Join(skillDir, "sources.json")); !strings.Contains(manifest, `"size_bytes": 14`) {
+		t.Fatalf("sources.json does not contain installed size:\n%s", manifest)
+	}
 }
 
 func TestAddGitHubTreeURLCreatesRootedGitSource(t *testing.T) {
@@ -78,6 +115,7 @@ func TestAddGitHubTreeURLCreatesRootedGitSource(t *testing.T) {
 		URL:         repositoryURL,
 		Ref:         "main",
 		Root:        "docs",
+		TextOnly:    true,
 		Destination: cloner.requests[0].Destination,
 	}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("clone requests = %#v, want %#v", got, want)
@@ -88,6 +126,7 @@ func TestAddGitHubTreeURLCreatesRootedGitSource(t *testing.T) {
 		`"url": "https://github.com/Infisical/infisical.git"`,
 		`"git_ref": "main"`,
 		`"git_root": "docs"`,
+		`"git_text_only": true`,
 	} {
 		if !strings.Contains(manifest, expected) {
 			t.Errorf("sources.json does not contain %q:\n%s", expected, manifest)
@@ -109,6 +148,35 @@ func TestAddGitHubTreeURLCreatesRootedGitSource(t *testing.T) {
 	}
 	if got, want := cloner.requests[0].Root, "docs"; got != want {
 		t.Errorf("updated Git root = %q, want %q", got, want)
+	}
+}
+
+func TestUpdateMigratesExistingRootedGitSourceToTextOnly(t *testing.T) {
+	t.Parallel()
+
+	const repositoryURL = "https://github.com/Infisical/infisical.git"
+	skillDir := filepath.Join(t.TempDir(), "sourcebook")
+	if err := os.MkdirAll(filepath.Join(skillDir, "references", "infisical"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "{\n  \"version\": 2,\n  \"sources\": [{\n    \"name\": \"infisical\",\n    \"provider\": \"git\",\n    \"url\": \"" + repositoryURL + "\",\n    \"git_ref\": \"main\",\n    \"git_root\": \"docs\"\n  }]\n}\n"
+	if err := os.WriteFile(filepath.Join(skillDir, "sources.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cloner := &fakeCloner{}
+	app := New(skillDir, cloner)
+	if err := app.Update(context.Background()); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if got, want := len(cloner.requests), 1; got != want {
+		t.Fatalf("clone requests = %d, want %d", got, want)
+	}
+	if !cloner.requests[0].TextOnly {
+		t.Fatal("updated rooted Git source did not enable text-only checkout")
+	}
+	if manifest := readFile(t, filepath.Join(skillDir, "sources.json")); !strings.Contains(manifest, `"git_text_only": true`) {
+		t.Fatalf("sources.json does not contain migrated text-only selection:\n%s", manifest)
 	}
 }
 
@@ -205,6 +273,41 @@ func TestProviderUpdateReportsPageProgress(t *testing.T) {
 		t.Fatalf("UpdateWithProgress() events = %#v, want provider page progress", events)
 	}
 	assertFileContents(t, filepath.Join(skillDir, "references", "example-docs", "index.md"), "second")
+}
+
+func TestAddWithProgressReportsGitPhases(t *testing.T) {
+	t.Parallel()
+
+	cloner := &fakeCloner{phases: []string{
+		"selecting repository folder",
+		"checking out files",
+	}}
+	app := New(filepath.Join(t.TempDir(), "sourcebook"), cloner)
+	var events []UpdateEvent
+	err := app.AddWithProgress(
+		context.Background(),
+		"https://github.com/acme/widgets/tree/main/docs",
+		func(event UpdateEvent) {
+			events = append(events, event)
+		},
+	)
+	if err != nil {
+		t.Fatalf("AddWithProgress() error = %v", err)
+	}
+
+	var phases []string
+	for _, event := range events {
+		if event.State == UpdateRunning {
+			phases = append(phases, event.Phase)
+		}
+	}
+	wantPhases := append([]string{"cloning repository"}, cloner.phases...)
+	if got, want := strings.Join(phases, ","), strings.Join(wantPhases, ","); got != want {
+		t.Fatalf("reported phases = %q, want %q", got, want)
+	}
+	if got := events[len(events)-1].State; got != UpdateCompleted {
+		t.Fatalf("final event state = %q, want %q", got, UpdateCompleted)
+	}
 }
 
 func TestFailedProviderUpdateLeavesAllSourcesUntouched(t *testing.T) {
@@ -735,7 +838,7 @@ func TestListIsSortedByRepositoryName(t *testing.T) {
 	if err := app.List(&output); err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	want := "alpha\tgit\thttps://example.com/acme/alpha.git\t2026-07-22T08:30:00Z\nzeta\tgit\thttps://example.com/acme/zeta.git\t2026-07-22T08:30:00Z\n"
+	want := "alpha\tgit\thttps://example.com/acme/alpha.git\t2026-07-22T08:30:00Z\t34\nzeta\tgit\thttps://example.com/acme/zeta.git\t2026-07-22T08:30:00Z\t33\n"
 	if got := output.String(); got != want {
 		t.Fatalf("List() = %q, want %q", got, want)
 	}
@@ -762,9 +865,38 @@ func TestListShowsNeverForLegacyRepositoryWithoutRefreshTime(t *testing.T) {
 	if err := New(skillDir, &fakeCloner{}).List(&output); err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	want := "alpha\tgit\thttps://example.com/alpha.git\tnever\n"
+	want := "alpha\tgit\thttps://example.com/alpha.git\tnever\tunknown\n"
 	if got := output.String(); got != want {
 		t.Fatalf("List() = %q, want %q", got, want)
+	}
+}
+
+func TestListMeasuresInstalledSizeMissingFromExistingManifest(t *testing.T) {
+	t.Parallel()
+
+	skillDir := filepath.Join(t.TempDir(), "sourcebook")
+	referenceDir := filepath.Join(skillDir, "references", "alpha")
+	if err := os.MkdirAll(referenceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(referenceDir, "README.md"), []byte("existing reference"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	contents := "{\n  \"version\": 2,\n  \"sources\": [{\"name\": \"alpha\", \"provider\": \"git\", \"url\": \"https://example.com/alpha.git\"}]\n}\n"
+	if err := os.WriteFile(filepath.Join(skillDir, "sources.json"), []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	if err := New(skillDir, &fakeCloner{}).List(&output); err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	want := "alpha\tgit\thttps://example.com/alpha.git\tnever\t18\n"
+	if got := output.String(); got != want {
+		t.Fatalf("List() = %q, want %q", got, want)
+	}
+	if manifest := readFile(t, filepath.Join(skillDir, "sources.json")); !strings.Contains(manifest, `"size_bytes": 18`) {
+		t.Fatalf("sources.json does not cache measured size:\n%s", manifest)
 	}
 }
 
@@ -862,9 +994,14 @@ func addRepositories(t *testing.T, app *App) {
 	}
 }
 
+func int64Pointer(value int64) *int64 {
+	return &value
+}
+
 type fakeCloner struct {
 	contents map[string]string
 	failURL  string
+	phases   []string
 	mu       sync.Mutex
 	calls    []string
 	requests []CloneRequest
@@ -888,11 +1025,16 @@ func (f *fakeProvider) Update(_ context.Context, request ProviderRequest, report
 	return f.err
 }
 
-func (f *fakeCloner) Clone(_ context.Context, request CloneRequest) error {
+func (f *fakeCloner) Clone(_ context.Context, request CloneRequest, report CloneProgressReporter) error {
 	f.mu.Lock()
 	f.calls = append(f.calls, request.URL)
 	f.requests = append(f.requests, request)
 	f.mu.Unlock()
+	for _, phase := range f.phases {
+		if report != nil {
+			report(phase)
+		}
+	}
 	if request.URL == f.failURL {
 		return errors.New("clone failed")
 	}
@@ -921,7 +1063,7 @@ func newBlockingCloner(repositoryCount int) *blockingCloner {
 	}
 }
 
-func (c *blockingCloner) Clone(ctx context.Context, request CloneRequest) error {
+func (c *blockingCloner) Clone(ctx context.Context, request CloneRequest, _ CloneProgressReporter) error {
 	c.mu.Lock()
 	c.active++
 	if c.active > c.maxActive {
