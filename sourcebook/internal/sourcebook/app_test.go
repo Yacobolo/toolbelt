@@ -136,7 +136,7 @@ func TestAddGitHubTreeURLCreatesRootedGitSource(t *testing.T) {
 	if err := app.List(&listed); err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	if !strings.Contains(listed.String(), "\t"+treeURL+"\t") {
+	if !strings.Contains(listed.String(), treeURL) {
 		t.Errorf("List() does not display tree URL %q:\n%s", treeURL, listed.String())
 	}
 	skill := readFile(t, filepath.Join(skillDir, "SKILL.md"))
@@ -487,29 +487,7 @@ func TestRenderedSkillIncludesCLIHelp(t *testing.T) {
 	skill := string(renderSkill(nil))
 	want := "## CLI Usage\n\n" +
 		"Use the Sourcebook command line with the following help:\n\n" +
-		"```text\n" +
-		`Build one Codex skill from Git repositories and documentation sources
-
-Usage:
-  sourcebook [flags]
-  sourcebook [command]
-
-Available Commands:
-  add         Add a Git repository or catalogue source
-  help        Help about any command
-  list        List sources
-  remove      Remove a source
-  update      Refresh named sources or all sources
-  upgrade     Upgrade Sourcebook to the latest release
-  version     Print the version
-
-Flags:
-  -h, --help      help for sourcebook
-  -v, --version   version for sourcebook
-
-Use "sourcebook [command] --help" for more information about a command.
-` +
-		"```\n\n"
+		"```text\n" + CLIHelp() + "\n```\n\n"
 	if !strings.Contains(skill, want) {
 		t.Fatalf("SKILL.md does not contain CLI help:\n%s", skill)
 	}

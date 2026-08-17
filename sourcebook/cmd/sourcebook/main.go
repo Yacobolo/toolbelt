@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
-	"strings"
 	"syscall"
 
 	"github.com/Yacobolo/toolbelt/sourcebook/internal/catalog"
@@ -71,6 +70,10 @@ type upgradeRunner interface {
 	Run(context.Context, string, bool) (upgrade.Result, error)
 }
 
+type upgradeProgressRunner interface {
+	RunWithProgress(context.Context, string, bool, upgrade.ProgressReporter) (upgrade.Result, error)
+}
+
 func newRootCommand(app *sourcebook.App, stdin io.Reader, stdout, stderr io.Writer, buildVersion string, upgradeRunners ...upgradeRunner) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "sourcebook",
@@ -112,22 +115,12 @@ func newRootCommand(app *sourcebook.App, stdin io.Reader, stdout, stderr io.Writ
 	return root
 }
 
-func runPlainAction(ctx context.Context, output io.Writer, working, success string, run func(context.Context) error) error {
-	if _, err := fmt.Fprintf(output, "%s...\n", working); err != nil {
-		return err
-	}
-	if err := run(ctx); err != nil {
-		return err
-	}
-	_, err := fmt.Fprintf(output, "%s.\n", success)
-	return err
-}
-
 func newUpgradeCommand(upgrader upgradeRunner, buildVersion string) *cobra.Command {
 	var checkOnly bool
 	command := &cobra.Command{
 		Use:               "upgrade",
 		Short:             "Upgrade Sourcebook to the latest release",
+		Example:           "  sourcebook upgrade --check\n  sourcebook upgrade",
 		Args:              cobra.NoArgs,
 		ValidArgsFunction: cobra.NoFileCompletions,
 		RunE: func(command *cobra.Command, _ []string) error {
@@ -137,7 +130,24 @@ func newUpgradeCommand(upgrader upgradeRunner, buildVersion string) *cobra.Comma
 			if _, err := fmt.Fprintln(command.OutOrStdout(), "Checking for Sourcebook updates..."); err != nil {
 				return err
 			}
-			result, err := upgrader.Run(command.Context(), buildVersion, checkOnly)
+			var result upgrade.Result
+			var err error
+			if progressRunner, ok := upgrader.(upgradeProgressRunner); ok {
+				result, err = progressRunner.RunWithProgress(
+					command.Context(),
+					buildVersion,
+					checkOnly,
+					func(event upgrade.ProgressEvent) error {
+						if event.Phase == "" {
+							return nil
+						}
+						_, err := fmt.Fprintln(command.OutOrStdout(), event.Phase)
+						return err
+					},
+				)
+			} else {
+				result, err = upgrader.Run(command.Context(), buildVersion, checkOnly)
+			}
 			if err != nil {
 				return err
 			}
@@ -174,6 +184,7 @@ func newAddCommand(app *sourcebook.App) *cobra.Command {
 	command := &cobra.Command{
 		Use:               "add [repository-url]",
 		Short:             "Add a Git repository or catalogue source",
+		Example:           "  sourcebook add https://github.com/org/project\n  sourcebook add --preset duckdb-docs",
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: cobra.NoFileCompletions,
 		RunE: func(command *cobra.Command, args []string) error {
@@ -188,25 +199,9 @@ func newAddCommand(app *sourcebook.App) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return runPlainAction(
-					command.Context(),
-					command.OutOrStdout(),
-					"Adding "+source.Name,
-					source.Name+" added to Sourcebook",
-					func(ctx context.Context) error {
-						return app.AddWithProgress(ctx, args[0], nil)
-					},
-				)
+				return runAddAction(command, app, args[0], source.Name, false)
 			}
-			return runPlainAction(
-				command.Context(),
-				command.OutOrStdout(),
-				"Adding "+presetID,
-				presetID+" added to Sourcebook",
-				func(ctx context.Context) error {
-					return app.AddPreset(ctx, presetID, nil)
-				},
-			)
+			return runAddAction(command, app, presetID, presetID, true)
 		},
 	}
 	command.Flags().StringVar(&presetID, "preset", "", "catalogue preset ID")
@@ -226,9 +221,10 @@ func newAddCommand(app *sourcebook.App) *cobra.Command {
 func newUpdateCommand(app *sourcebook.App) *cobra.Command {
 	var updateAll bool
 	command := &cobra.Command{
-		Use:   "update [source...]",
-		Short: "Refresh named sources or all sources",
-		Args:  cobra.ArbitraryArgs,
+		Use:     "update [source...]",
+		Short:   "Refresh named sources or all sources",
+		Example: "  sourcebook update dagger codex\n  sourcebook update --all",
+		Args:    cobra.ArbitraryArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			if updateAll && len(args) > 0 {
 				return errors.New("source names and --all cannot be used together")
@@ -247,26 +243,14 @@ func newUpdateCommand(app *sourcebook.App) *cobra.Command {
 			}
 
 			if updateAll {
-				return runPlainAction(
-					command.Context(),
-					command.OutOrStdout(),
-					"Updating all sources",
-					"All sources updated",
-					func(ctx context.Context) error {
-						return app.UpdateWithProgress(ctx, nil)
-					},
-				)
+				return runUpdateAction(command, len(sources), func(ctx context.Context, report sourcebook.UpdateReporter) error {
+					return app.UpdateWithProgress(ctx, report)
+				})
 			}
 
-			return runPlainAction(
-				command.Context(),
-				command.OutOrStdout(),
-				"Updating "+strings.Join(args, ", "),
-				"Selected sources updated",
-				func(ctx context.Context) error {
-					return app.UpdateSelectedWithProgress(ctx, args, nil)
-				},
-			)
+			return runUpdateAction(command, len(args), func(ctx context.Context, report sourcebook.UpdateReporter) error {
+				return app.UpdateSelectedWithProgress(ctx, args, report)
+			})
 		},
 		ValidArgsFunction: func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 			sources, err := app.Sources()
@@ -292,15 +276,11 @@ func newRemoveCommand(app *sourcebook.App) *cobra.Command {
 		ValidArgsFunction: sourceNameCompletion(app),
 		RunE: func(command *cobra.Command, args []string) error {
 			name := args[0]
-			return runPlainAction(
-				command.Context(),
-				command.OutOrStdout(),
-				"Removing "+name,
-				name+" removed",
-				func(context.Context) error {
-					return app.Remove(name)
-				},
-			)
+			if err := app.Remove(name); err != nil {
+				return err
+			}
+			_, err := fmt.Fprintf(command.OutOrStdout(), "%s removed.\n", name)
+			return err
 		},
 	}
 }
@@ -320,15 +300,61 @@ func sourceNameCompletion(app *sourcebook.App) cobra.CompletionFunc {
 }
 
 func newListCommand(app *sourcebook.App) *cobra.Command {
-	return &cobra.Command{
+	var format string
+	command := &cobra.Command{
 		Use:               "list",
 		Short:             "List sources",
+		Example:           "  sourcebook list\n  sourcebook list --format table\n  sourcebook list --format json",
 		Args:              cobra.NoArgs,
 		ValidArgsFunction: cobra.NoFileCompletions,
 		RunE: func(command *cobra.Command, _ []string) error {
-			return app.List(command.OutOrStdout())
+			parsedFormat, err := sourcebook.ParseListFormat(format)
+			if err != nil {
+				return err
+			}
+			return app.ListWithFormat(command.OutOrStdout(), parsedFormat)
 		},
 	}
+	command.Flags().StringVar(&format, "format", string(sourcebook.ListFormatTSV), "output format: table, tsv, or json")
+	return command
+}
+
+func runAddAction(command *cobra.Command, app *sourcebook.App, sourceOrPreset, displayName string, preset bool) error {
+	output := command.OutOrStdout()
+	if _, err := fmt.Fprintf(output, "Adding %s...\n", displayName); err != nil {
+		return err
+	}
+	progress := newCommandProgress(output, 1, "updated")
+	var err error
+	if !preset {
+		err = app.AddWithProgress(command.Context(), sourceOrPreset, progress.Report)
+	} else {
+		err = app.AddPreset(command.Context(), sourceOrPreset, progress.Report)
+	}
+	if progressErr := progress.Err(); progressErr != nil {
+		return progressErr
+	}
+	if err != nil {
+		return fmt.Errorf("%w; source was not added", err)
+	}
+	_, err = fmt.Fprintf(output, "%s added to Sourcebook.\n", displayName)
+	return err
+}
+
+func runUpdateAction(command *cobra.Command, count int, run func(context.Context, sourcebook.UpdateReporter) error) error {
+	output := command.OutOrStdout()
+	if err := writeActionStart(output, "Updating", count); err != nil {
+		return err
+	}
+	progress := newCommandProgress(output, count, "ready")
+	err := run(command.Context(), progress.Report)
+	if progressErr := progress.Err(); progressErr != nil {
+		return progressErr
+	}
+	if err != nil {
+		return fmt.Errorf("%w; no sources were changed", err)
+	}
+	return writeActionSuccess(output, count, "Updated")
 }
 
 func newVersionCommand(buildVersion string) *cobra.Command {

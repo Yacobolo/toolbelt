@@ -19,6 +19,12 @@ Flags:
   -h, --help      help for sourcebook
   -v, --version   version for sourcebook
 
+Examples:
+  sourcebook add --preset duckdb-docs
+  sourcebook update --all
+  sourcebook list --format table
+  sourcebook list --format json
+
 Use "sourcebook [command] --help" for more information about a command.`
 
 // CLIHelp returns the root command help shown by sourcebook --help.

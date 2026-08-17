@@ -158,6 +158,49 @@ func TestListDoesNotWriteToStderr(t *testing.T) {
 	}
 }
 
+func TestListCommandSupportsHumanAndMachineFormats(t *testing.T) {
+	t.Parallel()
+
+	skillDir := filepath.Join(t.TempDir(), "sourcebook")
+	app := sourcebook.New(skillDir, commandTestCloner{})
+	if err := app.Add(context.Background(), "https://example.com/alpha.git"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "default tsv", args: []string{"list"}, want: "alpha\tgit\thttps://example.com/alpha.git"},
+		{name: "table", args: []string{"list", "--format", "table"}, want: "NAME"},
+		{name: "tsv", args: []string{"list", "--format", "tsv"}, want: "alpha\tgit\thttps://example.com/alpha.git"},
+		{name: "json", args: []string{"list", "--format", "json"}, want: `"name":"alpha"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stdout := new(bytes.Buffer)
+			stderr := new(bytes.Buffer)
+			command := newRootCommand(app, bytes.NewReader(nil), stdout, stderr, "dev")
+			command.SetArgs(test.args)
+			if err := command.ExecuteContext(context.Background()); err != nil {
+				t.Fatalf("ExecuteContext() error = %v", err)
+			}
+			if !strings.Contains(stdout.String(), test.want) {
+				t.Fatalf("stdout = %q, want %q", stdout.String(), test.want)
+			}
+			if stderr.Len() != 0 {
+				t.Fatalf("stderr = %q, want empty", stderr.String())
+			}
+		})
+	}
+
+	command := newRootCommand(app, bytes.NewReader(nil), new(bytes.Buffer), new(bytes.Buffer), "dev")
+	command.SetArgs([]string{"list", "--format", "yaml"})
+	if err := command.ExecuteContext(context.Background()); err == nil || !strings.Contains(err.Error(), "choose table, tsv, or json") {
+		t.Fatalf("invalid format error = %v", err)
+	}
+}
+
 func TestResolveVersion(t *testing.T) {
 	t.Parallel()
 
@@ -202,6 +245,35 @@ func TestRemoveWithoutNameRequiresExplicitName(t *testing.T) {
 	}
 }
 
+func TestRemoveReportsOnlyAfterSuccessfulRemoval(t *testing.T) {
+	t.Parallel()
+
+	skillDir := filepath.Join(t.TempDir(), "sourcebook")
+	app := sourcebook.New(skillDir, commandTestCloner{})
+	if err := app.Add(context.Background(), "https://example.com/alpha.git"); err != nil {
+		t.Fatal(err)
+	}
+	stdout := new(bytes.Buffer)
+	command := newRootCommand(app, bytes.NewReader(nil), stdout, new(bytes.Buffer), "dev")
+	command.SetArgs([]string{"remove", "alpha"})
+	if err := command.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("ExecuteContext() error = %v", err)
+	}
+	if got, want := stdout.String(), "alpha removed.\n"; got != want {
+		t.Fatalf("remove output = %q, want %q", got, want)
+	}
+
+	stdout.Reset()
+	command = newRootCommand(app, bytes.NewReader(nil), stdout, new(bytes.Buffer), "dev")
+	command.SetArgs([]string{"remove", "missing"})
+	if err := command.ExecuteContext(context.Background()); err == nil || !strings.Contains(err.Error(), `source "missing" does not exist`) {
+		t.Fatalf("missing remove error = %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("missing remove output = %q, want empty", stdout.String())
+	}
+}
+
 func TestAddPresetUsesPlainOutput(t *testing.T) {
 	t.Parallel()
 
@@ -229,11 +301,34 @@ func TestAddPresetUsesPlainOutput(t *testing.T) {
 	if err := command.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("ExecuteContext() error = %v", err)
 	}
-	if got, want := stdout.String(), "Adding example-docs...\nexample-docs added to Sourcebook.\n"; got != want {
+	if got, want := stdout.String(), "Adding example-docs...\n  [1/1] example-docs: updated\nexample-docs added to Sourcebook.\n"; got != want {
 		t.Fatalf("add output = %q, want %q", got, want)
 	}
 	if _, err := os.Stat(filepath.Join(skillDir, "references", "example-docs", "index.md")); err != nil {
 		t.Fatalf("built-in reference stat error = %v", err)
+	}
+}
+
+func TestAddRepositoryReportsProgress(t *testing.T) {
+	t.Parallel()
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	app := sourcebook.New(filepath.Join(t.TempDir(), "sourcebook"), commandTestCloner{})
+	command := newRootCommand(app, bytes.NewReader(nil), stdout, stderr, "dev")
+	command.SetArgs([]string{"add", "https://example.com/alpha.git"})
+	if err := command.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("ExecuteContext() error = %v", err)
+	}
+	for _, expected := range []string{
+		"Adding alpha...",
+		"alpha: cloning repository",
+		"[1/1] alpha: updated",
+		"alpha added to Sourcebook.",
+	} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Errorf("stdout = %q, want %q", stdout.String(), expected)
+		}
 	}
 }
 
@@ -326,13 +421,19 @@ func TestUpdateSelectedSource(t *testing.T) {
 	}
 	cloner.urls = nil
 
-	command := newRootCommand(app, bytes.NewReader(nil), new(bytes.Buffer), new(bytes.Buffer), "dev")
+	stdout := new(bytes.Buffer)
+	command := newRootCommand(app, bytes.NewReader(nil), stdout, new(bytes.Buffer), "dev")
 	command.SetArgs([]string{"update", "beta"})
 	if err := command.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("ExecuteContext() error = %v", err)
 	}
 	if got, want := strings.Join(cloner.urls, ","), "https://example.com/beta.git"; got != want {
 		t.Fatalf("updated URLs = %q, want %q", got, want)
+	}
+	for _, expected := range []string{"Updating 1 source...", "beta: cloning repository", "[1/1] beta: ready", "Installing refreshed sources...", "Updated 1 source successfully."} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Errorf("update stdout = %q, want %q", stdout.String(), expected)
+		}
 	}
 }
 
@@ -347,13 +448,19 @@ func TestUpdateAllSources(t *testing.T) {
 	}
 	cloner.urls = nil
 
-	command := newRootCommand(app, bytes.NewReader(nil), new(bytes.Buffer), new(bytes.Buffer), "dev")
+	stdout := new(bytes.Buffer)
+	command := newRootCommand(app, bytes.NewReader(nil), stdout, new(bytes.Buffer), "dev")
 	command.SetArgs([]string{"update", "--all"})
 	if err := command.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("ExecuteContext() error = %v", err)
 	}
 	if got, want := strings.Join(cloner.urls, ","), "https://example.com/alpha.git"; got != want {
 		t.Fatalf("updated URLs = %q, want %q", got, want)
+	}
+	for _, expected := range []string{"Updating 1 source...", "alpha: cloning repository", "[1/1] alpha: ready", "Installing refreshed sources...", "Updated 1 source successfully."} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Errorf("update stdout = %q, want %q", stdout.String(), expected)
+		}
 	}
 }
 
@@ -390,6 +497,42 @@ func (r *commandUpgradeRunner) Run(_ context.Context, currentVersion string, che
 	r.currentVersion = currentVersion
 	r.checkOnly = checkOnly
 	return r.result, r.err
+}
+
+type commandProgressUpgradeRunner struct {
+	commandUpgradeRunner
+	phases []string
+}
+
+func (r *commandProgressUpgradeRunner) RunWithProgress(_ context.Context, currentVersion string, checkOnly bool, report upgrade.ProgressReporter) (upgrade.Result, error) {
+	r.currentVersion = currentVersion
+	r.checkOnly = checkOnly
+	phase := "Downloading, verifying, and installing Sourcebook v1.3.0..."
+	if err := report(upgrade.ProgressEvent{Phase: phase}); err != nil {
+		return upgrade.Result{}, err
+	}
+	r.phases = append(r.phases, phase)
+	return r.result, r.err
+}
+
+func TestUpgradeReportsInstallationProgress(t *testing.T) {
+	t.Parallel()
+
+	runner := &commandProgressUpgradeRunner{commandUpgradeRunner: commandUpgradeRunner{
+		result: upgrade.Result{
+			CurrentVersion: "v1.2.0",
+			LatestVersion:  "v1.3.0",
+			Updated:        true,
+		},
+	}}
+	command, stdout, _ := testCommandWithUpgrade(t, "v1.2.0", runner)
+	command.SetArgs([]string{"upgrade"})
+	if err := command.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("ExecuteContext() error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Downloading, verifying, and installing Sourcebook v1.3.0...") {
+		t.Fatalf("upgrade output = %q", stdout.String())
+	}
 }
 
 type commandTestCloner struct{}

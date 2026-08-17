@@ -184,15 +184,37 @@ installations adopt the current metadata and table-of-contents format.
 successful update time for each source. Sizes are persisted after successful
 adds and updates. Existing installations without stored sizes are measured from
 their current reference directories and cached the first time they are listed.
-Output is always plain, tab-separated data with the fields `name`, `provider`,
-`URL`, RFC 3339 update time, and exact byte size. For a selected GitHub folder,
-`URL` is its reconstructed tree URL. A missing update time is `never`; an
-unavailable size is `unknown`.
+The default output remains the stable, plain tab-separated five-field format
+used by previous releases: `name`, `provider`, `URL`, RFC 3339 update time, and
+exact byte size. For a selected GitHub folder, `URL` is its reconstructed tree
+URL. A missing update time is `never`; an unavailable size is `unknown`.
+
+For an aligned human-readable table, use:
+
+```sh
+sourcebook list --format table
+```
+
+The table has the fields `NAME`, `PROVIDER`, `UPDATED`, `SIZE`, and `URL`; an
+empty table reports `No sources configured.`.
+
+Use an explicit machine-readable format when another program will consume the
+output:
+
+```sh
+sourcebook list --format tsv
+sourcebook list --format json
+```
+
+TSV preserves the stable five-field record format `name`, `provider`, `URL`,
+RFC 3339 update time, and exact byte size. JSON uses the fields `name`,
+`provider`, `url`, `updated_at`, and `size_bytes`; unknown values are `null`.
 
 List sources or remove one by name:
 
 ```sh
 sourcebook list
+sourcebook list --format table
 sourcebook remove project
 ```
 
@@ -206,8 +228,14 @@ Sourcebook prevents overlapping add, update, and remove operations. Every
 source is staged before installation, and metadata files are written
 atomically. A failed provider or write preserves the previous usable Sourcebook.
 
-Commands emit plain, deterministic output and never open a dashboard, picker,
-spinner, or other terminal UI.
+Long-running `add`, `update`, and `upgrade` commands print plain phase and
+completion messages. Updates report each source as it progresses and finish
+with a count; a failed update reports that no sources were changed.
+
+Commands emit plain output and never open a dashboard, picker, spinner, or
+other terminal UI. Data output is deterministic. Because updates run providers
+concurrently, progress lines are emitted as sources complete and may appear in
+a different order between runs; do not use their order as data.
 
 For private repositories, use SSH or a Git credential helper. Sourcebook
 rejects credentials and tokens embedded in repository URLs so they cannot be

@@ -31,6 +31,68 @@ func TestRunInstallsNewerRelease(t *testing.T) {
 	}
 }
 
+func TestRunWithProgressReportsInstallationPhase(t *testing.T) {
+	t.Parallel()
+
+	backend := &fakeBackend{
+		candidate: candidate{version: "1.3.0"},
+		found:     true,
+	}
+	manager := testManager(backend)
+	var events []ProgressEvent
+
+	result, err := manager.RunWithProgress(context.Background(), "v1.2.0", false, func(event ProgressEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunWithProgress() error = %v", err)
+	}
+	if !result.Updated || len(events) != 1 || events[0].Phase != "Downloading, verifying, and installing Sourcebook v1.3.0..." {
+		t.Fatalf("result = %+v, events = %#v", result, events)
+	}
+}
+
+func TestRunWithProgressDoesNotReportCheckOnlyInstallation(t *testing.T) {
+	t.Parallel()
+
+	manager := testManager(&fakeBackend{
+		candidate: candidate{version: "1.3.0"},
+		found:     true,
+	})
+	var events []ProgressEvent
+	if _, err := manager.RunWithProgress(context.Background(), "v1.2.0", true, func(event ProgressEvent) error {
+		events = append(events, event)
+		return nil
+	}); err != nil {
+		t.Fatalf("RunWithProgress() error = %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("check-only events = %#v, want none", events)
+	}
+}
+
+func TestRunWithProgressStopsBeforeInstallWhenProgressReportingFails(t *testing.T) {
+	t.Parallel()
+
+	backend := &fakeBackend{
+		candidate: candidate{version: "1.3.0"},
+		found:     true,
+	}
+	manager := testManager(backend)
+	expected := errors.New("stdout closed")
+
+	_, err := manager.RunWithProgress(context.Background(), "v1.2.0", false, func(ProgressEvent) error {
+		return expected
+	})
+	if !errors.Is(err, expected) {
+		t.Fatalf("RunWithProgress() error = %v, want %v", err, expected)
+	}
+	if backend.installedPath != "" {
+		t.Fatalf("installed path = %q, want no install after progress failure", backend.installedPath)
+	}
+}
+
 func TestRunCheckOnlyDoesNotInstall(t *testing.T) {
 	t.Parallel()
 

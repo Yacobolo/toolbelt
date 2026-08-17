@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"path"
@@ -723,35 +722,6 @@ func (a *App) Remove(name string) (returnErr error) {
 	if err := a.persist(remaining); err != nil {
 		_ = os.Rename(backup, target)
 		return err
-	}
-	return nil
-}
-
-func (a *App) List(output io.Writer) error {
-	sources, err := a.SourcesWithSizes()
-	if err != nil {
-		return err
-	}
-	for _, source := range sources {
-		updatedAt := "never"
-		if !source.UpdatedAt.IsZero() {
-			updatedAt = source.UpdatedAt.UTC().Format(time.RFC3339)
-		}
-		sizeBytes := "unknown"
-		if source.SizeBytes != nil {
-			sizeBytes = fmt.Sprintf("%d", *source.SizeBytes)
-		}
-		if _, err := fmt.Fprintf(
-			output,
-			"%s\t%s\t%s\t%s\t%s\n",
-			source.Name,
-			source.Provider,
-			source.DisplayURL(),
-			updatedAt,
-			sizeBytes,
-		); err != nil {
-			return fmt.Errorf("write source list: %w", err)
-		}
 	}
 	return nil
 }

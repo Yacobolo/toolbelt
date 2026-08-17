@@ -26,6 +26,17 @@ type Result struct {
 	Updated         bool
 }
 
+// ProgressEvent describes a user-visible phase of a self-update.
+type ProgressEvent struct {
+	Phase string
+}
+
+// ProgressReporter receives coarse-grained self-update phases. The updater
+// dependency does not expose byte-level download progress, so phases are kept
+// stable and useful for both humans and automated callers. Returning an error
+// aborts the update before the executable is replaced.
+type ProgressReporter func(ProgressEvent) error
+
 type candidate struct {
 	version string
 	release *selfupdate.Release
@@ -68,6 +79,13 @@ func New() (*Manager, error) {
 // Run checks for the latest compatible release and installs it unless checkOnly
 // is true.
 func (m *Manager) Run(ctx context.Context, currentVersion string, checkOnly bool) (Result, error) {
+	return m.RunWithProgress(ctx, currentVersion, checkOnly, nil)
+}
+
+// RunWithProgress checks GitHub releases and installs the latest compatible
+// release unless checkOnly is true, reporting the installation phase when a
+// release is available.
+func (m *Manager) RunWithProgress(ctx context.Context, currentVersion string, checkOnly bool, report ProgressReporter) (Result, error) {
 	current, err := parseCurrentVersion(currentVersion)
 	if err != nil {
 		return Result{}, err
@@ -102,6 +120,11 @@ func (m *Manager) Run(ctx context.Context, currentVersion string, checkOnly bool
 	executablePath, err = m.evalSymlinks(executablePath)
 	if err != nil {
 		return Result{}, fmt.Errorf("resolve Sourcebook executable %q: %w", executablePath, err)
+	}
+	if report != nil {
+		if err := report(ProgressEvent{Phase: fmt.Sprintf("Downloading, verifying, and installing Sourcebook %s...", result.LatestVersion)}); err != nil {
+			return Result{}, fmt.Errorf("report upgrade progress: %w", err)
+		}
 	}
 	if err := m.backend.install(ctx, latest, executablePath); err != nil {
 		return Result{}, fmt.Errorf("install %s: %w", result.LatestVersion, err)

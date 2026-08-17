@@ -130,7 +130,7 @@ func runGitCommand(ctx context.Context, stdin io.Reader, args ...string) error {
 		if message == "" {
 			return err
 		}
-		return fmt.Errorf("%w: %s", err, message)
+		return fmt.Errorf("%w: %s", err, strings.Join(strings.Fields(message), " "))
 	}
 	return nil
 }
