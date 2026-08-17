@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/Masterminds/semver/v3"
 	selfupdate "github.com/creativeprojects/go-selfupdate"
@@ -39,12 +38,9 @@ type backend interface {
 
 // Manager checks GitHub releases and safely replaces the current executable.
 type Manager struct {
-	backend         backend
-	executablePath  func() (string, error)
-	evalSymlinks    func(string) (string, error)
-	noticeCachePath string
-	now             func() time.Time
-	noticeTTL       time.Duration
+	backend        backend
+	executablePath func() (string, error)
+	evalSymlinks   func(string) (string, error)
 }
 
 // New creates an updater for Sourcebook's GitHub releases.
@@ -64,11 +60,8 @@ func New() (*Manager, error) {
 			updater:    updater,
 			repository: selfupdate.ParseSlug(repositorySlug),
 		},
-		executablePath:  os.Executable,
-		evalSymlinks:    filepath.EvalSymlinks,
-		noticeCachePath: defaultNoticeCachePath(),
-		now:             time.Now,
-		noticeTTL:       defaultNoticeTTL,
+		executablePath: os.Executable,
+		evalSymlinks:   filepath.EvalSymlinks,
 	}, nil
 }
 

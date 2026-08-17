@@ -15,22 +15,41 @@ import (
 func TestRootCommandWithoutArgumentsShowsHelpSuccessfully(t *testing.T) {
 	t.Parallel()
 
-	command, stdout, _ := testCommand(t, "1.2.3")
-	command.SetArgs(nil)
-	if err := command.ExecuteContext(context.Background()); err != nil {
-		t.Fatalf("ExecuteContext() error = %v", err)
+	withoutArguments, noArgsOutput, _ := testCommand(t, "1.2.3")
+	withoutArguments.SetArgs(nil)
+	if err := withoutArguments.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("ExecuteContext() without arguments error = %v", err)
 	}
-	output := stdout.String()
-	for _, expected := range []string{"Sourcebook", "sourcebook add", "sourcebook update", "sourcebook upgrade", "sourcebook version"} {
-		if !strings.Contains(output, expected) {
-			t.Errorf("help output does not contain %q:\n%s", expected, output)
+
+	withHelp, helpOutput, _ := testCommand(t, "1.2.3")
+	withHelp.SetArgs([]string{"--help"})
+	if err := withHelp.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("ExecuteContext(--help) error = %v", err)
+	}
+
+	if got, want := noArgsOutput.String(), helpOutput.String(); got != want {
+		t.Fatalf("no-argument output differs from --help:\n--- no arguments ---\n%s\n--- --help ---\n%s", got, want)
+	}
+	if got, want := noArgsOutput.String(), sourcebook.CLIHelp()+"\n"; got != want {
+		t.Fatalf("root help differs from canonical CLI help:\n--- root help ---\n%s\n--- canonical help ---\n%s", got, want)
+	}
+	for _, expected := range []string{
+		"Available Commands:",
+		"add",
+		"update",
+		"remove",
+		"list",
+		"upgrade",
+		"version",
+		"--version",
+		`Use "sourcebook [command] --help" for more information about a command.`,
+	} {
+		if !strings.Contains(noArgsOutput.String(), expected) {
+			t.Errorf("help output does not contain %q:\n%s", expected, noArgsOutput.String())
 		}
 	}
-	if strings.Contains(output, "sourcebook completion") {
-		t.Fatalf("help output contains removed completion command:\n%s", output)
-	}
-	if strings.Contains(output, "missing command") {
-		t.Fatalf("help output contains missing-command error:\n%s", output)
+	if strings.Contains(noArgsOutput.String(), "completion") {
+		t.Fatalf("help output contains removed completion command:\n%s", noArgsOutput.String())
 	}
 }
 
@@ -126,45 +145,16 @@ func TestUpgradeReportsCurrentVersionAsUpToDate(t *testing.T) {
 	}
 }
 
-func TestCommandsPrintCachedUpgradeNoticeToStderr(t *testing.T) {
+func TestListDoesNotWriteToStderr(t *testing.T) {
 	t.Parallel()
 
-	runner := &commandUpgradeRunner{
-		notice: "Sourcebook v1.3.0 is available; run sourcebook upgrade.",
-	}
-	command, _, stderr := testCommandWithUpgrade(t, "v1.2.0", runner)
+	command, _, stderr := testCommand(t, "v1.2.0")
 	command.SetArgs([]string{"list"})
 	if err := command.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("ExecuteContext() error = %v", err)
 	}
-	if got := stderr.String(); !strings.Contains(got, runner.notice) {
-		t.Fatalf("stderr = %q, want update notice", got)
-	}
-	if runner.noticeCalls != 1 {
-		t.Fatalf("notice calls = %d, want 1", runner.noticeCalls)
-	}
-}
-
-func TestUpgradeCommandDoesNotPrintASecondUpdateNotice(t *testing.T) {
-	t.Parallel()
-
-	runner := &commandUpgradeRunner{
-		result: upgrade.Result{
-			CurrentVersion: "v1.2.0",
-			LatestVersion:  "v1.2.0",
-		},
-		notice: "unexpected notice",
-	}
-	command, _, stderr := testCommandWithUpgrade(t, "v1.2.0", runner)
-	command.SetArgs([]string{"upgrade"})
-	if err := command.ExecuteContext(context.Background()); err != nil {
-		t.Fatalf("ExecuteContext() error = %v", err)
-	}
-	if runner.noticeCalls != 0 {
-		t.Fatalf("notice calls = %d, want 0", runner.noticeCalls)
-	}
-	if strings.Contains(stderr.String(), runner.notice) {
-		t.Fatalf("stderr contains redundant update notice: %q", stderr.String())
+	if got := stderr.String(); got != "" {
+		t.Fatalf("stderr = %q, want empty", got)
 	}
 }
 
@@ -201,18 +191,18 @@ func TestCompletionCommandIsNotAvailable(t *testing.T) {
 	}
 }
 
-func TestRemoveWithoutNameRequiresInteractiveTerminal(t *testing.T) {
+func TestRemoveWithoutNameRequiresExplicitName(t *testing.T) {
 	t.Parallel()
 
 	command, _, _ := testCommand(t, "dev")
 	command.SetArgs([]string{"remove"})
 	err := command.ExecuteContext(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "source name is required") {
-		t.Fatalf("ExecuteContext() error = %v, want non-interactive source-name error", err)
+	if err == nil || !strings.Contains(err.Error(), "accepts 1 arg(s), received 0") {
+		t.Fatalf("ExecuteContext() error = %v, want explicit source-name error", err)
 	}
 }
 
-func TestAddPresetNonInteractively(t *testing.T) {
+func TestAddPresetUsesPlainOutput(t *testing.T) {
 	t.Parallel()
 
 	stdout := new(bytes.Buffer)
@@ -239,8 +229,22 @@ func TestAddPresetNonInteractively(t *testing.T) {
 	if err := command.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("ExecuteContext() error = %v", err)
 	}
+	if got, want := stdout.String(), "Adding example-docs...\nexample-docs added to Sourcebook.\n"; got != want {
+		t.Fatalf("add output = %q, want %q", got, want)
+	}
 	if _, err := os.Stat(filepath.Join(skillDir, "references", "example-docs", "index.md")); err != nil {
 		t.Fatalf("built-in reference stat error = %v", err)
+	}
+}
+
+func TestAddWithoutInputRequiresExplicitSource(t *testing.T) {
+	t.Parallel()
+
+	command, _, _ := testCommand(t, "dev")
+	command.SetArgs([]string{"add"})
+	err := command.ExecuteContext(context.Background())
+	if err == nil || err.Error() != "repository URL or --preset is required" {
+		t.Fatalf("ExecuteContext() error = %v, want explicit source error", err)
 	}
 }
 
@@ -284,13 +288,13 @@ func TestAddProviderFlagIsNotAvailable(t *testing.T) {
 	}
 }
 
-func TestUpdateRequiresSelectionWhenNonInteractive(t *testing.T) {
+func TestUpdateRequiresExplicitSelection(t *testing.T) {
 	t.Parallel()
 
 	command, _, _ := testCommand(t, "dev")
 	command.SetArgs([]string{"update"})
 	err := command.ExecuteContext(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "source names or --all") {
+	if err == nil || err.Error() != "source names or --all are required" {
 		t.Fatalf("ExecuteContext() error = %v, want explicit selection error", err)
 	}
 }
@@ -306,7 +310,7 @@ func TestUpdateRejectsAllTogetherWithSourceNames(t *testing.T) {
 	}
 }
 
-func TestUpdateSelectedSourceNonInteractively(t *testing.T) {
+func TestUpdateSelectedSource(t *testing.T) {
 	t.Parallel()
 
 	skillDir := filepath.Join(t.TempDir(), "sourcebook")
@@ -332,7 +336,7 @@ func TestUpdateSelectedSourceNonInteractively(t *testing.T) {
 	}
 }
 
-func TestUpdateAllNonInteractively(t *testing.T) {
+func TestUpdateAllSources(t *testing.T) {
 	t.Parallel()
 
 	skillDir := filepath.Join(t.TempDir(), "sourcebook")
@@ -380,20 +384,12 @@ type commandUpgradeRunner struct {
 	err            error
 	currentVersion string
 	checkOnly      bool
-	notice         string
-	noticeErr      error
-	noticeCalls    int
 }
 
 func (r *commandUpgradeRunner) Run(_ context.Context, currentVersion string, checkOnly bool) (upgrade.Result, error) {
 	r.currentVersion = currentVersion
 	r.checkOnly = checkOnly
 	return r.result, r.err
-}
-
-func (r *commandUpgradeRunner) Notice(context.Context, string) (string, error) {
-	r.noticeCalls++
-	return r.notice, r.noticeErr
 }
 
 type commandTestCloner struct{}

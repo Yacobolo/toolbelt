@@ -1015,6 +1015,11 @@ func renderSkill(sources []Source) []byte {
 	skill.WriteString("\n")
 	skill.WriteString("---\n\n")
 	skill.WriteString("# Sourcebook\n\n")
+	skill.WriteString("## CLI Usage\n\n")
+	skill.WriteString("Use the Sourcebook command line with the following help:\n\n")
+	skill.WriteString("```text\n")
+	skill.WriteString(cliHelp)
+	skill.WriteString("\n```\n\n")
 	skill.WriteString("## Sources\n")
 	if len(sources) > 0 {
 		skill.WriteString("\n")

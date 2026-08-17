@@ -50,7 +50,7 @@ func TestAddCreatesSourcebookSkill(t *testing.T) {
 	assertFileContents(t, filepath.Join(skillDir, "references", "widgets", "README.md"), "widgets version one")
 	wantManifest := "{\n  \"version\": 2,\n  \"sources\": [\n    {\n      \"name\": \"widgets\",\n      \"provider\": \"git\",\n      \"url\": \"https://example.com/acme/widgets.git\",\n      \"size_bytes\": 19,\n      \"updated_at\": \"2026-07-22T08:30:00Z\"\n    }\n  ]\n}\n"
 	assertFileContents(t, filepath.Join(skillDir, "sources.json"), wantManifest)
-	wantSkill := "---\nname: sourcebook\ndescription: Source code and documentation for widgets. Use when a task involves widgets or related technologies.\n---\n\n# Sourcebook\n\n## Sources\n\n- [widgets](references/widgets/) — https://example.com/acme/widgets.git\n"
+	wantSkill := "---\nname: sourcebook\ndescription: Source code and documentation for widgets. Use when a task involves widgets or related technologies.\n---\n\n# Sourcebook\n\n## CLI Usage\n\nUse the Sourcebook command line with the following help:\n\n```text\n" + CLIHelp() + "\n```\n\n## Sources\n\n- [widgets](references/widgets/) — https://example.com/acme/widgets.git\n"
 	assertFileContents(t, filepath.Join(skillDir, "SKILL.md"), wantSkill)
 }
 
@@ -478,6 +478,40 @@ func TestRenderedSkillDescriptionListsCurrentRepositories(t *testing.T) {
 	}
 	if strings.Contains(skill, "Open only the repository") {
 		t.Fatalf("SKILL.md contains unwanted usage instruction:\n%s", skill)
+	}
+}
+
+func TestRenderedSkillIncludesCLIHelp(t *testing.T) {
+	t.Parallel()
+
+	skill := string(renderSkill(nil))
+	want := "## CLI Usage\n\n" +
+		"Use the Sourcebook command line with the following help:\n\n" +
+		"```text\n" +
+		`Build one Codex skill from Git repositories and documentation sources
+
+Usage:
+  sourcebook [flags]
+  sourcebook [command]
+
+Available Commands:
+  add         Add a Git repository or catalogue source
+  help        Help about any command
+  list        List sources
+  remove      Remove a source
+  update      Refresh named sources or all sources
+  upgrade     Upgrade Sourcebook to the latest release
+  version     Print the version
+
+Flags:
+  -h, --help      help for sourcebook
+  -v, --version   version for sourcebook
+
+Use "sourcebook [command] --help" for more information about a command.
+` +
+		"```\n\n"
+	if !strings.Contains(skill, want) {
+		t.Fatalf("SKILL.md does not contain CLI help:\n%s", skill)
 	}
 }
 

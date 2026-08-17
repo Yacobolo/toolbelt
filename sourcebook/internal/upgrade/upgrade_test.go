@@ -3,11 +3,8 @@ package upgrade
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestRunInstallsNewerRelease(t *testing.T) {
@@ -177,98 +174,6 @@ func TestAssetFilterUsesZipOnWindows(t *testing.T) {
 	}
 }
 
-func TestNoticeChecksAndPrintsAtMostOnceEvery24Hours(t *testing.T) {
-	t.Parallel()
-
-	backend := &fakeBackend{
-		candidate: candidate{version: "1.3.0"},
-		found:     true,
-	}
-	manager := testManager(backend)
-	manager.noticeCachePath = filepath.Join(t.TempDir(), "updates", "notice.json")
-	manager.now = func() time.Time {
-		return time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
-	}
-
-	notice, err := manager.Notice(context.Background(), "v1.2.0")
-	if err != nil {
-		t.Fatalf("Notice() error = %v", err)
-	}
-	if !strings.Contains(notice, "v1.3.0") || !strings.Contains(notice, "sourcebook upgrade") {
-		t.Fatalf("Notice() = %q", notice)
-	}
-	notice, err = manager.Notice(context.Background(), "v1.2.0")
-	if err != nil {
-		t.Fatalf("cached Notice() error = %v", err)
-	}
-	if notice != "" {
-		t.Fatalf("cached Notice() = %q, want empty", notice)
-	}
-	if backend.latestCalls != 1 {
-		t.Fatalf("latest calls = %d, want 1", backend.latestCalls)
-	}
-	if _, err := os.Stat(manager.noticeCachePath); err != nil {
-		t.Fatalf("notice cache stat error = %v", err)
-	}
-}
-
-func TestNoticeRefreshesExpiredCache(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
-	backend := &fakeBackend{
-		candidate: candidate{version: "1.4.0"},
-		found:     true,
-	}
-	manager := testManager(backend)
-	manager.noticeCachePath = filepath.Join(t.TempDir(), "notice.json")
-	manager.now = func() time.Time { return now }
-	if err := writeNoticeCache(manager.noticeCachePath, noticeCache{
-		CheckedAt:     now.Add(-25 * time.Hour),
-		LatestVersion: "1.3.0",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	notice, err := manager.Notice(context.Background(), "1.2.0")
-	if err != nil {
-		t.Fatalf("Notice() error = %v", err)
-	}
-	if !strings.Contains(notice, "v1.4.0") {
-		t.Fatalf("Notice() = %q", notice)
-	}
-	if backend.latestCalls != 1 {
-		t.Fatalf("latest calls = %d, want 1", backend.latestCalls)
-	}
-}
-
-func TestNoticeIsEmptyForCurrentAndDevelopmentBuilds(t *testing.T) {
-	t.Parallel()
-
-	backend := &fakeBackend{
-		candidate: candidate{version: "1.2.0"},
-		found:     true,
-	}
-	manager := testManager(backend)
-	manager.noticeCachePath = filepath.Join(t.TempDir(), "notice.json")
-	manager.now = time.Now
-
-	notice, err := manager.Notice(context.Background(), "v1.2.0")
-	if err != nil {
-		t.Fatalf("Notice() error = %v", err)
-	}
-	if notice != "" {
-		t.Fatalf("Notice() = %q, want empty", notice)
-	}
-	notice, err = manager.Notice(context.Background(), "dev")
-	if err != nil {
-		t.Fatalf("Notice(dev) error = %v", err)
-	}
-	if notice != "" {
-		t.Fatalf("Notice(dev) = %q, want empty", notice)
-	}
-}
-
 func testManager(backend backend) *Manager {
 	return &Manager{
 		backend: backend,
@@ -278,8 +183,6 @@ func testManager(backend backend) *Manager {
 		evalSymlinks: func(string) (string, error) {
 			return "/resolved/sourcebook", nil
 		},
-		now:       time.Now,
-		noticeTTL: 24 * time.Hour,
 	}
 }
 
